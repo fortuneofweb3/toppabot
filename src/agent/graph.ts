@@ -5,7 +5,7 @@ import { AgentState } from "./state";
 import { tools } from "./tools";
 
 /**
- * Jara Agent - LangGraph Workflow
+ * Toppa Agent - LangGraph Workflow
  */
 
 // Initialize LLM with tool binding
@@ -22,7 +22,7 @@ const llm = new ChatOpenAI({
 /**
  * System prompt - defines agent behavior
  */
-const SYSTEM_PROMPT = `You are Jara, an autonomous AI agent for digital goods and utility payments across 170+ countries, powered by Celo blockchain.
+const SYSTEM_PROMPT = `You are Toppa, an autonomous AI agent for digital goods and utility payments across 170+ countries, powered by Celo blockchain.
 
 Your capabilities:
 1. **Airtime & Data**: Send mobile top-ups to any phone number across 170+ countries (800+ operators). Auto-detect operator from phone number.
@@ -118,7 +118,7 @@ async function executeTools(state: AgentState) {
 /**
  * Build the agent graph
  */
-export function createJaraAgent() {
+export function createToppaAgent() {
   const workflow = new StateGraph<AgentState>({
     channels: {
       messages: {
@@ -168,8 +168,8 @@ export function createJaraAgent() {
 /**
  * Main function to run the agent
  */
-export async function runJaraAgent(userMessage: string, state: Partial<AgentState> = {}) {
-  const agent = createJaraAgent();
+export async function runToppaAgent(userMessage: string, state: Partial<AgentState> = {}) {
+  const agent = createToppaAgent();
 
   const initialState: AgentState = {
     messages: [new HumanMessage(userMessage)],

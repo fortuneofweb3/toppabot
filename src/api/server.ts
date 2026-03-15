@@ -35,7 +35,7 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
   if (!paymentHeader) {
     const paymentRequest = await createX402PaymentRequest({
       service: `${req.method} ${req.path}`,
-      description: `Jara API: ${req.method} ${req.path}`,
+      description: `Toppa API: ${req.method} ${req.path}`,
       amount: parseFloat(process.env.X402_FEE_AMOUNT || '0.5'),
     });
 
@@ -79,7 +79,7 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
 app.get('/', (_req: Request, res: Response) => {
   const x402Info = getX402Info();
   res.json({
-    agent: 'Jara',
+    agent: 'Toppa',
     version: '2.0.0',
     description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
     chain: x402Info.chain,
@@ -106,7 +106,7 @@ app.get('/', (_req: Request, res: Response) => {
     ],
     docs: {
       howToUse: 'Send cUSD to payTo address, then include tx hash in X-PAYMENT header',
-      example: 'curl -H "X-PAYMENT: 0xTX_HASH" https://jara.api/send-airtime',
+      example: 'curl -H "X-PAYMENT: 0xTX_HASH" https://toppa.api/send-airtime',
     },
   });
 });
@@ -198,7 +198,7 @@ app.get('/gift-cards/search', async (req: Request, res: Response) => {
 app.get('/identity', async (_req: Request, res: Response) => {
   try {
     const details = await getAgentDetails();
-    res.json({ agent: 'Jara', ...details });
+    res.json({ agent: 'Toppa', ...details });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -220,7 +220,7 @@ app.get('/reputation', async (_req: Request, res: Response) => {
   try {
     const reputation = await getAgentReputation();
     res.json({
-      agent: 'Jara',
+      agent: 'Toppa',
       ...reputation,
     });
   } catch (error) {
@@ -438,7 +438,7 @@ app.get('/gift-card-code/:transactionId', x402Middleware, async (req: X402Reques
 export function startApiServer() {
   const port = parseInt(process.env.PORT || '3000');
   app.listen(port, () => {
-    console.log(`Jara API server running on port ${port}`);
+    console.log(`Toppa API server running on port ${port}`);
     console.log(`   Public:  GET  /                          - Agent info`);
     console.log(`   Public:  GET  /operators/:cc              - Mobile operators by country`);
     console.log(`   Public:  GET  /billers/:cc                - Utility billers by country`);

@@ -88,13 +88,13 @@ function getWalletClient() {
 let cachedAgentId: bigint | null = null;
 
 /**
- * Jara's agent URI — describes capabilities per A2A protocol
+ * Toppa's agent URI — describes capabilities per A2A protocol
  * In production, host this as a JSON file at a URL
  */
 function getAgentURI(): string {
   // For hackathon, use a data URI with agent metadata
   const agentCard = {
-    name: 'Jara',
+    name: 'Toppa',
     description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
     version: '2.0.0',
     skills: [
@@ -115,12 +115,12 @@ function getAgentURI(): string {
 }
 
 /**
- * Register Jara agent on ERC-8004 Identity Registry
+ * Register Toppa agent on ERC-8004 Identity Registry
  * Mints an NFT representing the agent's on-chain identity
  */
 export async function registerAgent() {
   try {
-    console.log('Registering Jara agent on ERC-8004 Identity Registry...');
+    console.log('Registering Toppa agent on ERC-8004 Identity Registry...');
     console.log(`  Chain: ${chain.name}`);
     console.log(`  Identity Registry: ${IDENTITY_REGISTRY}`);
 

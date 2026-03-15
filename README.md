@@ -1,12 +1,12 @@
-# Jara Agent
+# Toppa Agent
 
 > AI agent for digital goods and utility payments across 170+ countries, powered by Celo.
 
 Built for the Celo **"Build Agents for the Real World V2"** hackathon.
 
-## What Jara Does
+## What Toppa Does
 
-Jara is an autonomous AI agent that lets anyone buy digital goods using cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language.
+Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language.
 
 **Services:**
 - **Airtime & Data** — Mobile top-ups across 170+ countries, 800+ operators. Auto-detects operator from phone number.
@@ -16,7 +16,7 @@ Jara is an autonomous AI agent that lets anyone buy digital goods using cUSD on 
 **Key capability — Multi-intent resolution:**
 > "Get my brother 500 naira airtime in Nigeria, pay mom's DStv bill in Lagos, and buy me a $25 Steam gift card"
 
-Jara parses this into three parallel operations and executes them all. This is where AI makes a genuine difference — not just a wrapper around an API.
+Toppa parses this into three parallel operations and executes them all. This is where AI makes a genuine difference — not just a wrapper around an API.
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Jara parses this into three parallel operations and executes them all. This is w
                              │ x402 payment (cUSD)
                              ▼
 ┌────────────────────────────────────────────────┐
-│                  Jara Agent                     │
+│                  Toppa Agent                    │
 │                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
 │  │ HTTP API │  │ Telegram │  │  LangGraph   │ │
@@ -85,10 +85,10 @@ Jara parses this into three parallel operations and executes them all. This is w
 ### x402 Payment Flow
 ```bash
 # 1. Call without payment — get 402 with payment requirements
-curl https://jara.api/send-airtime
+curl https://toppa.api/send-airtime
 
 # 2. Send cUSD to agent wallet, then call with tx hash
-curl -X POST https://jara.api/send-airtime \
+curl -X POST https://toppa.api/send-airtime \
   -H "X-PAYMENT: 0xYOUR_CUSD_TX_HASH" \
   -H "Content-Type: application/json" \
   -d '{"phone": "08147658721", "countryCode": "NG", "amount": 5}'
@@ -121,7 +121,7 @@ npm run dev
 ## Hackathon Integrations
 
 ### ERC-8004 — Trustless Agents
-On-chain identity and reputation on Celo's official ERC-8004 singleton registries. Jara registers as an NFT-based agent identity and builds reputation through transaction feedback.
+On-chain identity and reputation on Celo's official ERC-8004 singleton registries. Toppa registers as an NFT-based agent identity and builds reputation through transaction feedback.
 
 - Identity Registry: `0x8004A818BFB912233c491871b3d84c89A494BD9e` (Alfajores)
 - Reputation Registry: `0x8004B663056A597Dffe9eCcC1965A193B7388713` (Alfajores)

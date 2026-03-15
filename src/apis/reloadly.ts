@@ -265,7 +265,7 @@ export async function sendAirtime(params: {
     operatorId,
     amount: params.amount,
     useLocalAmount: params.useLocalAmount ?? false,
-    customIdentifier: `jara-${Date.now()}`,
+    customIdentifier: `toppa-${Date.now()}`,
     recipientPhone: {
       countryCode: params.countryCode.toUpperCase(),
       number: params.phone,
@@ -308,7 +308,7 @@ export async function payBill(params: {
     amount: params.amount,
     billerId: params.billerId,
     useLocalAmount: params.useLocalAmount ?? true,
-    referenceId: `jara-bill-${Date.now()}`,
+    referenceId: `toppa-bill-${Date.now()}`,
   });
 }
 
@@ -414,9 +414,9 @@ export async function buyGiftCard(params: {
     productId: params.productId,
     quantity: params.quantity,
     unitPrice: params.unitPrice,
-    customIdentifier: `jara-gc-${Date.now()}`,
+    customIdentifier: `toppa-gc-${Date.now()}`,
     recipientEmail: params.recipientEmail,
-    senderName: params.senderName || 'Jara Agent',
+    senderName: params.senderName || 'Toppa Agent',
   });
 }
 

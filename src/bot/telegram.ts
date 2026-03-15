@@ -1,5 +1,5 @@
 import { Telegraf, Context } from 'telegraf';
-import { runJaraAgent } from '../agent/graph';
+import { runToppaAgent } from '../agent/graph';
 import { generateSelfVerifyLink, isUserVerified } from '../apis/selfclaw';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
@@ -9,7 +9,7 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
  */
 bot.command('start', async (ctx) => {
   await ctx.reply(
-    `Welcome to Jara!\n\n` +
+    `Welcome to Toppa!\n\n` +
     `I'm your AI agent for digital goods and utility payments across 170+ countries, powered by Celo.\n\n` +
     `I can:\n` +
     `- Buy airtime & data for any phone number worldwide\n` +
@@ -57,7 +57,7 @@ bot.on('text', async (ctx) => {
     await ctx.sendChatAction('typing');
 
     // Run the agent
-    const { response } = await runJaraAgent(userMessage, {
+    const { response } = await runToppaAgent(userMessage, {
       userAddress: userId,
     });
 
@@ -85,7 +85,7 @@ bot.catch((err, ctx) => {
  */
 export function startTelegramBot() {
   bot.launch();
-  console.log('Jara Telegram bot is running...');
+  console.log('Toppa Telegram bot is running...');
 
   // Enable graceful stop
   process.once('SIGINT', () => bot.stop('SIGINT'));

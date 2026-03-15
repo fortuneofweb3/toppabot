@@ -25,8 +25,8 @@ const verifiedUsers = new Map<string, {
 }>();
 
 // Self Protocol app configuration
-const SELF_SCOPE = process.env.SELF_SCOPE || 'jara-agent';
-const SELF_ENDPOINT = process.env.SELF_ENDPOINT || 'https://jara.api/api/verify';
+const SELF_SCOPE = process.env.SELF_SCOPE || 'toppa-agent';
+const SELF_ENDPOINT = process.env.SELF_ENDPOINT || 'https://toppa.api/api/verify';
 
 /**
  * Generate a Self Protocol verification deeplink for a user
@@ -44,7 +44,7 @@ export function generateSelfVerifyLink(userId: string): string {
     endpoint: SELF_ENDPOINT,
     user_id: userId,
     user_id_type: 'uuid',
-    app_name: 'Jara',
+    app_name: 'Toppa',
     endpoint_type: process.env.NODE_ENV === 'production' ? 'https' : 'staging_https',
   });
 

@@ -5,15 +5,15 @@ import { startTelegramBot } from './bot/telegram';
 import { startApiServer } from './api/server';
 
 /**
- * Main entry point for Jara Agent
+ * Main entry point for Toppa Agent
  *
- * Jara runs two interfaces:
+ * Toppa runs two interfaces:
  * 1. Telegram Bot - for human users (chat-based)
  * 2. HTTP API    - for other agents (x402 payment-gated)
  */
 async function main() {
-  console.log('🚀 Starting Jara Agent...');
-  console.log('   "Jara" = extra/bonus in Nigerian pidgin');
+  console.log('🚀 Starting Toppa Agent...');
+  console.log('   "Toppa" = top-up, powered by Celo');
   console.log('');
 
   // Validate core environment variables
@@ -34,7 +34,7 @@ async function main() {
   }
 
   console.log('');
-  console.log('✅ Jara is live!');
+  console.log('✅ Toppa is live!');
   console.log('💬 Telegram: Send messages to your bot');
   console.log('🤖 API: Other agents can call via x402');
 }
