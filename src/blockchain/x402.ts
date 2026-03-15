@@ -1,71 +1,55 @@
-import { createThirdwebClient, getContract, prepareContractCall, sendTransaction } from "thirdweb";
-import { celo } from "thirdweb/chains";
-import { privateKeyToAccount } from "thirdweb/wallets";
+import { createPublicClient, http, parseAbi, formatUnits } from 'viem';
+import { celo, celoAlfajores } from 'viem/chains';
 
 /**
- * x402 Payment Protocol (HTTP 402 Payment Required)
- * Enables automatic micropayments for agent services
+ * x402 Payment Protocol — HTTP 402 Payment Required
  *
- * Spec: https://github.com/thirdweb-dev/x402
+ * Implements the Coinbase x402 standard for agent-to-agent micropayments.
+ * Spec: https://github.com/coinbase/x402
+ *
+ * Flow:
+ * 1. Client calls paid endpoint without payment header
+ * 2. Server returns 402 with PAYMENT-REQUIRED header
+ * 3. Client pays cUSD to agent wallet on Celo
+ * 4. Client retries with PAYMENT-SIGNATURE header (containing tx hash)
+ * 5. Server verifies on-chain payment and returns 200
+ *
+ * For the hackathon, we use a simplified verification:
+ * verify the tx hash on-chain (exists, correct recipient, correct token, sufficient amount).
  */
 
-const X402_FEE = parseFloat(process.env.X402_FEE_AMOUNT || '0.5'); // $0.50 per transaction
+const isTestnet = process.env.NODE_ENV !== 'production';
+const chain = isTestnet ? celoAlfajores : celo;
 
-// Lazy-initialized Thirdweb client (env vars load after imports)
-let _client: ReturnType<typeof createThirdwebClient> | null = null;
+// cUSD token addresses on Celo
+const CUSD_ADDRESS = isTestnet
+  ? '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1' as `0x${string}` // Alfajores
+  : '0x765DE816845861e75A25fCA122bb6898B8B1282a' as `0x${string}`; // Mainnet
 
-function getClient() {
-  if (!_client) {
-    _client = createThirdwebClient({
-      secretKey: process.env.THIRDWEB_SECRET_KEY || '',
+const AGENT_WALLET = (process.env.AGENT_WALLET_ADDRESS || '') as `0x${string}`;
+const X402_FEE = parseFloat(process.env.X402_FEE_AMOUNT || '0.5');
+
+// ERC-20 Transfer event signature
+const erc20Abi = parseAbi([
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
+]);
+
+// Lazy-initialized client
+let _publicClient: ReturnType<typeof createPublicClient> | null = null;
+
+function getPublicClient() {
+  if (!_publicClient) {
+    _publicClient = createPublicClient({
+      chain,
+      transport: http(process.env.CELO_RPC_URL),
     });
   }
-  return _client;
+  return _publicClient;
 }
 
 /**
- * Charge x402 fee for agent service
- * This creates an HTTP 402 payment request
- */
-export async function chargeX402Fee(params: {
-  userId: string;
-  transactionType: string;
-  amount: number;
-}) {
-  if (process.env.X402_ENABLED !== 'true') {
-    console.log('⚠️  x402 disabled - skipping fee');
-    return { charged: false, fee: 0 };
-  }
-
-  try {
-    console.log(`💳 x402 fee: $${X402_FEE} for ${params.transactionType}`);
-
-    // In production, this would:
-    // 1. Create payment request
-    // 2. User's wallet pays automatically
-    // 3. Transaction confirmed on-chain
-
-    // For now, log and return mock data
-    return {
-      charged: true,
-      fee: X402_FEE,
-      feeInNaira: X402_FEE * 1664,
-      paymentMethod: 'x402',
-      transactionType: params.transactionType,
-    };
-  } catch (error) {
-    console.error('❌ x402 payment failed:', error.message);
-    return {
-      charged: false,
-      fee: 0,
-      error: error.message,
-    };
-  }
-}
-
-/**
- * Create x402 payment request
- * Returns HTTP 402 response with payment details
+ * Create x402 payment request (returned in 402 response)
+ * Follows the x402 spec payment requirements format
  */
 export async function createX402PaymentRequest(params: {
   service: string;
@@ -74,119 +58,162 @@ export async function createX402PaymentRequest(params: {
 }) {
   const paymentAmount = params.amount || X402_FEE;
 
-  // x402 payment request structure
-  const paymentRequest = {
-    version: '1.0',
-    type: 'x402',
-    paymentRequired: true,
-    amount: paymentAmount.toString(),
-    currency: 'cUSD',
-    chain: 'celo',
-    recipient: process.env.AGENT_WALLET_ADDRESS,
-    service: params.service,
-    description: params.description,
-    metadata: {
-      agentId: process.env.AGENT_ID,
-      timestamp: new Date().toISOString(),
-    },
+  // x402 payment requirements per spec
+  const paymentRequirements = {
+    x402Version: 1,
+    accepts: [
+      {
+        scheme: 'exact',
+        network: chain.name.toLowerCase(),
+        maxAmountRequired: String(Math.round(paymentAmount * 1e18)), // wei
+        resource: params.service,
+        description: params.description,
+        mimeType: 'application/json',
+        payTo: AGENT_WALLET,
+        maxTimeoutSeconds: 300,
+        asset: CUSD_ADDRESS,
+        extra: {
+          name: 'cUSD',
+          version: '1',
+          decimals: 18,
+          humanReadableAmount: paymentAmount.toString(),
+        },
+      },
+    ],
+    error: 'Payment required. Send cUSD to the payTo address and include the tx hash in the X-PAYMENT header.',
   };
 
   return {
     statusCode: 402,
     headers: {
       'Content-Type': 'application/json',
-      'WWW-Authenticate': `X402 version="1.0", amount="${paymentAmount}", currency="cUSD", chain="celo"`,
+      'X-Payment-Required': Buffer.from(JSON.stringify(paymentRequirements)).toString('base64'),
     },
-    body: paymentRequest,
+    body: paymentRequirements,
   };
 }
 
 /**
- * Verify x402 payment was received
- * Called after user pays to unlock service
+ * Verify x402 payment on-chain
+ *
+ * Checks that:
+ * 1. Transaction exists on Celo
+ * 2. Transaction is confirmed (not pending)
+ * 3. Contains a cUSD Transfer event to our wallet
+ * 4. Amount is >= required fee
  */
-export async function verifyX402Payment(paymentTxHash: string) {
+export async function verifyX402Payment(paymentData: string): Promise<{
+  verified: boolean;
+  txHash?: string;
+  payer?: string;
+  amount?: string;
+  error?: string;
+}> {
   try {
-    // TODO: Verify transaction on Celo blockchain
-    // Check that:
-    // 1. Transaction exists
-    // 2. Amount is correct
-    // 3. Sent to our agent wallet
-    // 4. Token is cUSD
+    // paymentData could be a raw tx hash or base64-encoded payment payload
+    let txHash: `0x${string}`;
 
-    console.log('✅ x402 payment verified:', paymentTxHash);
+    if (paymentData.startsWith('0x')) {
+      txHash = paymentData as `0x${string}`;
+    } else {
+      // Try to decode base64 payload (x402 v2 format)
+      try {
+        const decoded = JSON.parse(Buffer.from(paymentData, 'base64').toString());
+        txHash = (decoded.payload?.txHash || decoded.txHash || paymentData) as `0x${string}`;
+      } catch {
+        txHash = paymentData as `0x${string}`;
+      }
+    }
+
+    const client = getPublicClient();
+
+    // Get transaction receipt
+    const receipt = await client.getTransactionReceipt({ hash: txHash });
+
+    if (receipt.status !== 'success') {
+      return { verified: false, error: 'Transaction failed or reverted' };
+    }
+
+    // Look for cUSD Transfer event to our wallet
+    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'; // Transfer(address,address,uint256)
+    const agentWalletPadded = AGENT_WALLET.toLowerCase().replace('0x', '0x000000000000000000000000');
+
+    let payer: string | undefined;
+    let amount: bigint = BigInt(0);
+
+    for (const log of receipt.logs) {
+      if (
+        log.address.toLowerCase() === CUSD_ADDRESS.toLowerCase() &&
+        log.topics[0] === transferTopic &&
+        log.topics[2]?.toLowerCase() === agentWalletPadded
+      ) {
+        payer = '0x' + (log.topics[1]?.slice(26) || '');
+        amount = BigInt(log.data);
+        break;
+      }
+    }
+
+    if (!payer || amount === BigInt(0)) {
+      return { verified: false, error: 'No cUSD transfer to agent wallet found in transaction' };
+    }
+
+    // Check amount is sufficient (with 1% tolerance for rounding)
+    const requiredWei = BigInt(Math.round(X402_FEE * 1e18 * 0.99));
+    if (amount < requiredWei) {
+      return {
+        verified: false,
+        error: `Insufficient payment: got ${formatUnits(amount, 18)} cUSD, need ${X402_FEE} cUSD`,
+      };
+    }
 
     return {
       verified: true,
-      txHash: paymentTxHash,
-      amount: X402_FEE,
-      timestamp: new Date().toISOString(),
+      txHash,
+      payer,
+      amount: formatUnits(amount, 18),
     };
-  } catch (error) {
-    console.error('❌ Payment verification failed:', error.message);
+  } catch (error: any) {
     return {
       verified: false,
-      error: error.message,
+      error: `Verification failed: ${error.message}`,
     };
   }
 }
 
 /**
- * Process automatic x402 payment (for MiniPay/compatible wallets)
- * Some wallets can auto-pay x402 requests
+ * Charge x402 fee (used in Telegram bot for tracking)
+ * In the API, payment is verified via middleware instead
  */
-export async function processAutoPayment(params: {
-  userAddress: string;
+export async function chargeX402Fee(params: {
+  userId: string;
+  transactionType: string;
   amount: number;
-  service: string;
 }) {
-  try {
-    // In production with Thirdweb:
-    // const contract = getContract({
-    //   client,
-    //   chain: celo,
-    //   address: CUSD_TOKEN_ADDRESS,
-    // });
-
-    // const transaction = prepareContractCall({
-    //   contract,
-    //   method: "transfer",
-    //   params: [process.env.AGENT_WALLET_ADDRESS, params.amount],
-    // });
-
-    // const result = await sendTransaction({
-    //   account,
-    //   transaction,
-    // });
-
-    console.log(`💰 Auto-payment processed: $${params.amount} from ${params.userAddress}`);
-
-    return {
-      success: true,
-      amount: params.amount,
-      service: params.service,
-      // txHash: result.transactionHash,
-    };
-  } catch (error) {
-    console.error('❌ Auto-payment failed:', error.message);
-    return {
-      success: false,
-      error: error.message,
-    };
+  if (process.env.X402_ENABLED !== 'true') {
+    return { charged: false, fee: 0 };
   }
+
+  // For Telegram: log the interaction (actual payment handled differently)
+  return {
+    charged: false,
+    fee: X402_FEE,
+    note: 'Telegram interactions are free. x402 fees apply to API calls only.',
+    transactionType: params.transactionType,
+  };
 }
 
 /**
- * Get x402 payment history for analytics
+ * Get x402 protocol info for the agent
  */
-export async function getPaymentHistory() {
-  // TODO: Query blockchain for all payments to agent wallet
-  // Filter by x402 metadata
-
+export function getX402Info() {
   return {
-    totalPayments: 47,
-    totalEarned: 47 * X402_FEE,
+    protocol: 'x402',
+    version: 1,
+    fee: X402_FEE,
     currency: 'cUSD',
-    payments: [],
+    chain: chain.name,
+    asset: CUSD_ADDRESS,
+    payTo: AGENT_WALLET,
+    spec: 'https://github.com/coinbase/x402',
   };
 }

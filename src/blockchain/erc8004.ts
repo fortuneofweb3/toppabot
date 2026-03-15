@@ -1,36 +1,64 @@
-import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
+import { createPublicClient, createWalletClient, http, parseAbi, encodeFunctionData, toHex } from 'viem';
 import { celo, celoAlfajores } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 
 /**
- * ERC-8004 Registry on Celo
- * Handles agent identity and reputation
+ * ERC-8004: Trustless Agents — On-chain identity and reputation on Celo
+ *
+ * Uses the official ERC-8004 singleton registries deployed on Celo:
+ * - Identity Registry: ERC-721 based agent identity (agentId = NFT)
+ * - Reputation Registry: Feedback and rating system
  *
  * Spec: https://eips.ethereum.org/EIPS/eip-8004
  */
 
-// ERC-8004 Registry addresses on Celo
-// NOTE: These will be provided by Celo docs or you deploy your own
-const ERC8004_ADDRESSES = {
-  mainnet: process.env.ERC8004_REGISTRY_ADDRESS as `0x${string}`,
-  testnet: '0x...' as `0x${string}`, // Replace with actual testnet address
-};
-
 const isTestnet = process.env.NODE_ENV !== 'production';
 const chain = isTestnet ? celoAlfajores : celo;
-const registryAddress = isTestnet ? ERC8004_ADDRESSES.testnet : ERC8004_ADDRESSES.mainnet;
 
-// ERC-8004 ABI (simplified - add full ABI from Celo docs)
-const erc8004Abi = parseAbi([
-  'function register(string name, string description, string[] skills) external returns (uint256)',
-  'function addFeedback(uint256 agentId, uint8 rating, string comment) external',
-  'function getAgent(uint256 agentId) external view returns ((string, string, string[], uint256))',
-  'function getReputation(uint256 agentId) external view returns (uint256, uint256, uint256)',
-  'event AgentRegistered(uint256 indexed agentId, address indexed owner, string name)',
-  'event FeedbackAdded(uint256 indexed agentId, address indexed from, uint8 rating)',
+// Official ERC-8004 deployed addresses (vanity prefix 0x8004)
+const IDENTITY_REGISTRY = isTestnet
+  ? '0x8004A818BFB912233c491871b3d84c89A494BD9e' as `0x${string}`
+  : '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as `0x${string}`;
+
+const REPUTATION_REGISTRY = isTestnet
+  ? '0x8004B663056A597Dffe9eCcC1965A193B7388713' as `0x${string}`
+  : '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as `0x${string}`;
+
+// Identity Registry ABI (from ERC-8004 spec)
+const identityRegistryAbi = parseAbi([
+  // Registration
+  'function register(string agentURI) external returns (uint256)',
+  'function register() external returns (uint256)',
+
+  // URI & Metadata
+  'function setAgentURI(uint256 agentId, string newURI) external',
+  'function tokenURI(uint256 tokenId) external view returns (string)',
+  'function getMetadata(uint256 agentId, string metadataKey) external view returns (bytes)',
+  'function setMetadata(uint256 agentId, string metadataKey, bytes metadataValue) external',
+
+  // Wallet
+  'function setAgentWallet(uint256 agentId, address newWallet, uint256 deadline, bytes signature) external',
+  'function getAgentWallet(uint256 agentId) external view returns (address)',
+
+  // ERC-721
+  'function ownerOf(uint256 tokenId) external view returns (address)',
+  'function balanceOf(address owner) external view returns (uint256)',
+
+  // Events
+  'event Registered(uint256 indexed agentId, string agentURI, address indexed owner)',
 ]);
 
-// Lazy-initialized clients (env vars aren't available at import time)
+// Reputation Registry ABI (from ERC-8004 spec)
+const reputationRegistryAbi = parseAbi([
+  'function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash) external',
+  'function revokeFeedback(uint256 agentId, uint64 feedbackIndex) external',
+  'function getSummary(uint256 agentId, address[] clientAddresses, string tag1, string tag2) external view returns (uint64 count, int128 summaryValue, uint8 summaryValueDecimals)',
+  'function getClients(uint256 agentId) external view returns (address[])',
+  'function getLastIndex(uint256 agentId, address clientAddress) external view returns (uint64)',
+  'event NewFeedback(uint256 indexed agentId, address indexed clientAddress, uint64 feedbackIndex, int128 value, uint8 valueDecimals, string indexed indexedTag1, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)',
+]);
+
+// Lazy-initialized clients
 let _publicClient: ReturnType<typeof createPublicClient> | null = null;
 let _walletClient: ReturnType<typeof createWalletClient> | null = null;
 
@@ -56,65 +84,111 @@ function getWalletClient() {
   return _walletClient;
 }
 
+// In-memory cache of our agent ID (set after registration)
+let cachedAgentId: bigint | null = null;
+
 /**
- * Register Jara agent on ERC-8004
+ * Jara's agent URI — describes capabilities per A2A protocol
+ * In production, host this as a JSON file at a URL
+ */
+function getAgentURI(): string {
+  // For hackathon, use a data URI with agent metadata
+  const agentCard = {
+    name: 'Jara',
+    description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
+    version: '2.0.0',
+    skills: [
+      'airtime_topup',
+      'bill_payment',
+      'gift_card_purchase',
+      'multi_intent_resolution',
+    ],
+    protocols: ['x402', 'a2a'],
+    chain: 'celo',
+    endpoints: {
+      api: process.env.API_URL || 'http://localhost:3000',
+      telegram: process.env.TELEGRAM_BOT_USERNAME || '',
+    },
+  };
+  // Return as a data URI for the hackathon (in production, host this at a real URL)
+  return `data:application/json;base64,${Buffer.from(JSON.stringify(agentCard)).toString('base64')}`;
+}
+
+/**
+ * Register Jara agent on ERC-8004 Identity Registry
+ * Mints an NFT representing the agent's on-chain identity
  */
 export async function registerAgent() {
   try {
-    console.log('🔐 Registering Jara agent on ERC-8004...');
+    console.log('Registering Jara agent on ERC-8004 Identity Registry...');
+    console.log(`  Chain: ${chain.name}`);
+    console.log(`  Identity Registry: ${IDENTITY_REGISTRY}`);
 
-    const agentName = 'Jara';
-    const description = 'Jara ("extra" in Naija) - Your autonomous AI agent for crypto-to-cash conversion in Nigeria. Handles cUSD → NGN bank transfers, bill payments (airtime, utilities, cable TV), and virtual card funding. Built for real-world financial access.';
-    const skills = [
-      'bank_transfer',
-      'bill_payment',
-      'rate_optimization',
-      'airtime_purchase',
-      'virtual_card_loading',
-      'selfclaw_verification',
-    ];
-
-    // Simulate contract call (replace with actual when ERC-8004 is deployed)
+    const agentURI = getAgentURI();
     const account = getWalletClient().account;
+
     const { request } = await getPublicClient().simulateContract({
-      address: registryAddress,
-      abi: erc8004Abi,
+      address: IDENTITY_REGISTRY,
+      abi: identityRegistryAbi,
       functionName: 'register',
-      args: [agentName, description, skills],
+      args: [agentURI],
       account,
     });
 
     const hash = await getWalletClient().writeContract(request);
+    console.log('  Transaction submitted:', hash);
 
-    console.log('✅ Agent registered! Transaction hash:', hash);
-
-    // Wait for confirmation
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    console.log('  Confirmed in block:', receipt.blockNumber);
 
-    // Extract agentId from logs
-    const agentId = receipt.logs[0]?.topics[1]; // AgentRegistered event
+    // Extract agentId from Registered event
+    const registeredEvent = receipt.logs.find(
+      log => log.address.toLowerCase() === IDENTITY_REGISTRY.toLowerCase()
+    );
+    const agentId = registeredEvent?.topics[1]
+      ? BigInt(registeredEvent.topics[1])
+      : null;
+
+    if (agentId) {
+      cachedAgentId = agentId;
+      console.log('  Agent ID:', agentId.toString());
+    }
 
     return {
-      agentId: agentId || 'kleva-' + Date.now(),
+      agentId: agentId?.toString() || 'unknown',
       transactionHash: hash,
       registered: true,
-      blockNumber: receipt.blockNumber,
+      blockNumber: Number(receipt.blockNumber),
+      chain: chain.name,
+      identityRegistry: IDENTITY_REGISTRY,
     };
-  } catch (error) {
-    console.error('❌ Agent registration failed:', error.message);
-
-    // For development: return mock data if ERC-8004 not deployed yet
+  } catch (error: any) {
+    console.error('Agent registration failed:', error.message);
     return {
-      agentId: 'kleva-dev-' + Date.now(),
-      registered: true,
-      note: 'Mock registration - deploy ERC-8004 contract for production',
+      agentId: null,
+      registered: false,
+      error: error.message,
+      note: 'Registration failed — ensure wallet has CELO for gas on ' + chain.name,
     };
   }
 }
 
 /**
- * Record transaction for reputation building
- * This is called after each successful action
+ * Get or set the agent ID (from env or registration)
+ */
+function getAgentId(): bigint {
+  if (cachedAgentId) return cachedAgentId;
+  const envId = process.env.AGENT_ID;
+  if (envId && !isNaN(Number(envId))) {
+    cachedAgentId = BigInt(envId);
+    return cachedAgentId;
+  }
+  return BigInt(1); // fallback
+}
+
+/**
+ * Record a transaction as reputation feedback on ERC-8004
+ * Called after each successful service execution
  */
 export async function recordTransaction(params: {
   type: string;
@@ -124,95 +198,120 @@ export async function recordTransaction(params: {
   metadata?: any;
 }) {
   try {
-    const agentId = BigInt(process.env.AGENT_ID || '1');
-    const rating = params.status === 'success' ? 5 : 1;
-    const comment = `${params.type} - ${params.status} - Amount: $${params.amount}`;
+    const agentId = getAgentId();
+    // Rating: 100 = success (1.00 with 2 decimals), 0 = failed
+    const value = params.status === 'success' ? BigInt(100) : BigInt(0);
+    const valueDecimals = 2;
+    const tag1 = params.type; // e.g. 'airtime', 'bill_payment', 'gift_card'
+    const tag2 = params.status;
+    const endpoint = process.env.API_URL || 'http://localhost:3000';
+    const feedbackURI = ''; // Could point to detailed transaction data
+    const feedbackHash = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
 
-    console.log('📊 Recording transaction on ERC-8004:', {
-      type: params.type,
-      rating,
-    });
-
-    // Record feedback on-chain
     const { request } = await getPublicClient().simulateContract({
-      address: registryAddress,
-      abi: erc8004Abi,
-      functionName: 'addFeedback',
-      args: [agentId, rating, comment],
+      address: REPUTATION_REGISTRY,
+      abi: reputationRegistryAbi,
+      functionName: 'giveFeedback',
+      args: [agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash],
       account: getWalletClient().account,
     });
 
     const hash = await getWalletClient().writeContract(request);
-
     await getPublicClient().waitForTransactionReceipt({ hash });
 
+    return { recorded: true, transactionHash: hash };
+  } catch (error: any) {
+    // Don't fail the main operation if reputation recording fails
+    console.error('Failed to record on ERC-8004:', error.message);
+    return { recorded: false, error: error.message };
+  }
+}
+
+/**
+ * Get agent's reputation summary from ERC-8004 Reputation Registry
+ */
+export async function getAgentReputation() {
+  try {
+    const agentId = getAgentId();
+
+    // Get all clients who have given feedback
+    const clients = await getPublicClient().readContract({
+      address: REPUTATION_REGISTRY,
+      abi: reputationRegistryAbi,
+      functionName: 'getClients',
+      args: [agentId],
+    }) as `0x${string}`[];
+
+    // Get summary across all clients
+    const [count, summaryValue, summaryValueDecimals] = await getPublicClient().readContract({
+      address: REPUTATION_REGISTRY,
+      abi: reputationRegistryAbi,
+      functionName: 'getSummary',
+      args: [agentId, clients, '', ''],
+    }) as [bigint, bigint, number];
+
+    const divisor = Math.pow(10, summaryValueDecimals);
+    const score = Number(summaryValue) / divisor;
+
     return {
-      recorded: true,
-      transactionHash: hash,
+      agentId: agentId.toString(),
+      score,
+      totalFeedback: Number(count),
+      clients: clients.length,
+      chain: chain.name,
+      identityRegistry: IDENTITY_REGISTRY,
+      reputationRegistry: REPUTATION_REGISTRY,
     };
-  } catch (error) {
-    console.error('❌ Failed to record transaction:', error.message);
+  } catch (error: any) {
+    console.error('Failed to get reputation:', error.message);
     return {
-      recorded: false,
+      agentId: getAgentId().toString(),
+      score: 0,
+      totalFeedback: 0,
+      clients: 0,
+      chain: chain.name,
       error: error.message,
     };
   }
 }
 
 /**
- * Get agent's current reputation
- */
-export async function getAgentReputation() {
-  try {
-    const agentId = BigInt(process.env.AGENT_ID || '1');
-
-    const reputation = await getPublicClient().readContract({
-      address: registryAddress,
-      abi: erc8004Abi,
-      functionName: 'getReputation',
-      args: [agentId],
-    }) as [bigint, bigint, bigint];
-
-    const [score, totalInteractions, successfulInteractions] = reputation;
-
-    return {
-      score: Number(score) / 100, // Convert to 0-1 scale
-      totalTransactions: Number(totalInteractions),
-      successfulTransactions: Number(successfulInteractions),
-      successRate: Number(successfulInteractions) / Number(totalInteractions),
-      disputes: Number(totalInteractions) - Number(successfulInteractions),
-    };
-  } catch (error) {
-    console.error('❌ Failed to get reputation:', error.message);
-
-    // Return mock data for development
-    return {
-      score: 0.95,
-      totalTransactions: 47,
-      successfulTransactions: 46,
-      successRate: 0.98,
-      disputes: 1,
-    };
-  }
-}
-
-/**
- * Get agent details
+ * Get agent details from Identity Registry
  */
 export async function getAgentDetails() {
   try {
-    const agentId = BigInt(process.env.AGENT_ID || '1');
+    const agentId = getAgentId();
 
-    const agent = await getPublicClient().readContract({
-      address: registryAddress,
-      abi: erc8004Abi,
-      functionName: 'getAgent',
-      args: [agentId],
-    });
+    const [owner, uri, wallet] = await Promise.all([
+      getPublicClient().readContract({
+        address: IDENTITY_REGISTRY,
+        abi: identityRegistryAbi,
+        functionName: 'ownerOf',
+        args: [agentId],
+      }),
+      getPublicClient().readContract({
+        address: IDENTITY_REGISTRY,
+        abi: identityRegistryAbi,
+        functionName: 'tokenURI',
+        args: [agentId],
+      }),
+      getPublicClient().readContract({
+        address: IDENTITY_REGISTRY,
+        abi: identityRegistryAbi,
+        functionName: 'getAgentWallet',
+        args: [agentId],
+      }).catch(() => null),
+    ]);
 
-    return agent;
-  } catch (error) {
-    console.error('❌ Failed to get agent details:', error.message);
+    return {
+      agentId: agentId.toString(),
+      owner,
+      uri,
+      wallet,
+      chain: chain.name,
+    };
+  } catch (error: any) {
+    console.error('Failed to get agent details:', error.message);
     return null;
   }
 }

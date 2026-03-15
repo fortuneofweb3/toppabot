@@ -1,11 +1,12 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { createX402PaymentRequest, verifyX402Payment, chargeX402Fee } from '../blockchain/x402';
+import { createX402PaymentRequest, verifyX402Payment, getX402Info } from '../blockchain/x402';
 import {
   sendAirtime, getOperators, detectOperator,
   getBillers, payBill as payReloadlyBill,
   getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
 } from '../apis/reloadly';
-import { recordTransaction, getAgentReputation } from '../blockchain/erc8004';
+import { recordTransaction, getAgentReputation, getAgentDetails } from '../blockchain/erc8004';
+import { handleSelfVerification } from '../apis/selfclaw';
 
 const app = express();
 app.use(express.json());
@@ -24,15 +25,22 @@ interface X402Request extends Request {
 }
 
 async function x402Middleware(req: X402Request, res: Response, next: NextFunction) {
-  const paymentHeader = req.headers['x-402-payment'] as string;
+  // Support both x402 v1 (X-PAYMENT) and v2 (PAYMENT-SIGNATURE) headers, plus our custom header
+  const paymentHeader = (
+    req.headers['x-payment'] ||
+    req.headers['payment-signature'] ||
+    req.headers['x-402-payment']
+  ) as string;
 
   if (!paymentHeader) {
     const paymentRequest = await createX402PaymentRequest({
-      service: req.path,
+      service: `${req.method} ${req.path}`,
       description: `Jara API: ${req.method} ${req.path}`,
       amount: parseFloat(process.env.X402_FEE_AMOUNT || '0.5'),
     });
 
+    // Set x402 headers per spec
+    res.set('X-Payment-Required', paymentRequest.headers['X-Payment-Required']);
     res.status(402).json(paymentRequest.body);
     return;
   }
@@ -43,19 +51,19 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
     if (!verification.verified) {
       res.status(402).json({
         error: 'Payment verification failed',
-        message: 'The provided transaction hash could not be verified',
+        message: verification.error || 'The provided payment could not be verified',
       });
       return;
     }
 
     req.x402 = {
       verified: true,
-      txHash: paymentHeader,
-      payer: req.headers['x-402-payer'] as string || 'unknown',
+      txHash: verification.txHash || paymentHeader,
+      payer: verification.payer || 'unknown',
     };
 
     next();
-  } catch (error) {
+  } catch (error: any) {
     res.status(402).json({
       error: 'Payment verification error',
       message: error.message,
@@ -69,26 +77,36 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
 
 // Health check / agent info
 app.get('/', (_req: Request, res: Response) => {
+  const x402Info = getX402Info();
   res.json({
     agent: 'Jara',
     version: '2.0.0',
     description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
-    chain: 'celo',
-    protocol: 'x402',
-    identity: 'ERC-8004',
+    chain: x402Info.chain,
+    protocols: {
+      x402: {
+        spec: x402Info.spec,
+        fee: `${x402Info.fee} cUSD`,
+        asset: x402Info.asset,
+        payTo: x402Info.payTo,
+      },
+      erc8004: {
+        spec: 'https://eips.ethereum.org/EIPS/eip-8004',
+        description: 'On-chain agent identity and reputation',
+      },
+      selfProtocol: {
+        spec: 'https://docs.self.xyz',
+        description: 'ZK proof of humanity verification',
+      },
+    },
     services: [
       'airtime (mobile top-ups across 170+ countries)',
       'bills (electricity, water, TV, internet payments)',
       'gift_cards (300+ brands: Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Apple, Google Play, prepaid Visa/Mastercard)',
     ],
-    pricing: {
-      currency: 'cUSD',
-      feePerRequest: process.env.X402_FEE_AMOUNT || '0.5',
-      protocol: 'x402 (HTTP 402 Payment Required)',
-    },
     docs: {
-      howToUse: 'Send request with x-402-payment header containing cUSD tx hash',
-      example: 'curl -H "x-402-payment: 0xTX_HASH" https://jara.api/send-airtime',
+      howToUse: 'Send cUSD to payTo address, then include tx hash in X-PAYMENT header',
+      example: 'curl -H "X-PAYMENT: 0xTX_HASH" https://jara.api/send-airtime',
     },
   });
 });
@@ -173,6 +191,27 @@ app.get('/gift-cards/search', async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Agent identity (ERC-8004 on-chain details)
+app.get('/identity', async (_req: Request, res: Response) => {
+  try {
+    const details = await getAgentDetails();
+    res.json({ agent: 'Jara', ...details });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Self Protocol verification callback endpoint
+// Self's relayer POSTs ZK proofs here after user verifies in the Self app
+app.post('/api/verify', async (req: Request, res: Response) => {
+  try {
+    const result = await handleSelfVerification(req.body);
+    res.json({ status: result.verified ? 'success' : 'error', result: result.verified });
+  } catch (error: any) {
+    res.json({ status: 'error', result: false, reason: error.message });
   }
 });
 
@@ -405,7 +444,9 @@ export function startApiServer() {
     console.log(`   Public:  GET  /billers/:cc                - Utility billers by country`);
     console.log(`   Public:  GET  /gift-cards/:cc             - Gift card brands by country`);
     console.log(`   Public:  GET  /gift-cards/search?q=Steam  - Search gift cards`);
+    console.log(`   Public:  GET  /identity                   - ERC-8004 agent identity`);
     console.log(`   Public:  GET  /reputation                 - Agent reputation`);
+    console.log(`   Public:  POST /api/verify                 - Self Protocol callback`);
     console.log(`   Paid:    POST /send-airtime               - Send airtime top-up`);
     console.log(`   Paid:    POST /pay-bill                   - Pay utility bill`);
     console.log(`   Paid:    POST /buy-gift-card              - Buy a gift card`);

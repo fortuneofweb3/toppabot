@@ -1,6 +1,6 @@
 import { Telegraf, Context } from 'telegraf';
 import { runJaraAgent } from '../agent/graph';
-import { chargeX402Fee } from '../blockchain/x402';
+import { generateSelfVerifyLink, isUserVerified } from '../apis/selfclaw';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
@@ -18,7 +18,30 @@ bot.command('start', async (ctx) => {
     `I handle multiple requests at once! Try:\n` +
     `"Get 500 naira airtime for 08147658721 in Nigeria"\n` +
     `"Buy me a $25 Steam gift card"\n` +
-    `"Pay my DStv bill and get airtime for my brother in Kenya"`
+    `"Pay my DStv bill and get airtime for my brother in Kenya"\n\n` +
+    `Commands:\n` +
+    `/verify - Verify your identity with Self Protocol (ZK proof of humanity)`
+  );
+});
+
+/**
+ * Verify command — Self Protocol ZK identity verification
+ */
+bot.command('verify', async (ctx) => {
+  const userId = ctx.from.id.toString();
+
+  if (isUserVerified(userId)) {
+    await ctx.reply('You are already verified! Your identity has been confirmed via Self Protocol.');
+    return;
+  }
+
+  const verifyLink = generateSelfVerifyLink(userId);
+
+  await ctx.reply(
+    `To verify your identity, tap the link below to open the Self app:\n\n` +
+    `${verifyLink}\n\n` +
+    `Self Protocol uses ZK proofs to verify you're a real person without revealing your personal data.\n\n` +
+    `After verification, come back here and I'll confirm your status.`,
   );
 });
 
@@ -35,14 +58,7 @@ bot.on('text', async (ctx) => {
 
     // Run the agent
     const { response } = await runJaraAgent(userMessage, {
-      userAddress: userId, // In production, map to actual Celo address
-    });
-
-    // Charge x402 fee (for demo purposes)
-    await chargeX402Fee({
-      userId,
-      transactionType: 'chat_interaction',
-      amount: 0,
+      userAddress: userId,
     });
 
     // Send response
