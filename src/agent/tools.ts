@@ -2,8 +2,7 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { checkRates } from "../apis/rates";
 import { initiateOfframp, getBestOffer, confirmOrder, getOrder, getRate, generateOfframpWidgetUrl, SUPPORTED_COUNTRIES } from "../apis/fonbnk";
-import { payBill } from "../apis/vtu";
-import { loadVirtualCard } from "../apis/sudo";
+import { sendAirtime, getOperators, detectOperator, getBillers, payBill as payReloadlyBill } from "../apis/reloadly";
 import { verifySelfClaw } from "../apis/selfclaw";
 import { recordTransaction } from "../blockchain/erc8004";
 
@@ -53,27 +52,14 @@ export const offrampTool = new DynamicStructuredTool({
   schema: z.object({
     amount: z.number().describe("Amount in USD to convert"),
     senderAddress: z.string().describe("User's Celo wallet address that will send cUSD"),
-    bankDetails: z.record(z.string()).describe("Recipient details object with fields from get_offer requiredFields (e.g. bankName, accountNumber, accountName for bank; or phone number for mobile money)"),
+    bankDetails: z.record(z.string()).describe("Recipient details object with fields from get_offer requiredFields"),
     country: z.string().optional().describe("Country ISO code (e.g. NG, KE, ZA, GH). Defaults to NG"),
     type: z.string().optional().describe("Offramp type: 'bank' or 'mobile_money'. Defaults to country's primary type"),
   }),
   func: async ({ amount, senderAddress, bankDetails, country, type }) => {
     try {
-      const result = await initiateOfframp({
-        amount,
-        senderAddress,
-        bankDetails,
-        country,
-        type,
-      });
-
-      await recordTransaction({
-        type: 'offramp',
-        amount,
-        status: 'success',
-        metadata: { orderId: result.orderId },
-      });
-
+      const result = await initiateOfframp({ amount, senderAddress, bankDetails, country, type });
+      await recordTransaction({ type: 'offramp', amount, status: 'success', metadata: { orderId: result.orderId } });
       return JSON.stringify(result);
     } catch (error) {
       return JSON.stringify({ error: error.message });
@@ -86,7 +72,7 @@ export const offrampTool = new DynamicStructuredTool({
  */
 export const confirmOrderTool = new DynamicStructuredTool({
   name: "confirm_order",
-  description: "Confirm a Fonbnk offramp order after the user has sent cUSD to the deposit address. Provide the orderId from initiate_offramp and the on-chain transaction hash.",
+  description: "Confirm a Fonbnk offramp order after the user has sent cUSD to the deposit address.",
   schema: z.object({
     orderId: z.string().describe("Order ID from initiate_offramp"),
     txHash: z.string().describe("On-chain transaction hash of the cUSD transfer"),
@@ -94,15 +80,7 @@ export const confirmOrderTool = new DynamicStructuredTool({
   func: async ({ orderId, txHash }) => {
     try {
       const order = await confirmOrder({ orderId, txHash });
-
-      await recordTransaction({
-        type: 'offramp_confirm',
-        amount: order.amountUsd,
-        status: 'success',
-        txHash,
-        metadata: { orderId },
-      });
-
+      await recordTransaction({ type: 'offramp_confirm', amount: order.amountUsd, status: 'success', txHash, metadata: { orderId } });
       return JSON.stringify(order);
     } catch (error) {
       return JSON.stringify({ error: error.message });
@@ -134,7 +112,7 @@ export const getOrderTool = new DynamicStructuredTool({
  */
 export const getWidgetUrlTool = new DynamicStructuredTool({
   name: "get_offramp_widget_url",
-  description: "Generate a Fonbnk widget URL where the user can complete the offramp in their browser. Alternative to the API flow.",
+  description: "Generate a Fonbnk widget URL where the user can complete the offramp in their browser.",
   schema: z.object({
     amount: z.number().describe("Amount to offramp"),
     countryIsoCode: z.string().optional().describe("Country ISO code (e.g. NG, KE). Defaults to NG"),
@@ -146,33 +124,78 @@ export const getWidgetUrlTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 7: Pay bills (electricity, airtime, data, cable TV)
+ * Tool 7: Send airtime top-up via Reloadly (150+ countries)
+ */
+export const sendAirtimeTool = new DynamicStructuredTool({
+  name: "send_airtime",
+  description: "Send mobile airtime top-up to any phone number across 150+ countries via Reloadly. Operator is auto-detected from the phone number.",
+  schema: z.object({
+    phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
+    useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
+  }),
+  func: async ({ phone, countryCode, amount, useLocalAmount }) => {
+    try {
+      const result = await sendAirtime({ phone, countryCode, amount, useLocalAmount });
+      await recordTransaction({ type: 'airtime', amount: result.requestedAmount, status: 'success', metadata: { operator: result.operatorName, phone } });
+      return JSON.stringify({
+        success: result.status === 'SUCCESSFUL',
+        operator: result.operatorName,
+        requestedAmount: result.requestedAmount,
+        requestedCurrency: result.requestedAmountCurrencyCode,
+        deliveredAmount: result.deliveredAmount,
+        deliveredCurrency: result.deliveredAmountCurrencyCode,
+        transactionId: result.transactionId,
+      });
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 8: Get mobile operators for a country
+ */
+export const getOperatorsTool = new DynamicStructuredTool({
+  name: "get_operators",
+  description: "List available mobile operators for a country. Use this to show the user which operators are supported for airtime top-ups.",
+  schema: z.object({
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+  }),
+  func: async ({ countryCode }) => {
+    try {
+      const operators = await getOperators(countryCode);
+      return JSON.stringify(operators.map(op => ({
+        id: op.operatorId,
+        name: op.name,
+        minAmount: op.minAmount,
+        maxAmount: op.maxAmount,
+        localCurrency: op.destinationCurrencyCode,
+        type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
+      })));
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 9: Pay utility bill via Reloadly (electricity, water, TV, internet)
  */
 export const payBillTool = new DynamicStructuredTool({
   name: "pay_bill",
-  description: "Pay Nigerian utility bills: electricity, airtime, data bundles, cable TV (DStv, GOtv)",
+  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId, then call this with the biller ID and account number.",
   schema: z.object({
-    billType: z.enum(['electricity', 'airtime', 'data', 'cable']).describe("Type of bill"),
-    provider: z.string().describe("Provider name (e.g., 'EEDC', 'MTN', 'DStv')"),
-    amount: z.number().describe("Amount in Naira"),
-    accountNumber: z.string().describe("Meter number, phone number, or smartcard number"),
+    billerId: z.number().describe("Biller ID from get_billers"),
+    accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),
+    amount: z.number().describe("Amount to pay (in local currency by default)"),
+    useLocalAmount: z.boolean().optional().describe("If true (default), amount is in local currency. If false, amount is in USD."),
   }),
-  func: async ({ billType, provider, amount, accountNumber }) => {
+  func: async ({ billerId, accountNumber, amount, useLocalAmount }) => {
     try {
-      const result = await payBill({
-        type: billType,
-        provider,
-        amount,
-        accountNumber,
-      });
-
-      await recordTransaction({
-        type: 'bill_payment',
-        amount,
-        status: 'success',
-        metadata: { billType, provider },
-      });
-
+      const result = await payReloadlyBill({ billerId, accountNumber, amount, useLocalAmount });
+      await recordTransaction({ type: 'bill_payment', amount, status: 'success', metadata: { billerId, accountNumber } });
       return JSON.stringify(result);
     } catch (error) {
       return JSON.stringify({ error: error.message });
@@ -181,31 +204,27 @@ export const payBillTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 8: Load virtual dollar card
+ * Tool 10: Get utility billers for a country
  */
-export const loadCardTool = new DynamicStructuredTool({
-  name: "load_virtual_card",
-  description: "Load a virtual USD/NGN card for international payments (Netflix, Amazon, etc.)",
+export const getBillersTool = new DynamicStructuredTool({
+  name: "get_billers",
+  description: "List available utility billers for a country. Types: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT.",
   schema: z.object({
-    amount: z.number().describe("Amount in USD to load"),
-    currency: z.enum(['USD', 'NGN']).describe("Card currency"),
-    cardId: z.string().optional().describe("Existing card ID, or create new if not provided"),
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    type: z.string().optional().describe("Bill type filter: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT"),
   }),
-  func: async ({ amount, currency, cardId }) => {
+  func: async ({ countryCode, type }) => {
     try {
-      const result = await loadVirtualCard({
-        amount,
-        currency,
-        cardId,
-      });
-
-      await recordTransaction({
-        type: 'card_load',
-        amount,
-        status: 'success',
-      });
-
-      return JSON.stringify(result);
+      const billers = await getBillers({ countryCode, type: type as any });
+      return JSON.stringify(billers.map(b => ({
+        id: b.id,
+        name: b.name,
+        type: b.type,
+        serviceType: b.serviceType,
+        currency: b.localTransactionCurrencyCode,
+        minAmount: b.minLocalTransactionAmount,
+        maxAmount: b.maxLocalTransactionAmount,
+      })));
     } catch (error) {
       return JSON.stringify({ error: error.message });
     }
@@ -213,11 +232,11 @@ export const loadCardTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 9: Verify user with SelfClaw
+ * Tool 11: Verify user with SelfProtocol
  */
 export const verifySelfClawTool = new DynamicStructuredTool({
   name: "verify_selfclaw",
-  description: "Verify user is human using SelfClaw ZK proof of humanity. Required before first transaction.",
+  description: "Verify user is human using SelfProtocol ZK proof of humanity.",
   schema: z.object({
     telegramId: z.string().describe("User's Telegram ID"),
   }),
@@ -231,21 +250,6 @@ export const verifySelfClawTool = new DynamicStructuredTool({
   },
 });
 
-/**
- * Tool 10: Get user balance
- */
-export const getBalanceTool = new DynamicStructuredTool({
-  name: "get_balance",
-  description: "Check user's cUSD balance on Celo",
-  schema: z.object({
-    address: z.string().describe("User's Celo wallet address"),
-  }),
-  func: async ({ address }) => {
-    // TODO: Implement with viem
-    return JSON.stringify({ balance: 0, currency: 'cUSD' });
-  },
-});
-
 // Export all tools as array for LangGraph
 export const tools = [
   checkRatesTool,
@@ -254,8 +258,9 @@ export const tools = [
   confirmOrderTool,
   getOrderTool,
   getWidgetUrlTool,
+  sendAirtimeTool,
+  getOperatorsTool,
   payBillTool,
-  loadCardTool,
+  getBillersTool,
   verifySelfClawTool,
-  getBalanceTool,
 ];

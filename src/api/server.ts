@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { createX402PaymentRequest, verifyX402Payment, chargeX402Fee } from '../blockchain/x402';
 import { initiateOfframp, getCUSDtoNGNRate, getBestOffer, getOrder, confirmOrder, generateOfframpWidgetUrl, getRate, SUPPORTED_COUNTRIES, getCountries } from '../apis/fonbnk';
 import { checkRates } from '../apis/rates';
+import { sendAirtime, getOperators, detectOperator, getBillers, payBill as payReloadlyBill } from '../apis/reloadly';
 import { recordTransaction, getAgentReputation } from '../blockchain/erc8004';
 
 const app = express();
@@ -85,9 +86,9 @@ app.get('/', (_req: Request, res: Response) => {
     })),
     services: [
       'offramp (cUSD → local currency via bank or mobile money)',
-      'bills (airtime, electricity, data, cable TV)',
+      'airtime (mobile top-ups across 150+ countries via Reloadly)',
+      'bills (electricity, water, TV, internet via Reloadly)',
       'rates (multi-source rate comparison)',
-      'cards (virtual dollar card loading)',
     ],
     pricing: {
       currency: 'cUSD',
@@ -162,6 +163,30 @@ app.get('/order/:id', async (req: Request, res: Response) => {
   try {
     const order = await getOrder(req.params.id);
     res.json(order);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get mobile operators for a country (for airtime)
+app.get('/operators/:country', async (req: Request, res: Response) => {
+  try {
+    const operators = await getOperators(req.params.country);
+    res.json({ country: req.params.country.toUpperCase(), operators, total: operators.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get utility billers for a country
+app.get('/billers/:country', async (req: Request, res: Response) => {
+  try {
+    const type = req.query.type as string | undefined;
+    const billers = await getBillers({
+      countryCode: req.params.country,
+      type: type as any,
+    });
+    res.json({ country: req.params.country.toUpperCase(), billers, total: billers.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -305,47 +330,55 @@ app.post('/confirm-order', x402Middleware, async (req: X402Request, res: Respons
   }
 });
 
-// Pay bills (airtime, electricity, data, cable TV)
-app.post('/pay-bill', x402Middleware, async (req: X402Request, res: Response) => {
+// Send airtime top-up via Reloadly
+app.post('/send-airtime', x402Middleware, async (req: X402Request, res: Response) => {
   try {
-    const { type, provider, accountNumber, amount } = req.body;
+    const { phone, countryCode, amount, operatorId, useLocalAmount } = req.body;
 
-    if (!type || !provider || !accountNumber || !amount) {
+    if (!phone || !countryCode || !amount) {
       res.status(400).json({
         error: 'Missing required fields',
-        required: ['type', 'provider', 'accountNumber', 'amount'],
-        supportedTypes: ['airtime', 'data', 'electricity', 'cable'],
+        required: ['phone', 'countryCode', 'amount'],
+        optional: ['operatorId', 'useLocalAmount'],
+        description: 'amount is in USD unless useLocalAmount=true. Operator auto-detected from phone if not provided.',
         example: {
-          type: 'airtime',
-          provider: 'MTN',
-          accountNumber: '08012345678',
-          amount: 1000,
+          phone: '08147658721',
+          countryCode: 'NG',
+          amount: 5,
+          useLocalAmount: false,
+        },
+        helperEndpoints: {
+          operators: 'GET /operators/:country - list operators',
         },
       });
       return;
     }
 
-    // TODO: Integrate with VTU.ng API
-    // For now, record transaction and return mock
+    const result = await sendAirtime({ phone, countryCode, amount, operatorId, useLocalAmount });
+
     await recordTransaction({
-      type: `bill_${type}_api`,
-      amount,
-      status: 'success',
+      type: 'airtime_api',
+      amount: result.requestedAmount,
+      status: result.status === 'SUCCESSFUL' ? 'success' : 'failed',
       metadata: {
         caller: req.x402?.payer,
-        billType: type,
-        provider,
+        operator: result.operatorName,
+        phone,
+        country: countryCode,
         source: 'x402_api',
       },
     });
 
     res.json({
-      success: true,
-      type,
-      provider,
-      accountNumber,
-      amount,
-      status: 'completed',
+      success: result.status === 'SUCCESSFUL',
+      transactionId: result.transactionId,
+      operator: result.operatorName,
+      requestedAmount: result.requestedAmount,
+      requestedCurrency: result.requestedAmountCurrencyCode,
+      deliveredAmount: result.deliveredAmount,
+      deliveredCurrency: result.deliveredAmountCurrencyCode,
+      phone: result.recipientPhone,
+      status: result.status,
       x402: {
         feePaid: process.env.X402_FEE_AMOUNT || '0.5',
         paymentTx: req.x402?.txHash,
@@ -356,37 +389,50 @@ app.post('/pay-bill', x402Middleware, async (req: X402Request, res: Response) =>
   }
 });
 
-// Load virtual card
-app.post('/load-card', x402Middleware, async (req: X402Request, res: Response) => {
+// Pay utility bill via Reloadly (electricity, water, TV, internet)
+app.post('/pay-bill', x402Middleware, async (req: X402Request, res: Response) => {
   try {
-    const { amount, currency } = req.body;
+    const { billerId, accountNumber, amount, useLocalAmount } = req.body;
 
-    if (!amount) {
+    if (!billerId || !accountNumber || !amount) {
       res.status(400).json({
         error: 'Missing required fields',
-        required: ['amount'],
-        optional: ['currency'],
+        required: ['billerId', 'accountNumber', 'amount'],
+        optional: ['useLocalAmount'],
+        description: 'Get billerId from GET /billers/:country. useLocalAmount defaults to true.',
+        example: {
+          billerId: 5,
+          accountNumber: '4223568280',
+          amount: 1000,
+          useLocalAmount: true,
+        },
+        helperEndpoints: {
+          billers: 'GET /billers/:country?type=ELECTRICITY_BILL_PAYMENT',
+        },
       });
       return;
     }
 
-    // TODO: Integrate with Sudo Africa API
+    const result = await payReloadlyBill({ billerId, accountNumber, amount, useLocalAmount });
+
     await recordTransaction({
-      type: 'card_load_api',
+      type: 'bill_payment_api',
       amount,
       status: 'success',
       metadata: {
         caller: req.x402?.payer,
-        currency: currency || 'USD',
+        billerId,
+        accountNumber,
         source: 'x402_api',
       },
     });
 
     res.json({
       success: true,
-      amount,
-      currency: currency || 'USD',
-      status: 'completed',
+      transactionId: result.id,
+      status: result.status,
+      referenceId: result.referenceId,
+      message: result.message,
       x402: {
         feePaid: process.env.X402_FEE_AMOUNT || '0.5',
         paymentTx: req.x402?.txHash,
@@ -409,12 +455,14 @@ export function startApiServer() {
     console.log(`   Public:  GET  /rates         - Current rates (?country=NG)`);
     console.log(`   Public:  GET  /rates/:country - Rate for specific country`);
     console.log(`   Public:  GET  /offer         - Best offer (?country=NG&type=bank)`);
+    console.log(`   Public:  GET  /operators/:cc - Mobile operators by country`);
+    console.log(`   Public:  GET  /billers/:cc   - Utility billers by country`);
     console.log(`   Public:  GET  /order/:id     - Order status`);
     console.log(`   Public:  GET  /reputation    - Agent reputation`);
     console.log(`   Paid:    POST /offramp       - Initiate cUSD → local currency offramp`);
     console.log(`   Paid:    POST /confirm-order - Confirm order with tx hash`);
-    console.log(`   Paid:    POST /pay-bill      - Pay bills (airtime, utilities)`);
-    console.log(`   Paid:    POST /load-card     - Load virtual card`);
+    console.log(`   Paid:    POST /send-airtime  - Send airtime top-up (Reloadly)`);
+    console.log(`   Paid:    POST /pay-bill      - Pay utility bill (Reloadly)`);
     console.log(`   Payment: x402 (${process.env.X402_FEE_AMOUNT || '0.5'} cUSD per request)`);
   });
 }
