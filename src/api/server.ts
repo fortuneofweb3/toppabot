@@ -1,8 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { createX402PaymentRequest, verifyX402Payment, chargeX402Fee } from '../blockchain/x402';
-import { initiateOfframp, getCUSDtoNGNRate, getBestOffer, getOrder, confirmOrder, generateOfframpWidgetUrl, getRate, SUPPORTED_COUNTRIES, getCountries } from '../apis/fonbnk';
-import { checkRates } from '../apis/rates';
-import { sendAirtime, getOperators, detectOperator, getBillers, payBill as payReloadlyBill } from '../apis/reloadly';
+import {
+  sendAirtime, getOperators, detectOperator,
+  getBillers, payBill as payReloadlyBill,
+  getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
+} from '../apis/reloadly';
 import { recordTransaction, getAgentReputation } from '../blockchain/erc8004';
 
 const app = express();
@@ -22,11 +24,9 @@ interface X402Request extends Request {
 }
 
 async function x402Middleware(req: X402Request, res: Response, next: NextFunction) {
-  // Check for x402 payment header
   const paymentHeader = req.headers['x-402-payment'] as string;
 
   if (!paymentHeader) {
-    // No payment provided - return 402 with payment instructions
     const paymentRequest = await createX402PaymentRequest({
       service: req.path,
       description: `Jara API: ${req.method} ${req.path}`,
@@ -37,7 +37,6 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
     return;
   }
 
-  // Payment header provided - verify it
   try {
     const verification = await verifyX402Payment(paymentHeader);
 
@@ -49,7 +48,6 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
       return;
     }
 
-    // Payment verified - attach to request and continue
     req.x402 = {
       verified: true,
       txHash: paymentHeader,
@@ -73,22 +71,15 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     agent: 'Jara',
-    version: '1.0.0',
-    description: 'Autonomous AI agent for crypto-to-cash conversion across Africa, Latin America, and Asia',
+    version: '2.0.0',
+    description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
     chain: 'celo',
     protocol: 'x402',
     identity: 'ERC-8004',
-    supportedCountries: Object.entries(SUPPORTED_COUNTRIES).map(([code, info]) => ({
-      code,
-      name: info.name,
-      currency: info.currency,
-      types: info.types,
-    })),
     services: [
-      'offramp (cUSD → local currency via bank or mobile money)',
-      'airtime (mobile top-ups across 150+ countries via Reloadly)',
-      'bills (electricity, water, TV, internet via Reloadly)',
-      'rates (multi-source rate comparison)',
+      'airtime (mobile top-ups across 170+ countries)',
+      'bills (electricity, water, TV, internet payments)',
+      'gift_cards (300+ brands: Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Apple, Google Play, prepaid Visa/Mastercard)',
     ],
     pricing: {
       currency: 'cUSD',
@@ -97,75 +88,9 @@ app.get('/', (_req: Request, res: Response) => {
     },
     docs: {
       howToUse: 'Send request with x-402-payment header containing cUSD tx hash',
-      example: 'curl -H "x-402-payment: 0xTX_HASH" https://jara.api/offramp',
+      example: 'curl -H "x-402-payment: 0xTX_HASH" https://jara.api/send-airtime',
     },
   });
-});
-
-// Supported countries list
-app.get('/countries', async (_req: Request, res: Response) => {
-  try {
-    const countries = Object.entries(SUPPORTED_COUNTRIES).map(([code, info]) => ({
-      code,
-      ...info,
-    }));
-    res.json({ countries, total: countries.length });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get current rates (free - helps agents decide)
-app.get('/rates', async (req: Request, res: Response) => {
-  try {
-    const amount = parseFloat(req.query.amount as string) || 1;
-    const country = (req.query.country as string) || 'NG';
-    const rates = await checkRates(amount, country);
-    res.json(rates);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get rate for a specific country
-app.get('/rates/:country', async (req: Request, res: Response) => {
-  try {
-    const country = req.params.country.toUpperCase();
-    if (!SUPPORTED_COUNTRIES[country]) {
-      res.status(400).json({
-        error: `Unsupported country: ${country}`,
-        supported: Object.keys(SUPPORTED_COUNTRIES),
-      });
-      return;
-    }
-    const rate = await getRate(country);
-    res.json(rate);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get best Fonbnk offer (includes required fields for bank/mobile money details)
-app.get('/offer', async (req: Request, res: Response) => {
-  try {
-    const amount = parseFloat(req.query.amount as string) || undefined;
-    const country = (req.query.country as string)?.toUpperCase() || undefined;
-    const type = (req.query.type as string) || undefined;
-    const offer = await getBestOffer({ amount, country, type });
-    res.json(offer);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get order status
-app.get('/order/:id', async (req: Request, res: Response) => {
-  try {
-    const order = await getOrder(req.params.id);
-    res.json(order);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
 });
 
 // Get mobile operators for a country (for airtime)
@@ -192,6 +117,65 @@ app.get('/billers/:country', async (req: Request, res: Response) => {
   }
 });
 
+// Get gift card brands for a country
+app.get('/gift-cards/:country', async (req: Request, res: Response) => {
+  try {
+    const products = await getGiftCardProducts(req.params.country.toUpperCase());
+    const brands = new Map<string, { brandName: string; products: number; minPrice: number; maxPrice: number; currency: string }>();
+    for (const p of products) {
+      const existing = brands.get(p.brand.brandName);
+      const min = p.minSenderDenomination || p.fixedSenderDenominations?.[0] || 0;
+      const max = p.maxSenderDenomination || p.fixedSenderDenominations?.slice(-1)[0] || 0;
+      if (existing) {
+        existing.products++;
+        existing.minPrice = Math.min(existing.minPrice, min);
+        existing.maxPrice = Math.max(existing.maxPrice, max);
+      } else {
+        brands.set(p.brand.brandName, { brandName: p.brand.brandName, products: 1, minPrice: min, maxPrice: max, currency: p.senderCurrencyCode });
+      }
+    }
+    res.json({
+      country: req.params.country.toUpperCase(),
+      totalProducts: products.length,
+      brands: Array.from(brands.values()),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Search gift cards by brand name
+app.get('/gift-cards/search', async (req: Request, res: Response) => {
+  try {
+    const query = req.query.q as string;
+    const countryCode = req.query.country as string | undefined;
+
+    if (!query) {
+      res.status(400).json({ error: 'Missing query parameter: q' });
+      return;
+    }
+
+    const results = await searchGiftCards(query, countryCode);
+    res.json({
+      query,
+      results: results.slice(0, 20).map(p => ({
+        productId: p.productId,
+        name: p.productName,
+        brand: p.brand.brandName,
+        country: p.country.isoName,
+        currency: p.recipientCurrencyCode,
+        denominationType: p.denominationType,
+        fixedDenominations: p.fixedRecipientDenominations?.slice(0, 5),
+        minAmount: p.minRecipientDenomination,
+        maxAmount: p.maxRecipientDenomination,
+      })),
+      total: results.length,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Agent reputation (public - shows trust score)
 app.get('/reputation', async (_req: Request, res: Response) => {
   try {
@@ -209,126 +193,6 @@ app.get('/reputation', async (_req: Request, res: Response) => {
 // Paid Routes (x402 payment required)
 // Other agents pay per request to use these
 // ─────────────────────────────────────────────────
-
-// Offramp: Initiate cUSD → local currency transfer via Fonbnk
-// Supports 15 countries via bank transfer or mobile money
-// Flow: get offer → create order → return deposit address
-// Caller then sends cUSD to deposit address, then calls /confirm-order
-app.post('/offramp', x402Middleware, async (req: X402Request, res: Response) => {
-  try {
-    const { amount, senderAddress, bankDetails, country, type } = req.body;
-
-    if (!amount || !senderAddress || !bankDetails) {
-      // Get current offer to show required fields
-      let requiredFields = {};
-      try {
-        const response = await getBestOffer({ amount, country, type });
-        requiredFields = response.offer.requiredFields;
-      } catch {}
-
-      const countryCode = (country || 'NG').toUpperCase();
-      const countryInfo = SUPPORTED_COUNTRIES[countryCode];
-
-      res.status(400).json({
-        error: 'Missing required fields',
-        required: ['amount', 'senderAddress', 'bankDetails'],
-        optional: ['country', 'type'],
-        bankDetails: 'Object with fields from /offer requiredFields',
-        requiredFields,
-        supportedCountries: Object.keys(SUPPORTED_COUNTRIES),
-        example: {
-          amount: 20,
-          senderAddress: '0xYourCeloAddress',
-          country: countryCode,
-          type: countryInfo?.types[0] || 'bank',
-          bankDetails: {
-            bankName: 'GTBank',
-            accountNumber: '0123456789',
-            accountName: 'John Doe',
-          },
-        },
-      });
-      return;
-    }
-
-    const result = await initiateOfframp({
-      amount,
-      senderAddress,
-      bankDetails,
-      country,
-      type,
-    });
-
-    // Record on ERC-8004 for reputation
-    await recordTransaction({
-      type: 'offramp_api',
-      amount,
-      status: result.success ? 'success' : 'failed',
-      metadata: {
-        caller: req.x402?.payer,
-        paymentTx: req.x402?.txHash,
-        orderId: result.orderId,
-        source: 'x402_api',
-      },
-    });
-
-    res.json({
-      ...result,
-      x402: {
-        feePaid: process.env.X402_FEE_AMOUNT || '0.5',
-        paymentTx: req.x402?.txHash,
-      },
-      nextStep: 'Send cUSD to the depositAddress, then call POST /confirm-order with orderId and txHash',
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Confirm order after cUSD has been sent to deposit address
-app.post('/confirm-order', x402Middleware, async (req: X402Request, res: Response) => {
-  try {
-    const { orderId, txHash } = req.body;
-
-    if (!orderId || !txHash) {
-      res.status(400).json({
-        error: 'Missing required fields',
-        required: ['orderId', 'txHash'],
-        description: 'Call this after sending cUSD to the deposit address from /offramp',
-      });
-      return;
-    }
-
-    const order = await confirmOrder({ orderId, txHash });
-
-    await recordTransaction({
-      type: 'offramp_confirm_api',
-      amount: order.amountUsd,
-      status: 'success',
-      txHash,
-      metadata: {
-        caller: req.x402?.payer,
-        orderId,
-        source: 'x402_api',
-      },
-    });
-
-    res.json({
-      success: true,
-      orderId: order._id,
-      status: order.status,
-      exchangeRate: order.exchangeRate,
-      amountUsd: order.amountUsd,
-      amountNgn: order.amountFiat,
-      x402: {
-        feePaid: process.env.X402_FEE_AMOUNT || '0.5',
-        paymentTx: req.x402?.txHash,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // Send airtime top-up via Reloadly
 app.post('/send-airtime', x402Middleware, async (req: X402Request, res: Response) => {
@@ -443,6 +307,92 @@ app.post('/pay-bill', x402Middleware, async (req: X402Request, res: Response) =>
   }
 });
 
+// Buy a gift card
+app.post('/buy-gift-card', x402Middleware, async (req: X402Request, res: Response) => {
+  try {
+    const { productId, amount, recipientEmail, quantity } = req.body;
+
+    if (!productId || !amount || !recipientEmail) {
+      res.status(400).json({
+        error: 'Missing required fields',
+        required: ['productId', 'amount', 'recipientEmail'],
+        optional: ['quantity'],
+        description: 'Get productId from GET /gift-cards/search?q=Steam or GET /gift-cards/:country',
+        example: {
+          productId: 120,
+          amount: 25,
+          recipientEmail: 'user@example.com',
+          quantity: 1,
+        },
+        helperEndpoints: {
+          search: 'GET /gift-cards/search?q=Steam&country=US',
+          browse: 'GET /gift-cards/:country',
+        },
+      });
+      return;
+    }
+
+    const result = await buyGiftCard({
+      productId,
+      unitPrice: amount,
+      recipientEmail,
+      quantity: quantity || 1,
+    });
+
+    await recordTransaction({
+      type: 'gift_card_api',
+      amount: result.amount,
+      status: 'success',
+      metadata: {
+        caller: req.x402?.payer,
+        productId,
+        brand: result.product.brand.brandName,
+        source: 'x402_api',
+      },
+    });
+
+    res.json({
+      success: true,
+      transactionId: result.transactionId,
+      amount: result.amount,
+      currency: result.currencyCode,
+      brand: result.product.brand.brandName,
+      product: result.product.productName,
+      status: result.status,
+      redeemCodeEndpoint: `GET /gift-card-code/${result.transactionId}`,
+      x402: {
+        feePaid: process.env.X402_FEE_AMOUNT || '0.5',
+        paymentTx: req.x402?.txHash,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get gift card redeem code after purchase
+app.get('/gift-card-code/:transactionId', x402Middleware, async (req: X402Request, res: Response) => {
+  try {
+    const transactionId = parseInt(req.params.transactionId);
+    if (isNaN(transactionId)) {
+      res.status(400).json({ error: 'Invalid transactionId' });
+      return;
+    }
+
+    const codes = await getGiftCardRedeemCode(transactionId);
+    res.json({
+      transactionId,
+      codes,
+      x402: {
+        feePaid: process.env.X402_FEE_AMOUNT || '0.5',
+        paymentTx: req.x402?.txHash,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 /**
  * Start the HTTP API server
  */
@@ -450,19 +400,16 @@ export function startApiServer() {
   const port = parseInt(process.env.PORT || '3000');
   app.listen(port, () => {
     console.log(`Jara API server running on port ${port}`);
-    console.log(`   Public:  GET  /              - Agent info`);
-    console.log(`   Public:  GET  /countries     - Supported countries (${Object.keys(SUPPORTED_COUNTRIES).length})`);
-    console.log(`   Public:  GET  /rates         - Current rates (?country=NG)`);
-    console.log(`   Public:  GET  /rates/:country - Rate for specific country`);
-    console.log(`   Public:  GET  /offer         - Best offer (?country=NG&type=bank)`);
-    console.log(`   Public:  GET  /operators/:cc - Mobile operators by country`);
-    console.log(`   Public:  GET  /billers/:cc   - Utility billers by country`);
-    console.log(`   Public:  GET  /order/:id     - Order status`);
-    console.log(`   Public:  GET  /reputation    - Agent reputation`);
-    console.log(`   Paid:    POST /offramp       - Initiate cUSD → local currency offramp`);
-    console.log(`   Paid:    POST /confirm-order - Confirm order with tx hash`);
-    console.log(`   Paid:    POST /send-airtime  - Send airtime top-up (Reloadly)`);
-    console.log(`   Paid:    POST /pay-bill      - Pay utility bill (Reloadly)`);
+    console.log(`   Public:  GET  /                          - Agent info`);
+    console.log(`   Public:  GET  /operators/:cc              - Mobile operators by country`);
+    console.log(`   Public:  GET  /billers/:cc                - Utility billers by country`);
+    console.log(`   Public:  GET  /gift-cards/:cc             - Gift card brands by country`);
+    console.log(`   Public:  GET  /gift-cards/search?q=Steam  - Search gift cards`);
+    console.log(`   Public:  GET  /reputation                 - Agent reputation`);
+    console.log(`   Paid:    POST /send-airtime               - Send airtime top-up`);
+    console.log(`   Paid:    POST /pay-bill                   - Pay utility bill`);
+    console.log(`   Paid:    POST /buy-gift-card              - Buy a gift card`);
+    console.log(`   Paid:    GET  /gift-card-code/:id         - Get gift card redeem code`);
     console.log(`   Payment: x402 (${process.env.X402_FEE_AMOUNT || '0.5'} cUSD per request)`);
   });
 }

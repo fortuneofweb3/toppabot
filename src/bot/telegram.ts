@@ -10,17 +10,15 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 bot.command('start', async (ctx) => {
   await ctx.reply(
     `Welcome to Jara!\n\n` +
-    `I convert cUSD on Celo into local currency across 15 countries.\n\n` +
+    `I'm your AI agent for digital goods and utility payments across 170+ countries, powered by Celo.\n\n` +
     `I can:\n` +
-    `- Send money to bank accounts or mobile money wallets\n` +
-    `- Pay bills: electricity, airtime, data, cable TV\n` +
-    `- Load virtual dollar cards\n` +
-    `- Find the best conversion rates\n\n` +
-    `Supported: Nigeria, Kenya, South Africa, Ghana, Uganda, Tanzania, Zambia, Brazil, Philippines, and more.\n\n` +
-    `Just tell me what you need! Try:\n` +
-    `"Send 20 cUSD to my bank in Nigeria"\n` +
-    `"Convert 50 cUSD to KES via M-Pesa"\n` +
-    `"Check rates for Ghana"`
+    `- Buy airtime & data for any phone number worldwide\n` +
+    `- Pay utility bills (electricity, water, TV, internet)\n` +
+    `- Buy gift cards (Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Apple, and 300+ more)\n\n` +
+    `I handle multiple requests at once! Try:\n` +
+    `"Get 500 naira airtime for 08147658721 in Nigeria"\n` +
+    `"Buy me a $25 Steam gift card"\n` +
+    `"Pay my DStv bill and get airtime for my brother in Kenya"`
   );
 });
 
@@ -49,7 +47,7 @@ bot.on('text', async (ctx) => {
 
     // Send response
     await ctx.reply(response as string);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing message:', error);
     await ctx.reply(
       `Sorry, I encountered an error: ${error.message}\n\n` +
@@ -71,7 +69,7 @@ bot.catch((err, ctx) => {
  */
 export function startTelegramBot() {
   bot.launch();
-  console.log('🤖 Jara Telegram bot is running...');
+  console.log('Jara Telegram bot is running...');
 
   // Enable graceful stop
   process.once('SIGINT', () => bot.stop('SIGINT'));

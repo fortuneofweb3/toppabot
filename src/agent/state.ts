@@ -9,11 +9,10 @@ export interface AgentState {
   amount?: number;
   currency?: string;
   country?: string;
-  action?: 'bank' | 'mobile_money' | 'bill' | 'card' | 'airtime';
+  action?: 'airtime' | 'bill' | 'gift_card' | 'data';
   recipientDetails?: Record<string, string>;
-  billType?: 'electricity' | 'cable' | 'data';
+  billType?: 'electricity' | 'water' | 'tv' | 'internet';
   provider?: string;
-  rate?: number;
   selfClawVerified?: boolean;
   transactionHash?: string;
   error?: string;

@@ -1,134 +1,19 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { checkRates } from "../apis/rates";
-import { initiateOfframp, getBestOffer, confirmOrder, getOrder, getRate, generateOfframpWidgetUrl, SUPPORTED_COUNTRIES } from "../apis/fonbnk";
-import { sendAirtime, getOperators, detectOperator, getBillers, payBill as payReloadlyBill } from "../apis/reloadly";
+import {
+  sendAirtime, getOperators, detectOperator,
+  getBillers, payBill as payReloadlyBill,
+  getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
+} from "../apis/reloadly";
 import { verifySelfClaw } from "../apis/selfclaw";
 import { recordTransaction } from "../blockchain/erc8004";
 
 /**
- * Tool 1: Check conversion rates across multiple sources
- */
-export const checkRatesTool = new DynamicStructuredTool({
-  name: "check_rates",
-  description: "Check cUSD → local currency conversion rates for any supported country",
-  schema: z.object({
-    amount: z.number().describe("Amount in cUSD to convert"),
-    country: z.string().optional().describe("Country ISO code (e.g. NG, KE, ZA). Defaults to NG"),
-  }),
-  func: async ({ amount, country }) => {
-    const rates = await checkRates(amount, country);
-    return JSON.stringify(rates);
-  },
-});
-
-/**
- * Tool 2: Get best Fonbnk offer (exchange rate + required fields)
- */
-export const getOfferTool = new DynamicStructuredTool({
-  name: "get_offer",
-  description: `Get the best Fonbnk offer for cUSD → local currency conversion. Returns exchange rate, fees, and required recipient detail fields. Supports ${Object.keys(SUPPORTED_COUNTRIES).length} countries: ${Object.entries(SUPPORTED_COUNTRIES).map(([code, info]) => `${code} (${info.name})`).join(', ')}.`,
-  schema: z.object({
-    amount: z.number().optional().describe("Optional amount in USD to get offer for"),
-    country: z.string().optional().describe("Country ISO code (e.g. NG, KE, ZA, GH). Defaults to NG"),
-    type: z.string().optional().describe("Offramp type: 'bank' or 'mobile_money'. Defaults to country's primary type"),
-  }),
-  func: async ({ amount, country, type }) => {
-    try {
-      const offer = await getBestOffer({ amount, country, type });
-      return JSON.stringify(offer);
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
-  },
-});
-
-/**
- * Tool 3: Initiate offramp - cUSD → local currency via Fonbnk
- */
-export const offrampTool = new DynamicStructuredTool({
-  name: "initiate_offramp",
-  description: "Initiate a cUSD → local currency offramp via Fonbnk. Supports bank transfers and mobile money across 15 countries. Creates an order and returns a deposit address where the user must send cUSD. After sending, call confirm_order with the transaction hash.",
-  schema: z.object({
-    amount: z.number().describe("Amount in USD to convert"),
-    senderAddress: z.string().describe("User's Celo wallet address that will send cUSD"),
-    bankDetails: z.record(z.string()).describe("Recipient details object with fields from get_offer requiredFields"),
-    country: z.string().optional().describe("Country ISO code (e.g. NG, KE, ZA, GH). Defaults to NG"),
-    type: z.string().optional().describe("Offramp type: 'bank' or 'mobile_money'. Defaults to country's primary type"),
-  }),
-  func: async ({ amount, senderAddress, bankDetails, country, type }) => {
-    try {
-      const result = await initiateOfframp({ amount, senderAddress, bankDetails, country, type });
-      await recordTransaction({ type: 'offramp', amount, status: 'success', metadata: { orderId: result.orderId } });
-      return JSON.stringify(result);
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
-  },
-});
-
-/**
- * Tool 4: Confirm offramp order after cUSD has been sent
- */
-export const confirmOrderTool = new DynamicStructuredTool({
-  name: "confirm_order",
-  description: "Confirm a Fonbnk offramp order after the user has sent cUSD to the deposit address.",
-  schema: z.object({
-    orderId: z.string().describe("Order ID from initiate_offramp"),
-    txHash: z.string().describe("On-chain transaction hash of the cUSD transfer"),
-  }),
-  func: async ({ orderId, txHash }) => {
-    try {
-      const order = await confirmOrder({ orderId, txHash });
-      await recordTransaction({ type: 'offramp_confirm', amount: order.amountUsd, status: 'success', txHash, metadata: { orderId } });
-      return JSON.stringify(order);
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
-  },
-});
-
-/**
- * Tool 5: Check order status
- */
-export const getOrderTool = new DynamicStructuredTool({
-  name: "get_order_status",
-  description: "Check the status of a Fonbnk offramp order by its ID",
-  schema: z.object({
-    orderId: z.string().describe("Order ID to check"),
-  }),
-  func: async ({ orderId }) => {
-    try {
-      const order = await getOrder(orderId);
-      return JSON.stringify(order);
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
-  },
-});
-
-/**
- * Tool 6: Generate offramp widget URL
- */
-export const getWidgetUrlTool = new DynamicStructuredTool({
-  name: "get_offramp_widget_url",
-  description: "Generate a Fonbnk widget URL where the user can complete the offramp in their browser.",
-  schema: z.object({
-    amount: z.number().describe("Amount to offramp"),
-    countryIsoCode: z.string().optional().describe("Country ISO code (e.g. NG, KE). Defaults to NG"),
-  }),
-  func: async ({ amount, countryIsoCode }) => {
-    const url = generateOfframpWidgetUrl({ amount, countryIsoCode });
-    return JSON.stringify({ url, description: 'Open this URL to complete the offramp in your browser' });
-  },
-});
-
-/**
- * Tool 7: Send airtime top-up via Reloadly (150+ countries)
+ * Tool 1: Send airtime top-up (170+ countries)
  */
 export const sendAirtimeTool = new DynamicStructuredTool({
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 150+ countries via Reloadly. Operator is auto-detected from the phone number.",
+  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
@@ -155,7 +40,7 @@ export const sendAirtimeTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 8: Get mobile operators for a country
+ * Tool 2: Get mobile operators for a country
  */
 export const getOperatorsTool = new DynamicStructuredTool({
   name: "get_operators",
@@ -181,7 +66,7 @@ export const getOperatorsTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 9: Pay utility bill via Reloadly (electricity, water, TV, internet)
+ * Tool 3: Pay utility bill (electricity, water, TV, internet)
  */
 export const payBillTool = new DynamicStructuredTool({
   name: "pay_bill",
@@ -204,7 +89,7 @@ export const payBillTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 10: Get utility billers for a country
+ * Tool 4: Get utility billers for a country
  */
 export const getBillersTool = new DynamicStructuredTool({
   name: "get_billers",
@@ -232,11 +117,133 @@ export const getBillersTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 11: Verify user with SelfProtocol
+ * Tool 5: Search gift cards by brand name
+ */
+export const searchGiftCardsTool = new DynamicStructuredTool({
+  name: "search_gift_cards",
+  description: "Search for available gift cards by brand name (e.g. 'Amazon', 'Steam', 'Netflix', 'Spotify', 'PlayStation', 'Xbox', 'Uber', 'Google Play', 'Apple'). Returns product IDs needed to buy gift cards.",
+  schema: z.object({
+    query: z.string().describe("Brand or product name to search for (e.g. 'Steam', 'Netflix', 'Amazon')"),
+    countryCode: z.string().optional().describe("Country ISO code to filter by (e.g. US, NG, KE)"),
+  }),
+  func: async ({ query, countryCode }) => {
+    try {
+      const results = await searchGiftCards(query, countryCode);
+      return JSON.stringify(results.slice(0, 10).map(p => ({
+        productId: p.productId,
+        name: p.productName,
+        brand: p.brand.brandName,
+        country: p.country.isoName,
+        currency: p.recipientCurrencyCode,
+        denominationType: p.denominationType,
+        fixedDenominations: p.fixedRecipientDenominations?.slice(0, 5),
+        minAmount: p.minRecipientDenomination,
+        maxAmount: p.maxRecipientDenomination,
+      })));
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 6: Get gift cards for a country
+ */
+export const getGiftCardsTool = new DynamicStructuredTool({
+  name: "get_gift_cards",
+  description: "List all available gift card brands for a specific country. Returns brands like Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, etc.",
+  schema: z.object({
+    countryCode: z.string().describe("Country ISO code (e.g. US, NG, KE, GB)"),
+  }),
+  func: async ({ countryCode }) => {
+    try {
+      const products = await getGiftCardProducts(countryCode);
+      const brands = new Map<string, { brandName: string; products: number; minPrice: number; maxPrice: number; currency: string }>();
+      for (const p of products) {
+        const existing = brands.get(p.brand.brandName);
+        const min = p.minSenderDenomination || p.fixedSenderDenominations?.[0] || 0;
+        const max = p.maxSenderDenomination || p.fixedSenderDenominations?.slice(-1)[0] || 0;
+        if (existing) {
+          existing.products++;
+          existing.minPrice = Math.min(existing.minPrice, min);
+          existing.maxPrice = Math.max(existing.maxPrice, max);
+        } else {
+          brands.set(p.brand.brandName, { brandName: p.brand.brandName, products: 1, minPrice: min, maxPrice: max, currency: p.senderCurrencyCode });
+        }
+      }
+      return JSON.stringify({
+        country: countryCode.toUpperCase(),
+        totalProducts: products.length,
+        brands: Array.from(brands.values()).slice(0, 20),
+      });
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 7: Buy a gift card
+ */
+export const buyGiftCardTool = new DynamicStructuredTool({
+  name: "buy_gift_card",
+  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Returns a transaction ID — use get_gift_card_code to retrieve the redeem code/PIN.",
+  schema: z.object({
+    productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
+    amount: z.number().describe("Amount/denomination for the gift card (in recipient currency)"),
+    recipientEmail: z.string().describe("Email to deliver the gift card to"),
+    quantity: z.number().optional().describe("Number of cards to buy. Default 1."),
+  }),
+  func: async ({ productId, amount, recipientEmail, quantity }) => {
+    try {
+      const result = await buyGiftCard({
+        productId,
+        unitPrice: amount,
+        recipientEmail,
+        quantity: quantity || 1,
+      });
+      await recordTransaction({ type: 'gift_card', amount: result.amount, status: 'success', metadata: { productId, brand: result.product.brand.brandName } });
+      return JSON.stringify({
+        success: true,
+        transactionId: result.transactionId,
+        amount: result.amount,
+        currency: result.currencyCode,
+        brand: result.product.brand.brandName,
+        product: result.product.productName,
+        status: result.status,
+        note: 'Use get_gift_card_code with the transactionId to retrieve the redeem code.',
+      });
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 8: Get gift card redeem code
+ */
+export const getGiftCardCodeTool = new DynamicStructuredTool({
+  name: "get_gift_card_code",
+  description: "Get the redeem code/PIN for a purchased gift card. Call this after buy_gift_card with the transactionId.",
+  schema: z.object({
+    transactionId: z.number().describe("Transaction ID from buy_gift_card"),
+  }),
+  func: async ({ transactionId }) => {
+    try {
+      const codes = await getGiftCardRedeemCode(transactionId);
+      return JSON.stringify({ codes });
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 9: Verify user with SelfProtocol
  */
 export const verifySelfClawTool = new DynamicStructuredTool({
   name: "verify_selfclaw",
-  description: "Verify user is human using SelfProtocol ZK proof of humanity.",
+  description: "Verify user is human using SelfProtocol ZK proof of humanity. Use as anti-spam before processing requests.",
   schema: z.object({
     telegramId: z.string().describe("User's Telegram ID"),
   }),
@@ -250,17 +257,15 @@ export const verifySelfClawTool = new DynamicStructuredTool({
   },
 });
 
-// Export all tools as array for LangGraph
+// Export all tools for LangGraph
 export const tools = [
-  checkRatesTool,
-  getOfferTool,
-  offrampTool,
-  confirmOrderTool,
-  getOrderTool,
-  getWidgetUrlTool,
   sendAirtimeTool,
   getOperatorsTool,
   payBillTool,
   getBillersTool,
+  searchGiftCardsTool,
+  getGiftCardsTool,
+  buyGiftCardTool,
+  getGiftCardCodeTool,
   verifySelfClawTool,
 ];
