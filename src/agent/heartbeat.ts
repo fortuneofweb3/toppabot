@@ -126,8 +126,8 @@ export async function runHeartbeatForUser(
       .replace('{timeSince}', timeSince)
       .replace('{now}', new Date().toISOString());
 
-    // Use cheaper model for heartbeat decisions
-    const heartbeatModel = process.env.HEARTBEAT_MODEL || 'gpt-4o-mini';
+    // Use HEARTBEAT_MODEL if set, otherwise fall back to the main LLM_MODEL
+    const heartbeatModel = process.env.HEARTBEAT_MODEL || process.env.LLM_MODEL || 'gpt-4o-mini';
 
     const completion = await openai.chat.completions.create({
       model: heartbeatModel,
