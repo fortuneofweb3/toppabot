@@ -102,7 +102,7 @@ export function getAgentRegistrationFile(): object {
   return {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: 'Toppa',
-    description: 'AI agent for digital goods and utility payments across 170+ countries. Buy airtime, data plans, pay bills (electricity, water, TV, internet), and purchase gift cards (300+ brands) — all powered by Celo stablecoins via x402 micropayments.',
+    description: 'Financial services AI agent for telecommunications and digital payments. Enables mobile airtime top-ups, data bundles, utility bill payments (electricity, water, internet, TV), and gift card purchases across 170+ countries. Payment infrastructure powered by Celo blockchain stablecoins (cUSD) using the x402 micropayment protocol.',
     image: `${apiUrl}/agent-image.svg`,
     services: [
       {
@@ -172,8 +172,6 @@ export function getAgentRegistrationFile(): object {
     ],
     x402Support: true,
     active: true,
-    categories: ['payments', 'utilities', 'telecom', 'e-commerce', 'gift-cards'],
-    tags: ['airtime', 'data', 'bills', 'gift-cards', 'celo', 'x402', 'stablecoins', 'cUSD'],
     registrations: agentId !== null ? [
       {
         agentId,
