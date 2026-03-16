@@ -19,6 +19,9 @@ import { recordTransaction, getAgentReputation, getAgentDetails, getAgentRegistr
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Trust Railway proxy for correct IP detection (rate limiting, logging)
+app.set('trust proxy', true);
+
 // ─────────────────────────────────────────────────
 // Security Middleware
 // ─────────────────────────────────────────────────
