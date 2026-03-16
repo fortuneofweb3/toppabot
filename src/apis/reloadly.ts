@@ -198,6 +198,10 @@ export interface ReloadlyOperator {
   maxAmount: number;
   localMinAmount: number;
   localMaxAmount: number;
+  fixedAmounts: number[] | null;
+  fixedAmountsDescriptions: Record<string, string> | null;
+  localFixedAmounts: number[] | null;
+  localFixedAmountsDescriptions: Record<string, string> | null;
   supportsLocalAmounts: boolean;
   commission: number;
   country: { isoName: string; name: string };
