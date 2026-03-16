@@ -653,7 +653,15 @@ app.get('/reputation', async (_req: Request, res: Response) => {
 // ─────────────────────────────────────────────────
 
 // MCP Streamable HTTP endpoint (12 tools for LLM/agent tool-use)
-app.post('/mcp', paymentLimiter, async (req: Request, res: Response) => {
+// The SDK rejects requests missing "Accept: text/event-stream" — inject it so
+// scanners and basic health checks don't get a 406.
+app.post('/mcp', paymentLimiter, (req: Request, res: Response, next: NextFunction) => {
+  const accept = req.headers.accept || '';
+  if (!accept.includes('text/event-stream')) {
+    req.headers.accept = 'application/json, text/event-stream';
+  }
+  next();
+}, async (req: Request, res: Response) => {
   try {
     await handleMcpRequest(req, res);
   } catch (error: any) {
@@ -661,6 +669,18 @@ app.post('/mcp', paymentLimiter, async (req: Request, res: Response) => {
       res.status(500).json({ error: 'MCP request failed', message: error.message });
     }
   }
+});
+
+// MCP info for GET requests (scanners, browsers)
+app.get('/mcp', (_req: Request, res: Response) => {
+  res.json({
+    protocol: 'MCP',
+    transport: 'Streamable HTTP',
+    version: '2025-03-26',
+    tools: 12,
+    endpoint: 'POST /mcp',
+    description: 'Model Context Protocol endpoint — send JSON-RPC POST requests with Accept: application/json, text/event-stream',
+  });
 });
 
 // A2A Agent Card discovery (Google Agent-to-Agent protocol)
