@@ -15,7 +15,6 @@ import {
   ReloadlyError,
 } from '../apis/reloadly';
 import { recordTransaction, getAgentReputation, getAgentDetails, getAgentRegistrationFile } from '../blockchain/erc8004';
-import { handleSelfVerification } from '../apis/selfclaw';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -602,17 +601,6 @@ app.get('/identity', async (_req: Request, res: Response) => {
     res.json({ agent: 'Toppa', onChain: details, registrationFile });
   } catch (error: any) {
     res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
-  }
-});
-
-// Self Protocol verification callback endpoint
-// Self's relayer POSTs ZK proofs here after user verifies in the Self app
-app.post('/api/verify', async (req: Request, res: Response) => {
-  try {
-    const result = await handleSelfVerification(req.body);
-    res.json({ status: result.verified ? 'success' : 'error', result: result.verified });
-  } catch (error: any) {
-    res.json({ status: 'error', result: false, reason: error.message });
   }
 });
 
