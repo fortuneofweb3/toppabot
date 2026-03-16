@@ -93,6 +93,19 @@ app.use('/public', express.static(path.join(__dirname, '../../public')));
  * Format error response — includes Reloadly error code when available
  * In production, avoid leaking internal error details
  */
+/**
+ * Determine HTTP status code from error type
+ * - ReloadlyError: use its httpStatus
+ * - Validation errors (Invalid/Missing): 400
+ * - Everything else: 500
+ */
+function errorStatus(error: any): number {
+  if (error instanceof ReloadlyError) return error.httpStatus;
+  const msg = error?.message || '';
+  if (msg.startsWith('Invalid') || msg.startsWith('Missing')) return 400;
+  return 500;
+}
+
 function errorResponse(error: any): { error: string; code?: string } {
   // Log full error server-side for debugging (never sent to client)
   if (isProduction) {
@@ -419,7 +432,7 @@ app.get('/operators/:country', async (req: Request, res: Response) => {
       accountBalance: balance,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -451,7 +464,7 @@ app.get('/data-plans/:country', async (req: Request, res: Response) => {
       accountBalance: balance,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -466,7 +479,7 @@ app.get('/billers/:country', async (req: Request, res: Response) => {
     });
     res.json({ country: countryCode, billers, total: billers.length });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -501,7 +514,7 @@ app.get('/gift-cards/search', async (req: Request, res: Response) => {
       accountBalance: balance,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -539,7 +552,7 @@ app.get('/gift-cards/:country', async (req: Request, res: Response) => {
       accountBalance: balance,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -558,7 +571,7 @@ app.get('/countries', async (_req: Request, res: Response) => {
       })),
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -569,7 +582,7 @@ app.get('/countries/:code/services', async (req: Request, res: Response) => {
     const services = await getCountryServices(countryCode);
     res.json(services);
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -588,7 +601,7 @@ app.get('/promotions', async (_req: Request, res: Response) => {
       total: promotions.length,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -609,7 +622,7 @@ app.get('/promotions/:country', async (req: Request, res: Response) => {
       total: promotions.length,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -639,7 +652,7 @@ app.get('/transaction/:type/:id', async (req: Request, res: Response) => {
       date: result.transactionDate || result.submittedAt,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -650,7 +663,7 @@ app.get('/identity', async (_req: Request, res: Response) => {
     const registrationFile = getAgentRegistrationFile();
     res.json({ agent: 'Toppa', onChain: details, registrationFile });
   } catch (error: any) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -663,7 +676,7 @@ app.get('/reputation', async (_req: Request, res: Response) => {
       ...reputation,
     });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -845,7 +858,7 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -944,7 +957,7 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
     if (receiptId) {
       await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -1026,7 +1039,7 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
     if (receiptId) {
       await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -1126,7 +1139,7 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
     if (receiptId) {
       await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
     }
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 
@@ -1137,7 +1150,7 @@ app.get('/gift-card-code/:transactionId', async (req: Request, res: Response) =>
     const codes = await getGiftCardRedeemCode(transactionId);
     res.json({ transactionId, codes });
   } catch (error) {
-    res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
+    res.status(errorStatus(error)).json(errorResponse(error));
   }
 });
 

@@ -135,25 +135,25 @@ export function getAgentRegistrationFile(): object {
       },
       {
         name: 'get-operators',
-        description: 'Get mobile operators by country',
-        endpoint: `${apiUrl}/operators/:country`,
+        description: 'Get mobile operators by country (append country code, e.g. /operators/NG)',
+        endpoint: `${apiUrl}/operators`,
         method: 'GET',
       },
       {
         name: 'get-data-plans',
-        description: 'Get data plan operators by country',
-        endpoint: `${apiUrl}/data-plans/:country`,
+        description: 'Get data plan operators by country (append country code, e.g. /data-plans/KE)',
+        endpoint: `${apiUrl}/data-plans`,
         method: 'GET',
       },
       {
         name: 'get-billers',
-        description: 'Get utility billers by country',
-        endpoint: `${apiUrl}/billers/:country`,
+        description: 'Get utility billers by country (append country code, e.g. /billers/NG)',
+        endpoint: `${apiUrl}/billers`,
         method: 'GET',
       },
       {
         name: 'search-gift-cards',
-        description: 'Search gift card brands',
+        description: 'Search gift card brands (use ?q= query param)',
         endpoint: `${apiUrl}/gift-cards/search`,
         method: 'GET',
       },
@@ -165,8 +165,8 @@ export function getAgentRegistrationFile(): object {
       },
       {
         name: 'check-transaction',
-        description: 'Check transaction status',
-        endpoint: `${apiUrl}/transaction/:type/:id`,
+        description: 'Check transaction status (append type and ID, e.g. /transaction/airtime/12345)',
+        endpoint: `${apiUrl}/transaction`,
         method: 'GET',
       },
       {
