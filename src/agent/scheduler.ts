@@ -38,6 +38,11 @@ async function collection(): Promise<Collection<ScheduledTask>> {
 
   await _collection.createIndex({ userId: 1, status: 1 });
   await _collection.createIndex({ scheduledAt: 1, status: 1 });
+  // Auto-delete completed/failed tasks after 30 days
+  await _collection.createIndex(
+    { executedAt: 1 },
+    { expireAfterSeconds: 30 * 86400, partialFilterExpression: { status: { $in: ['completed', 'failed'] } } },
+  );
   return _collection;
 }
 

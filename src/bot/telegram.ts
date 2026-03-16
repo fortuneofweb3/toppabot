@@ -8,8 +8,11 @@ import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orde
 import { registerHandlers } from './handlers';
 import { userSettingsStore } from './user-settings';
 import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
-import { startScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask } from '../agent/scheduler';
+import { startScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask, getUserScheduledTasks } from '../agent/scheduler';
 import { clearConversationHistory } from '../agent/memory';
+import { startHeartbeat, stopHeartbeat } from '../agent/heartbeat';
+import { trackActivity, setProactiveEnabled, getUserActivity } from '../agent/user-activity';
+import { getUserGoals } from '../agent/goals';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
@@ -250,19 +253,22 @@ bot.command('withdraw', async (ctx) => {
  */
 bot.command('help', async (ctx) => {
   await ctx.reply(
-    `💡 Toppa Commands\n\n` +
+    `Toppa Commands\n\n` +
     `/start - Create your wallet & get started\n` +
     `/wallet - Check balance & deposit address\n` +
     `/withdraw <address> <amount> - Withdraw cUSD\n` +
     `/settings - Wallet settings & export key\n` +
-    `/history - View recent transactions\n` +
+    `/status - Your profile, instructions & tasks\n` +
+    `/silent - Toggle proactive messages on/off\n` +
+    `/clear - Clear conversation memory\n` +
     `/cancel - Cancel pending order\n` +
     `/help - Show this help message\n\n` +
-    `💬 Just tell me what you need:\n` +
+    `Just tell me what you need:\n` +
     `• "Send $5 airtime to +234... in Nigeria"\n` +
     `• "Buy a $25 Steam gift card"\n` +
     `• "Pay my DStv bill for 1234567"\n` +
-    `• "Get me 5GB data for +254... in Kenya"\n\n` +
+    `• "Send airtime to my brother at 5pm"\n` +
+    `• "Remember my sister's number is +234..."\n\n` +
     `I support 170+ countries, 800+ operators, and 300+ gift card brands!`,
   );
 });
@@ -337,11 +343,69 @@ bot.command('clear', async (ctx) => {
 });
 
 /**
+ * /silent — Toggle proactive messages on/off
+ */
+bot.command('silent', async (ctx) => {
+  const userId = ctx.from.id.toString();
+  const activity = await getUserActivity(userId);
+  const currentlyEnabled = activity?.proactiveEnabled ?? true;
+  const newState = !currentlyEnabled;
+  await setProactiveEnabled(userId, newState);
+  await ctx.reply(
+    newState
+      ? 'Proactive messages enabled. I\'ll reach out when I have something useful for you.'
+      : 'Proactive messages disabled. I\'ll only respond when you message me.',
+  );
+});
+
+/**
+ * /status — Show user's saved instructions, scheduled tasks, and settings
+ */
+bot.command('status', async (ctx) => {
+  const userId = ctx.from.id.toString();
+
+  const [goals, tasks, activity] = await Promise.all([
+    getUserGoals(userId),
+    getUserScheduledTasks(userId),
+    getUserActivity(userId),
+  ]);
+
+  const proactiveStatus = (activity?.proactiveEnabled ?? true) ? 'ON' : 'OFF';
+  const country = activity?.country || 'Not detected yet';
+
+  let msg = `Your Toppa Profile\n\n`;
+  msg += `Proactive messages: ${proactiveStatus} (toggle with /silent)\n`;
+  msg += `Detected country: ${country}\n\n`;
+
+  if (goals.length > 0) {
+    msg += `Saved Instructions (${goals.length}):\n`;
+    goals.slice(0, 10).forEach((g, i) => {
+      msg += `${i + 1}. [${g.category}] ${g.instruction}\n`;
+    });
+    if (goals.length > 10) msg += `... and ${goals.length - 10} more\n`;
+    msg += '\n';
+  } else {
+    msg += 'No saved instructions. Tell me things to remember!\n\n';
+  }
+
+  if (tasks.length > 0) {
+    msg += `Scheduled Tasks (${tasks.length}):\n`;
+    tasks.forEach((t, i) => {
+      msg += `${i + 1}. ${t.description} — ${new Date(t.scheduledAt).toLocaleString()}\n`;
+    });
+  } else {
+    msg += 'No scheduled tasks.';
+  }
+
+  await ctx.reply(msg);
+});
+
+/**
  * /export — Export private key (now redirects to /settings)
  */
 bot.command('export', async (ctx) => {
   await ctx.reply(
-    `🔑 To export your private key, use /settings\n\n` +
+    `To export your private key, use /settings\n\n` +
     `This must be done in a private chat for security.`,
   );
 });
@@ -353,6 +417,9 @@ bot.command('export', async (ctx) => {
 bot.on('text', async (ctx) => {
   const userMessage = ctx.message.text;
   const userId = ctx.from.id.toString();
+
+  // Track user activity for heartbeat (non-blocking)
+  trackActivity(userId, ctx.chat.id).catch(() => {});
 
   try {
     // Rate limiting
@@ -497,8 +564,8 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
     bot.launch();
     console.log('Toppa Telegram bot running (long-polling mode)');
 
-    process.once('SIGINT', () => { bot.stop('SIGINT'); stopScheduler(); });
-    process.once('SIGTERM', () => { bot.stop('SIGTERM'); stopScheduler(); });
+    process.once('SIGINT', () => { bot.stop('SIGINT'); stopScheduler(); stopHeartbeat(); });
+    process.once('SIGTERM', () => { bot.stop('SIGTERM'); stopScheduler(); stopHeartbeat(); });
   }
 
   // Start the task scheduler — executes due tasks and notifies users
@@ -549,5 +616,10 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
       console.error(`[Scheduler] Failed to notify user for task ${task._id}:`, err.message);
       await markTaskFailed(task._id!, err.message);
     }
+  });
+
+  // Start the heartbeat engine — proactively checks on users every 15 min
+  startHeartbeat(async (chatId: number, text: string) => {
+    await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
   });
 }

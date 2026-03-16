@@ -100,6 +100,34 @@ export async function saveConversation(
 }
 
 /**
+ * Get a compact summary of recent conversation (for heartbeat — cheaper than full history)
+ */
+export async function getConversationSummary(userId: string): Promise<string> {
+  try {
+    const col = await collection();
+    const messages = await col
+      .find({ userId })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .toArray();
+
+    if (messages.length === 0) return 'No recent conversations.';
+
+    // Build compact summary from recent messages
+    const topics = messages.reverse().map(m => {
+      const prefix = m.role === 'user' ? 'User' : 'Toppa';
+      // Truncate long messages
+      const content = m.content.length > 100 ? m.content.slice(0, 100) + '...' : m.content;
+      return `${prefix}: ${content}`;
+    });
+
+    return `Recent conversation:\n${topics.join('\n')}`;
+  } catch (error) {
+    return 'No recent conversations.';
+  }
+}
+
+/**
  * Clear conversation history for a user
  */
 export async function clearConversationHistory(userId: string): Promise<void> {

@@ -9,6 +9,7 @@ import {
 import { calculateTotalPayment } from "../blockchain/x402";
 import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
 import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
+import { setUserCountry } from "./user-activity";
 
 /**
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
@@ -59,6 +60,7 @@ export const getOperatorsTool: Tool = {
   }),
   func: async ({ countryCode }) => {
     try {
+      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getOperators(countryCode);
       return JSON.stringify(operators.map(op => ({
         id: op.operatorId,
@@ -85,6 +87,7 @@ export const getDataPlansTool: Tool = {
   }),
   func: async ({ countryCode }) => {
     try {
+      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getDataOperators(countryCode);
       return JSON.stringify(operators.map(op => ({
         operatorId: op.operatorId,
@@ -169,6 +172,7 @@ export const getBillersTool: Tool = {
   }),
   func: async ({ countryCode, type }) => {
     try {
+      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const billers = await getBillers({ countryCode, type: type as any });
       return JSON.stringify(billers.map(b => ({
         id: b.id,
@@ -327,6 +331,7 @@ export const getPromotionsTool: Tool = {
   }),
   func: async ({ countryCode }) => {
     try {
+      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const promotions = await getPromotions(countryCode);
       return JSON.stringify(promotions.slice(0, 10).map((p: any) => ({
         operatorId: p.operatorId,

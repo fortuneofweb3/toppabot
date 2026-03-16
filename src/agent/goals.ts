@@ -37,12 +37,21 @@ async function collection(): Promise<Collection<UserGoal>> {
 /**
  * Save a user instruction/goal
  */
+const MAX_GOALS_PER_USER = 50;
+
 export async function saveUserGoal(
   userId: string,
   instruction: string,
   category: UserGoal['category'] = 'general',
 ): Promise<string> {
   const col = await collection();
+
+  // Prevent unbounded growth
+  const count = await col.countDocuments({ userId, active: true });
+  if (count >= MAX_GOALS_PER_USER) {
+    throw new Error(`You have ${MAX_GOALS_PER_USER} saved instructions — remove some old ones first.`);
+  }
+
   const result = await col.insertOne({
     userId,
     instruction,
