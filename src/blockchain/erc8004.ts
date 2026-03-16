@@ -169,6 +169,22 @@ export function getAgentRegistrationFile(): object {
         endpoint: `${apiUrl}/transaction/:type/:id`,
         method: 'GET',
       },
+      {
+        name: 'OASF',
+        endpoint: 'https://github.com/agntcy/oasf/',
+        version: 'v0.8.0',
+        skills: [
+          'tool_interaction/api_schema_understanding',
+          'tool_interaction/workflow_automation',
+          'agent_orchestration/task_decomposition',
+        ],
+        domains: [
+          'finance_and_business/banking',
+          'telecommunications/telecommunications',
+          'telecommunications/wireless_communications',
+          'retail_and_ecommerce/retail_and_ecommerce',
+        ],
+      },
     ],
     x402Support: true,
     active: true,
