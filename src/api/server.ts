@@ -349,7 +349,8 @@ app.get('/health', (_req: Request, res: Response) => {
 app.get('/agent-image.svg', (_req: Request, res: Response) => {
   res.set('Content-Type', 'image/svg+xml');
   res.set('Cache-Control', 'public, max-age=86400');
-  res.sendFile(path.join(__dirname, '../../public/agent-image.svg'));
+  res.set('Access-Control-Allow-Origin', '*');
+  res.sendFile(path.join(process.cwd(), 'public/agent-image.svg'));
 });
 
 // Get mobile operators for a country (for airtime)
