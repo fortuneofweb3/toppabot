@@ -1,5 +1,5 @@
 import { createPublicClient, http, parseAbi, formatUnits } from 'viem';
-import { celo, celoAlfajores } from 'viem/chains';
+import { celo, celoSepolia } from 'viem/chains';
 
 /**
  * x402 Payment Protocol — HTTP 402 Payment Required
@@ -19,15 +19,44 @@ import { celo, celoAlfajores } from 'viem/chains';
  */
 
 const isTestnet = process.env.NODE_ENV !== 'production';
-const chain = isTestnet ? celoAlfajores : celo;
+const chain = isTestnet ? celoSepolia : celo;
 
-// cUSD token addresses on Celo
-const CUSD_ADDRESS = isTestnet
-  ? '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1' as `0x${string}` // Alfajores
-  : '0x765DE816845861e75A25fCA122bb6898B8B1282a' as `0x${string}`; // Mainnet
+// Payment token addresses on Celo
+// Sepolia uses USDC (cUSD doesn't exist on Celo Sepolia)
+// Mainnet uses cUSD
+export const PAYMENT_TOKEN_ADDRESS = isTestnet
+  ? '0x01C5C0122039549AD1493B8220cABEdD739BC44E' as `0x${string}` // USDC on Celo Sepolia
+  : '0x765DE816845861e75A25fCA122bb6898B8B1282a' as `0x${string}`; // cUSD on Celo Mainnet
+export const PAYMENT_TOKEN_SYMBOL = isTestnet ? 'USDC' : 'cUSD';
+export const PAYMENT_TOKEN_DECIMALS = isTestnet ? 6 : 18;
 
 const AGENT_WALLET = (process.env.AGENT_WALLET_ADDRESS || '') as `0x${string}`;
-const X402_FEE = parseFloat(process.env.X402_FEE_AMOUNT || '0.5');
+const SERVICE_FEE_PERCENT = 0.015; // 1.5% flat fee on product cost
+
+/**
+ * Calculate total x402 payment for a request
+ *
+ * Total = product_amount + (product_amount * 1.5%)
+ * Simple flat percentage, no minimums.
+ *
+ * Examples:
+ *   $5 airtime   → $5 + $0.08  = $5.08 total
+ *   $25 gift card → $25 + $0.38 = $25.38 total
+ *   $100 bill    → $100 + $1.50 = $101.50 total
+ *   $500 bill    → $500 + $7.50 = $507.50 total
+ */
+export function calculateTotalPayment(productAmount?: number): {
+  total: number;
+  productAmount: number;
+  serviceFee: number;
+} {
+  if (!productAmount || productAmount <= 0) {
+    return { total: 0, productAmount: 0, serviceFee: 0 };
+  }
+  const serviceFee = Math.round(productAmount * SERVICE_FEE_PERCENT * 100) / 100;
+  const total = Math.round((productAmount + serviceFee) * 100) / 100;
+  return { total, productAmount, serviceFee };
+}
 
 // ERC-20 Transfer event signature
 const erc20Abi = parseAbi([
@@ -54,9 +83,9 @@ function getPublicClient() {
 export async function createX402PaymentRequest(params: {
   service: string;
   description: string;
-  amount?: number;
+  productAmount?: number;
 }) {
-  const paymentAmount = params.amount || X402_FEE;
+  const { total, productAmount, serviceFee } = calculateTotalPayment(params.productAmount);
 
   // x402 payment requirements per spec
   const paymentRequirements = {
@@ -65,22 +94,27 @@ export async function createX402PaymentRequest(params: {
       {
         scheme: 'exact',
         network: chain.name.toLowerCase(),
-        maxAmountRequired: String(Math.round(paymentAmount * 1e18)), // wei
+        maxAmountRequired: String(Math.round(total * (10 ** PAYMENT_TOKEN_DECIMALS))),
         resource: params.service,
         description: params.description,
         mimeType: 'application/json',
         payTo: AGENT_WALLET,
         maxTimeoutSeconds: 300,
-        asset: CUSD_ADDRESS,
+        asset: PAYMENT_TOKEN_ADDRESS,
         extra: {
-          name: 'cUSD',
+          name: PAYMENT_TOKEN_SYMBOL,
           version: '1',
-          decimals: 18,
-          humanReadableAmount: paymentAmount.toString(),
+          decimals: PAYMENT_TOKEN_DECIMALS,
+          humanReadableAmount: total.toString(),
+          breakdown: {
+            productAmount,
+            serviceFee,
+            total,
+          },
         },
       },
     ],
-    error: 'Payment required. Send cUSD to the payTo address and include the tx hash in the X-PAYMENT header.',
+    error: `Payment required: ${total} ${PAYMENT_TOKEN_SYMBOL} (product: ${productAmount}, fee: ${serviceFee}). Send to payTo address and include tx hash in X-PAYMENT header.`,
   };
 
   return {
@@ -102,7 +136,7 @@ export async function createX402PaymentRequest(params: {
  * 3. Contains a cUSD Transfer event to our wallet
  * 4. Amount is >= required fee
  */
-export async function verifyX402Payment(paymentData: string): Promise<{
+export async function verifyX402Payment(paymentData: string, requiredAmount?: number): Promise<{
   verified: boolean;
   txHash?: string;
   payer?: string;
@@ -143,7 +177,7 @@ export async function verifyX402Payment(paymentData: string): Promise<{
 
     for (const log of receipt.logs) {
       if (
-        log.address.toLowerCase() === CUSD_ADDRESS.toLowerCase() &&
+        log.address.toLowerCase() === PAYMENT_TOKEN_ADDRESS.toLowerCase() &&
         log.topics[0] === transferTopic &&
         log.topics[2]?.toLowerCase() === agentWalletPadded
       ) {
@@ -154,15 +188,16 @@ export async function verifyX402Payment(paymentData: string): Promise<{
     }
 
     if (!payer || amount === BigInt(0)) {
-      return { verified: false, error: 'No cUSD transfer to agent wallet found in transaction' };
+      return { verified: false, error: `No ${PAYMENT_TOKEN_SYMBOL} transfer to agent wallet found in transaction` };
     }
 
     // Check amount is sufficient (with 1% tolerance for rounding)
-    const requiredWei = BigInt(Math.round(X402_FEE * 1e18 * 0.99));
+    const minRequired = requiredAmount ?? 0;
+    const requiredWei = BigInt(Math.round(minRequired * (10 ** PAYMENT_TOKEN_DECIMALS) * 0.99));
     if (amount < requiredWei) {
       return {
         verified: false,
-        error: `Insufficient payment: got ${formatUnits(amount, 18)} cUSD, need ${X402_FEE} cUSD`,
+        error: `Insufficient payment: got ${formatUnits(amount, PAYMENT_TOKEN_DECIMALS)} ${PAYMENT_TOKEN_SYMBOL}, need ${minRequired} ${PAYMENT_TOKEN_SYMBOL}`,
       };
     }
 
@@ -170,7 +205,7 @@ export async function verifyX402Payment(paymentData: string): Promise<{
       verified: true,
       txHash,
       payer,
-      amount: formatUnits(amount, 18),
+      amount: formatUnits(amount, PAYMENT_TOKEN_DECIMALS),
     };
   } catch (error: any) {
     return {
@@ -181,38 +216,17 @@ export async function verifyX402Payment(paymentData: string): Promise<{
 }
 
 /**
- * Charge x402 fee (used in Telegram bot for tracking)
- * In the API, payment is verified via middleware instead
- */
-export async function chargeX402Fee(params: {
-  userId: string;
-  transactionType: string;
-  amount: number;
-}) {
-  if (process.env.X402_ENABLED !== 'true') {
-    return { charged: false, fee: 0 };
-  }
-
-  // For Telegram: log the interaction (actual payment handled differently)
-  return {
-    charged: false,
-    fee: X402_FEE,
-    note: 'Telegram interactions are free. x402 fees apply to API calls only.',
-    transactionType: params.transactionType,
-  };
-}
-
-/**
  * Get x402 protocol info for the agent
  */
 export function getX402Info() {
   return {
     protocol: 'x402',
     version: 1,
-    fee: X402_FEE,
-    currency: 'cUSD',
+    fee: `${SERVICE_FEE_PERCENT * 100}% of product amount`,
+    feePercent: SERVICE_FEE_PERCENT,
+    currency: PAYMENT_TOKEN_SYMBOL,
     chain: chain.name,
-    asset: CUSD_ADDRESS,
+    asset: PAYMENT_TOKEN_ADDRESS,
     payTo: AGENT_WALLET,
     spec: 'https://github.com/coinbase/x402',
   };

@@ -48,17 +48,55 @@ Personality:
 
 Important:
 - All payments are in cUSD on Celo blockchain
-- Use verify_selfclaw for anti-spam verification when needed
 - Always show transaction details after completion (amounts, IDs, status)
 - For gift cards, always retrieve and show the redeem code after purchase
+
+TELEGRAM WALLET MODE:
+When source is 'telegram', users have an in-app cUSD wallet. Before executing ANY paid transaction (airtime, data, bills, gift cards), you MUST:
+
+1. First gather ALL required info from the user (phone, country, amount, etc.) by asking questions normally and calling discovery tools (get_operators, get_billers, search_gift_cards, etc.) as needed.
+2. Once you have everything, DO NOT call the paid tool (send_airtime, send_data, pay_bill, buy_gift_card). Instead, return ONLY a JSON block in this exact format:
+
+\`\`\`json
+{
+  "type": "order_confirmation",
+  "action": "airtime",
+  "description": "Airtime top-up: 500 NGN to +2348147658721 (MTN Nigeria)",
+  "productAmount": 5.00,
+  "toolName": "send_airtime",
+  "toolArgs": { "phone": "+2348147658721", "countryCode": "NG", "amount": 500, "useLocalAmount": true }
+}
+\`\`\`
+
+Valid actions: "airtime", "data", "bill", "gift_card"
+Valid toolNames: "send_airtime", "send_data", "pay_bill", "buy_gift_card"
+productAmount must be in USD.
+
+The bot will show the user a confirmation card with Confirm/Cancel buttons, handle payment from their wallet, and execute the tool.
+
+For FREE/discovery queries (checking operators, browsing gift cards, checking country services, getting billers), call tools normally without the JSON block.
+
+For multi-intent requests, return ONE order_confirmation at a time for the first item. After it completes, the user can continue with the next.
 `;
+
+/**
+ * Build system prompt with wallet context for Telegram users
+ */
+function buildSystemPrompt(state: AgentState): string {
+  let prompt = SYSTEM_PROMPT;
+  if (state.source === 'telegram' && state.walletAddress) {
+    prompt += `\nUser's wallet: ${state.walletAddress}`;
+    prompt += `\nUser's cUSD balance: ${state.walletBalance || 'unknown'}`;
+  }
+  return prompt;
+}
 
 /**
  * Agent decision node - decides what to do next
  */
 async function callAgent(state: AgentState) {
   const messages = [
-    new SystemMessage(SYSTEM_PROMPT),
+    new SystemMessage(buildSystemPrompt(state)),
     ...state.messages,
   ];
 
@@ -142,6 +180,18 @@ export function createToppaAgent() {
         value: (prev?: string, next?: string) => next ?? prev,
       },
       error: {
+        value: (prev?: string, next?: string) => next ?? prev,
+      },
+      source: {
+        value: (prev?: string, next?: string) => next ?? prev,
+      },
+      rateLimited: {
+        value: (prev?: boolean, next?: boolean) => next ?? prev,
+      },
+      walletAddress: {
+        value: (prev?: string, next?: string) => next ?? prev,
+      },
+      walletBalance: {
         value: (prev?: string, next?: string) => next ?? prev,
       },
     },

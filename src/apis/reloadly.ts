@@ -23,8 +23,36 @@ const GIFTCARDS_BASE_URL = isProduction
 
 const AUTH_URL = 'https://auth.reloadly.com/oauth/token';
 
-const CLIENT_ID = process.env.RELOADLY_CLIENT_ID || '';
-const CLIENT_SECRET = process.env.RELOADLY_CLIENT_SECRET || '';
+const CLIENT_ID = isProduction
+  ? (process.env.RELOADLY_CLIENT_ID || '')
+  : (process.env.RELOADLY_CLIENT_ID_SANDBOX || process.env.RELOADLY_CLIENT_ID || '');
+const CLIENT_SECRET = isProduction
+  ? (process.env.RELOADLY_CLIENT_SECRET || '')
+  : (process.env.RELOADLY_CLIENT_SECRET_SANDBOX || process.env.RELOADLY_CLIENT_SECRET || '');
+
+/**
+ * Reloadly error with structured error code
+ */
+export class ReloadlyError extends Error {
+  code: string;
+  httpStatus: number;
+
+  constructor(message: string, code: string, httpStatus: number) {
+    super(message);
+    this.name = 'ReloadlyError';
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
+
+/**
+ * Parse Reloadly API error response into a structured ReloadlyError
+ */
+function parseReloadlyError(status: number, body: any): ReloadlyError {
+  const errorCode = body?.errorCode || body?.error || 'UNKNOWN_ERROR';
+  const message = body?.message || body?.error_description || `Request failed: ${status}`;
+  return new ReloadlyError(message, errorCode, status);
+}
 
 // Token cache per product
 let airtimeToken: { token: string; expiresAt: number } | null = null;
@@ -86,17 +114,17 @@ async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: an
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30000), // 30 second timeout
   });
 
   if (!response.ok) {
-    let errorMsg: string;
     try {
       const err = await response.json();
-      errorMsg = (err as any).message || `Request failed: ${response.status}`;
-    } catch {
-      errorMsg = `Request failed: ${response.status}`;
+      throw parseReloadlyError(response.status, err);
+    } catch (e) {
+      if (e instanceof ReloadlyError) throw e;
+      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
     }
-    throw new Error(errorMsg);
   }
 
   return response.json() as Promise<T>;
@@ -112,17 +140,17 @@ async function utilitiesRequest<T>(method: 'GET' | 'POST', path: string, body?: 
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30000), // 30 second timeout
   });
 
   if (!response.ok) {
-    let errorMsg: string;
     try {
       const err = await response.json();
-      errorMsg = (err as any).message || `Request failed: ${response.status}`;
-    } catch {
-      errorMsg = `Request failed: ${response.status}`;
+      throw parseReloadlyError(response.status, err);
+    } catch (e) {
+      if (e instanceof ReloadlyError) throw e;
+      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
     }
-    throw new Error(errorMsg);
   }
 
   return response.json() as Promise<T>;
@@ -139,17 +167,17 @@ async function giftcardsRequest<T>(method: 'GET' | 'POST', path: string, body?: 
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30000), // 30 second timeout
   });
 
   if (!response.ok) {
-    let errorMsg: string;
     try {
       const err = await response.json();
-      errorMsg = (err as any).message || `Request failed: ${response.status}`;
-    } catch {
-      errorMsg = `Request failed: ${response.status}`;
+      throw parseReloadlyError(response.status, err);
+    } catch (e) {
+      if (e instanceof ReloadlyError) throw e;
+      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
     }
-    throw new Error(errorMsg);
   }
 
   return response.json() as Promise<T>;
@@ -273,6 +301,40 @@ export async function sendAirtime(params: {
   });
 }
 
+// ─── Data Plan Functions ───
+
+/**
+ * Get data plan operators for a country
+ * Filters operators that specifically offer data bundles
+ */
+export async function getDataOperators(countryCode: string) {
+  const allOperators = await getOperators(countryCode);
+  return allOperators.filter(op => op.data || op.bundle);
+}
+
+/**
+ * Send data bundle top-up
+ * Same mechanism as airtime but uses data-specific operators
+ */
+export async function sendData(params: {
+  phone: string;
+  countryCode: string;
+  amount: number;
+  operatorId: number; // Required — must be a data operator
+  useLocalAmount?: boolean;
+}) {
+  return airtimeRequest<ReloadlyTopupResponse>('POST', '/topups', {
+    operatorId: params.operatorId,
+    amount: params.amount,
+    useLocalAmount: params.useLocalAmount ?? false,
+    customIdentifier: `toppa-data-${Date.now()}`,
+    recipientPhone: {
+      countryCode: params.countryCode.toUpperCase(),
+      number: params.phone,
+    },
+  });
+}
+
 // ─── Utility Bill Functions ───
 
 /**
@@ -285,13 +347,22 @@ export async function getBillers(params: {
   const query = new URLSearchParams({
     countryISOCode: params.countryCode.toUpperCase(),
     page: '0',
-    size: '50',
+    size: '200',
   });
   if (params.type) {
     query.set('type', params.type);
   }
 
-  return utilitiesRequest<ReloadlyBiller[]>('GET', `/billers?${query.toString()}`);
+  // Reloadly utilities API returns paginated response {content: [...]}
+  const response = await utilitiesRequest<{ content: ReloadlyBiller[] } | ReloadlyBiller[]>(
+    'GET',
+    `/billers?${query.toString()}`
+  );
+
+  // Handle both paginated and array responses
+  if (Array.isArray(response)) return response;
+  if (response && 'content' in response) return response.content;
+  return [];
 }
 
 /**
@@ -382,9 +453,18 @@ export async function getGiftCardProducts(countryCode: string) {
  * Search gift card products by name
  */
 export async function searchGiftCards(query: string, countryCode?: string) {
-  const products = countryCode
-    ? await getGiftCardProducts(countryCode)
-    : await giftcardsRequest<ReloadlyGiftCardProduct[]>('GET', '/products?size=200');
+  let products: ReloadlyGiftCardProduct[];
+
+  if (countryCode) {
+    products = await getGiftCardProducts(countryCode);
+  } else {
+    // Global search — API may return paginated {content: [...]} or direct array
+    const response = await giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
+      'GET',
+      '/products?size=200'
+    );
+    products = Array.isArray(response) ? response : (response?.content || []);
+  }
 
   const lowerQuery = query.toLowerCase();
   return products.filter(p =>
@@ -428,4 +508,118 @@ export async function getGiftCardRedeemCode(transactionId: number) {
     'GET',
     `/orders/${transactionId}/cards`
   );
+}
+
+// ─── Info / Discovery Functions ───
+
+export interface ReloadlyCountry {
+  isoName: string;
+  name: string;
+  currencyCode: string;
+  currencyName: string;
+  currencySymbol: string;
+  flag: string;
+  callingCodes: string[];
+}
+
+/**
+ * Get all supported countries (from airtime API)
+ */
+export async function getCountries() {
+  return airtimeRequest<ReloadlyCountry[]>('GET', '/countries');
+}
+
+/**
+ * Get Reloadly account balance
+ */
+export async function getAccountBalance() {
+  return airtimeRequest<{ balance: number; currencyCode: string; currencyName: string; updatedAt: string }>(
+    'GET',
+    '/accounts/balance'
+  );
+}
+
+/**
+ * Get promotions (active operator deals/bonuses)
+ */
+export async function getPromotions(countryCode?: string) {
+  const path = countryCode
+    ? `/promotions/country-codes/${countryCode.toUpperCase()}`
+    : '/promotions?page=0&size=50';
+
+  const response = await airtimeRequest<any>('GET', path);
+
+  // Handle paginated or array response
+  if (Array.isArray(response)) return response;
+  if (response?.content) return response.content;
+  return [];
+}
+
+/**
+ * Get airtime transaction status by ID
+ */
+export async function getAirtimeTransaction(transactionId: number) {
+  return airtimeRequest<any>('GET', `/topups/reports/transactions/${transactionId}`);
+}
+
+/**
+ * Get utility bill transaction status by ID
+ */
+export async function getBillTransaction(transactionId: number) {
+  return utilitiesRequest<any>('GET', `/transactions/${transactionId}`);
+}
+
+/**
+ * Get a full country service summary (what's available)
+ * Calls operators, billers, and gift cards in parallel
+ */
+export async function getCountryServices(countryCode: string) {
+  const cc = countryCode.toUpperCase();
+
+  const [operators, billers, giftCards] = await Promise.allSettled([
+    getOperators(cc),
+    getBillers({ countryCode: cc }),
+    getGiftCardProducts(cc),
+  ]);
+
+  const ops = operators.status === 'fulfilled' ? operators.value : [];
+  const bills = billers.status === 'fulfilled' ? billers.value : [];
+  const gcs = giftCards.status === 'fulfilled' ? giftCards.value : [];
+
+  const airtimeOps = ops.filter(op => !op.data && !op.bundle);
+  const dataOps = ops.filter(op => op.data || op.bundle);
+
+  // Group gift cards by brand
+  const brands = new Map<string, number>();
+  for (const gc of gcs) {
+    brands.set(gc.brand.brandName, (brands.get(gc.brand.brandName) || 0) + 1);
+  }
+
+  // Group billers by type
+  const billerTypes = new Map<string, number>();
+  for (const b of bills) {
+    billerTypes.set(b.type, (billerTypes.get(b.type) || 0) + 1);
+  }
+
+  return {
+    countryCode: cc,
+    airtime: {
+      available: airtimeOps.length > 0,
+      operators: airtimeOps.map(op => ({ id: op.operatorId, name: op.name })),
+    },
+    dataPlans: {
+      available: dataOps.length > 0,
+      operators: dataOps.map(op => ({ id: op.operatorId, name: op.name })),
+    },
+    bills: {
+      available: bills.length > 0,
+      total: bills.length,
+      types: Object.fromEntries(billerTypes),
+    },
+    giftCards: {
+      available: gcs.length > 0,
+      totalProducts: gcs.length,
+      brands: Array.from(brands.keys()),
+    },
+  };
 }

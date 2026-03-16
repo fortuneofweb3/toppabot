@@ -2,10 +2,11 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import {
   sendAirtime, getOperators, detectOperator,
+  getDataOperators, sendData,
   getBillers, payBill as payReloadlyBill,
   getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
+  getCountryServices, getPromotions,
 } from "../apis/reloadly";
-import { verifySelfClaw } from "../apis/selfclaw";
 import { recordTransaction } from "../blockchain/erc8004";
 
 /**
@@ -66,7 +67,67 @@ export const getOperatorsTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 3: Pay utility bill (electricity, water, TV, internet)
+ * Tool 3: Get data plan operators for a country
+ */
+export const getDataPlansTool = new DynamicStructuredTool({
+  name: "get_data_plans",
+  description: "List available mobile data plan operators for a country. Returns operators that offer data bundles. Use the operatorId from results to send data with send_data.",
+  schema: z.object({
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+  }),
+  func: async ({ countryCode }) => {
+    try {
+      const operators = await getDataOperators(countryCode);
+      return JSON.stringify(operators.map(op => ({
+        operatorId: op.operatorId,
+        name: op.name,
+        isData: op.data,
+        isBundle: op.bundle,
+        denominationType: op.denominationType,
+        minAmount: op.minAmount,
+        maxAmount: op.maxAmount,
+        localCurrency: op.destinationCurrencyCode,
+      })));
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 4: Send data plan top-up
+ */
+export const sendDataTool = new DynamicStructuredTool({
+  name: "send_data",
+  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId for data-specific operators.",
+  schema: z.object({
+    phone: z.string().describe("Recipient phone number"),
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
+    operatorId: z.number().describe("Data operator ID from get_data_plans"),
+    useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
+  }),
+  func: async ({ phone, countryCode, amount, operatorId, useLocalAmount }) => {
+    try {
+      const result = await sendData({ phone, countryCode, amount, operatorId, useLocalAmount });
+      await recordTransaction({ type: 'data_plan', amount: result.requestedAmount, status: 'success', metadata: { operator: result.operatorName, phone } });
+      return JSON.stringify({
+        success: result.status === 'SUCCESSFUL',
+        operator: result.operatorName,
+        requestedAmount: result.requestedAmount,
+        requestedCurrency: result.requestedAmountCurrencyCode,
+        deliveredAmount: result.deliveredAmount,
+        deliveredCurrency: result.deliveredAmountCurrencyCode,
+        transactionId: result.transactionId,
+      });
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 5: Pay utility bill (electricity, water, TV, internet)
  */
 export const payBillTool = new DynamicStructuredTool({
   name: "pay_bill",
@@ -239,20 +300,45 @@ export const getGiftCardCodeTool = new DynamicStructuredTool({
 });
 
 /**
- * Tool 9: Verify user with SelfProtocol
+ * Tool 9: Check country service availability
  */
-export const verifySelfClawTool = new DynamicStructuredTool({
-  name: "verify_selfclaw",
-  description: "Verify user is human using SelfProtocol ZK proof of humanity. Use as anti-spam before processing requests.",
+export const checkCountryTool = new DynamicStructuredTool({
+  name: "check_country",
+  description: "Check what services (airtime, data, bills, gift cards) are available in a specific country. Use this FIRST when a user mentions a country to know what you can offer them.",
   schema: z.object({
-    telegramId: z.string().describe("User's Telegram ID"),
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, US, GB, SI)"),
   }),
-  func: async ({ telegramId }) => {
+  func: async ({ countryCode }) => {
     try {
-      const result = await verifySelfClaw(telegramId);
-      return JSON.stringify(result);
+      const services = await getCountryServices(countryCode);
+      return JSON.stringify(services);
     } catch (error) {
-      return JSON.stringify({ error: error.message, verified: false });
+      return JSON.stringify({ error: error.message });
+    }
+  },
+});
+
+/**
+ * Tool 10: Get active promotions for a country
+ */
+export const getPromotionsTool = new DynamicStructuredTool({
+  name: "get_promotions",
+  description: "Get active operator promotions and bonus deals for a country. Useful to tell users about extra value they can get (e.g. 'buy X get 2X bonus').",
+  schema: z.object({
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+  }),
+  func: async ({ countryCode }) => {
+    try {
+      const promotions = await getPromotions(countryCode);
+      return JSON.stringify(promotions.slice(0, 10).map((p: any) => ({
+        operatorId: p.operatorId,
+        title: p.title || p.title2,
+        description: p.description?.slice(0, 200),
+        startDate: p.startDate,
+        endDate: p.endDate,
+      })));
+    } catch (error) {
+      return JSON.stringify({ error: error.message });
     }
   },
 });
@@ -261,11 +347,14 @@ export const verifySelfClawTool = new DynamicStructuredTool({
 export const tools = [
   sendAirtimeTool,
   getOperatorsTool,
+  getDataPlansTool,
+  sendDataTool,
   payBillTool,
   getBillersTool,
   searchGiftCardsTool,
   getGiftCardsTool,
   buyGiftCardTool,
   getGiftCardCodeTool,
-  verifySelfClawTool,
+  checkCountryTool,
+  getPromotionsTool,
 ];

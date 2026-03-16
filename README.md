@@ -6,10 +6,11 @@ Built for the Celo **"Build Agents for the Real World V2"** hackathon.
 
 ## What Toppa Does
 
-Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language.
+Toppa is an autonomous AI agent that lets anyone buy digital goods using USDC/cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language.
 
 **Services:**
-- **Airtime & Data** — Mobile top-ups across 170+ countries, 800+ operators. Auto-detects operator from phone number.
+- **Airtime** — Mobile top-ups across 170+ countries, 800+ operators. Auto-detects operator from phone number.
+- **Data Plans** — Mobile data bundles (1GB, 5GB, 10GB, etc.) across 170+ countries with plan descriptions.
 - **Utility Bills** — Electricity, water, TV (DStv, GOtv, Startimes), internet.
 - **Gift Cards** — 300+ brands, 14,000+ products. Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Airbnb, Apple, Google Play, prepaid Visa/Mastercard, and more.
 
@@ -24,7 +25,7 @@ Toppa parses this into three parallel operations and executes them all. This is 
                     ┌─────────────────┐
                     │  Other AI Agents │
                     └────────┬────────┘
-                             │ x402 payment (cUSD)
+                             │ x402 payment (USDC/cUSD)
                              ▼
 ┌────────────────────────────────────────────────┐
 │                  Toppa Agent                    │
@@ -50,13 +51,13 @@ Toppa parses this into three parallel operations and executes them all. This is 
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Agent** | LangGraph | Tool-calling AI agent with multi-intent resolution |
+| **Agent** | LangGraph | Tool-calling AI agent with multi-intent resolution (11 tools) |
 | **LLM** | DeepSeek | OpenAI-compatible, 97% cheaper |
 | **Identity** | ERC-8004 | On-chain agent identity and reputation (deployed on Celo) |
 | **Payments** | x402 | HTTP 402 Payment Required for agent micropayments |
 | **Verification** | Self Protocol | ZK proof of humanity (passport-based, no data disclosed) |
-| **Digital Goods** | Reloadly | Airtime, bills, gift cards across 170+ countries |
-| **Blockchain** | Celo + viem | Low-cost L2, cUSD stablecoin |
+| **Digital Goods** | Reloadly | Airtime, data, bills, gift cards across 170+ countries |
+| **Blockchain** | Celo + viem | Low-cost L2, USDC/cUSD stablecoin |
 | **Bot** | Telegraf | Telegram bot interface |
 | **API** | Express | HTTP API for agent-to-agent interactions |
 
@@ -67,17 +68,19 @@ Toppa parses this into three parallel operations and executes them all. This is 
 |--------|------|-------------|
 | GET | `/` | Agent info + protocol details |
 | GET | `/operators/:country` | Mobile operators by country |
-| GET | `/billers/:country` | Utility billers by country |
+| GET | `/data-plans/:country` | Data plan operators with bundle descriptions |
+| GET | `/billers/:country` | Utility billers by country (supports `?type=ELECTRICITY_BILL_PAYMENT`) |
 | GET | `/gift-cards/:country` | Gift card brands by country |
 | GET | `/gift-cards/search?q=Steam` | Search gift cards by brand |
 | GET | `/identity` | Agent ERC-8004 on-chain identity |
 | GET | `/reputation` | Agent reputation score |
 | POST | `/api/verify` | Self Protocol verification callback |
 
-### Paid (x402 — 0.5 cUSD per request)
+### Paid (x402 — 0.5 USDC per request)
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/send-airtime` | Send airtime top-up |
+| POST | `/send-data` | Send data plan top-up |
 | POST | `/pay-bill` | Pay utility bill |
 | POST | `/buy-gift-card` | Buy a gift card |
 | GET | `/gift-card-code/:id` | Get gift card redeem code |
@@ -85,11 +88,11 @@ Toppa parses this into three parallel operations and executes them all. This is 
 ### x402 Payment Flow
 ```bash
 # 1. Call without payment — get 402 with payment requirements
-curl https://toppa.api/send-airtime
+curl -X POST https://toppa.cc/send-airtime
 
-# 2. Send cUSD to agent wallet, then call with tx hash
-curl -X POST https://toppa.api/send-airtime \
-  -H "X-PAYMENT: 0xYOUR_CUSD_TX_HASH" \
+# 2. Send USDC to agent wallet on Celo, then call with tx hash
+curl -X POST https://toppa.cc/send-airtime \
+  -H "X-PAYMENT: 0xYOUR_USDC_TX_HASH" \
   -H "Content-Type: application/json" \
   -d '{"phone": "08147658721", "countryCode": "NG", "amount": 5}'
 ```
@@ -123,11 +126,12 @@ npm run dev
 ### ERC-8004 — Trustless Agents
 On-chain identity and reputation on Celo's official ERC-8004 singleton registries. Toppa registers as an NFT-based agent identity and builds reputation through transaction feedback.
 
-- Identity Registry: `0x8004A818BFB912233c491871b3d84c89A494BD9e` (Alfajores)
-- Reputation Registry: `0x8004B663056A597Dffe9eCcC1965A193B7388713` (Alfajores)
+- Identity Registry: `0x8004A818BFB912233c491871b3d84c89A494BD9e` (Celo Sepolia)
+- Reputation Registry: `0x8004B663056A597Dffe9eCcC1965A193B7388713` (Celo Sepolia)
+- Toppa Agent ID: 47
 
 ### x402 — Payment Protocol
-Implements Coinbase's x402 standard (HTTP 402 Payment Required). Other agents pay cUSD per API call. Payments verified on-chain by checking cUSD Transfer events.
+Implements Coinbase's x402 standard (HTTP 402 Payment Required). Other agents pay USDC per API call. Payments verified on-chain by checking USDC Transfer events on Celo.
 
 ### Self Protocol — ZK Verification
 ZK proof of humanity via passport NFC scanning. Users verify once in the Self app — no personal data disclosed. Sybil-resistant without KYC.

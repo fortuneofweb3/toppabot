@@ -16,4 +16,12 @@ export interface AgentState {
   selfClawVerified?: boolean;
   transactionHash?: string;
   error?: string;
+
+  // Security & Differentiation
+  source?: 'telegram' | 'x402_api';
+  rateLimited?: boolean;
+
+  // Telegram Wallet Context
+  walletAddress?: string;
+  walletBalance?: string;
 }

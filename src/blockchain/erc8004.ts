@@ -1,5 +1,5 @@
 import { createPublicClient, createWalletClient, http, parseAbi, encodeFunctionData, toHex } from 'viem';
-import { celo, celoAlfajores } from 'viem/chains';
+import { celo, celoSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 
 /**
@@ -13,16 +13,16 @@ import { privateKeyToAccount } from 'viem/accounts';
  */
 
 const isTestnet = process.env.NODE_ENV !== 'production';
-const chain = isTestnet ? celoAlfajores : celo;
+const chain = isTestnet ? celoSepolia : celo;
 
 // Official ERC-8004 deployed addresses (vanity prefix 0x8004)
 const IDENTITY_REGISTRY = isTestnet
-  ? '0x8004A818BFB912233c491871b3d84c89A494BD9e' as `0x${string}`
-  : '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as `0x${string}`;
+  ? '0x8004A818BFB912233c491871b3d84c89A494BD9e' as `0x${string}` // Celo Sepolia
+  : '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432' as `0x${string}`; // Celo Mainnet
 
 const REPUTATION_REGISTRY = isTestnet
-  ? '0x8004B663056A597Dffe9eCcC1965A193B7388713' as `0x${string}`
-  : '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as `0x${string}`;
+  ? '0x8004B663056A597Dffe9eCcC1965A193B7388713' as `0x${string}` // Celo Sepolia
+  : '0x8004BAa17C55a88189AE136b182e5fdA19dE9b63' as `0x${string}`; // Celo Mainnet
 
 // Identity Registry ABI (from ERC-8004 spec)
 const identityRegistryAbi = parseAbi([
@@ -85,33 +85,68 @@ function getWalletClient() {
 }
 
 // In-memory cache of our agent ID (set after registration)
+// Using null to distinguish "not set" from 0n (valid agent ID)
 let cachedAgentId: bigint | null = null;
 
 /**
- * Toppa's agent URI — describes capabilities per A2A protocol
- * In production, host this as a JSON file at a URL
+ * Toppa's agent registration file — per ERC-8004 spec
+ * https://eips.ethereum.org/EIPS/eip-8004#agent-uri-and-agent-registration-file
+ *
+ * Fields: type, name, description, image, services, x402Support, active, registrations, supportedTrust
  */
-function getAgentURI(): string {
-  // For hackathon, use a data URI with agent metadata
-  const agentCard = {
+export function getAgentRegistrationFile(): object {
+  const apiUrl = process.env.API_URL || 'https://toppa.cc';
+  const agentId = process.env.AGENT_ID ? parseInt(process.env.AGENT_ID) : null;
+  const chainId = isTestnet ? 44787 : 42220;
+
+  return {
+    type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: 'Toppa',
-    description: 'AI agent for digital goods and utility payments across 170+ countries on Celo',
-    version: '2.0.0',
-    skills: [
-      'airtime_topup',
-      'bill_payment',
-      'gift_card_purchase',
-      'multi_intent_resolution',
+    description: 'AI agent for digital goods and utility payments across 170+ countries. Buy airtime, data plans, pay bills (electricity, water, TV, internet), and purchase gift cards (300+ brands) — all powered by Celo stablecoins via x402 micropayments.',
+    image: `${apiUrl}/agent-image.svg`,
+    services: [
+      {
+        name: 'airtime',
+        description: 'Mobile airtime top-ups for 170+ countries, 800+ operators',
+        endpoint: apiUrl,
+      },
+      {
+        name: 'data',
+        description: 'Mobile data bundles across 170+ countries',
+        endpoint: apiUrl,
+      },
+      {
+        name: 'utility-bills',
+        description: 'Electricity, water, TV (DStv, GOtv), internet bill payments',
+        endpoint: apiUrl,
+      },
+      {
+        name: 'gift-cards',
+        description: '300+ brands (Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Airbnb)',
+        endpoint: apiUrl,
+      },
+      {
+        name: 'x402-api',
+        description: 'AI agent-to-agent micropayment protocol',
+        endpoint: apiUrl,
+        version: '2.0.0',
+      },
     ],
-    protocols: ['x402', 'a2a'],
-    chain: 'celo',
-    endpoints: {
-      api: process.env.API_URL || 'http://localhost:3000',
-      telegram: process.env.TELEGRAM_BOT_USERNAME || '',
-    },
+    x402Support: true,
+    active: true,
+    registrations: agentId !== null ? [
+      {
+        agentId,
+        agentRegistry: `eip155:${chainId}:${IDENTITY_REGISTRY}`,
+      },
+    ] : [],
+    supportedTrust: ['reputation'],
   };
-  // Return as a data URI for the hackathon (in production, host this at a real URL)
-  return `data:application/json;base64,${Buffer.from(JSON.stringify(agentCard)).toString('base64')}`;
+}
+
+function getAgentURI(): string {
+  const registrationFile = getAgentRegistrationFile();
+  return `data:application/json;base64,${Buffer.from(JSON.stringify(registrationFile)).toString('base64')}`;
 }
 
 /**
@@ -141,12 +176,12 @@ export async function registerAgent() {
     const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
     console.log('  Confirmed in block:', receipt.blockNumber);
 
-    // Extract agentId from Registered event
+    // Extract agentId from ERC-721 Transfer event (topics[3] is the tokenId)
     const registeredEvent = receipt.logs.find(
       log => log.address.toLowerCase() === IDENTITY_REGISTRY.toLowerCase()
     );
-    const agentId = registeredEvent?.topics[1]
-      ? BigInt(registeredEvent.topics[1])
+    const agentId = registeredEvent?.topics[3]
+      ? BigInt(registeredEvent.topics[3])
       : null;
 
     if (agentId) {
@@ -177,13 +212,13 @@ export async function registerAgent() {
  * Get or set the agent ID (from env or registration)
  */
 function getAgentId(): bigint {
-  if (cachedAgentId) return cachedAgentId;
+  if (cachedAgentId !== null) return cachedAgentId;
   const envId = process.env.AGENT_ID;
   if (envId && !isNaN(Number(envId))) {
     cachedAgentId = BigInt(envId);
     return cachedAgentId;
   }
-  return BigInt(1); // fallback
+  return BigInt(0); // fallback — Toppa's registered ID
 }
 
 /**
