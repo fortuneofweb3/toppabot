@@ -20,7 +20,8 @@ const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Trust Railway proxy for correct IP detection (rate limiting, logging)
-app.set('trust proxy', true);
+// Railway uses 1 proxy hop - trust only the immediate proxy, not any upstream
+app.set('trust proxy', 1);
 
 // ─────────────────────────────────────────────────
 // Security Middleware
