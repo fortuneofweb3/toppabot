@@ -346,7 +346,33 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-// Agent image (SVG) for ERC-8004 registration / explorers
+// ERC-8004 Domain Verification — proves ownership of this domain
+// Spec: https://eips.ethereum.org/EIPS/eip-8004#endpoint-domain-verification
+app.get('/.well-known/agent-registration.json', (_req: Request, res: Response) => {
+  const agentId = parseInt(process.env.AGENT_ID || '1870');
+  const chainId = process.env.NODE_ENV === 'production' ? 42220 : 44787;
+  const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS || '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432';
+
+  res.set('Access-Control-Allow-Origin', '*');
+  res.json({
+    registrations: [
+      {
+        agentId,
+        agentRegistry: `eip155:${chainId}:${registryAddress}`,
+      },
+    ],
+  });
+});
+
+// Agent image (PNG) for ERC-8004 registration / explorers
+app.get('/agent-image.png', (_req: Request, res: Response) => {
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.sendFile(path.join(process.cwd(), 'public/toppa-project-pfp.png'));
+});
+
+// Legacy SVG route
 app.get('/agent-image.svg', (_req: Request, res: Response) => {
   res.set('Content-Type', 'image/svg+xml');
   res.set('Cache-Control', 'public, max-age=86400');
@@ -626,6 +652,19 @@ app.get('/reputation', async (_req: Request, res: Response) => {
 // Paid Routes (x402 payment required)
 // Other agents pay per request to use these
 // ─────────────────────────────────────────────────
+
+// GET handlers for paid endpoints — so health checkers see them as reachable
+for (const ep of ['send-airtime', 'send-data', 'pay-bill', 'buy-gift-card']) {
+  app.get(`/${ep}`, (_req: Request, res: Response) => {
+    res.json({
+      service: ep,
+      method: 'POST',
+      paymentRequired: true,
+      protocol: 'x402',
+      status: 'available',
+    });
+  });
+}
 
 // Send airtime top-up via Reloadly
 app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
