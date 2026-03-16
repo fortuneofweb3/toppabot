@@ -4,6 +4,7 @@ import { WalletManager } from '../wallet/manager';
 import { PendingOrderStore } from './pending-orders';
 import { verifyX402Payment, calculateTotalPayment } from '../blockchain/x402';
 import { recordTransaction } from '../blockchain/erc8004';
+import { submitAutoReputation, calculateRating } from '../blockchain/reputation';
 import {
   sendAirtime, sendData,
   payBill as payReloadlyBill,
@@ -211,7 +212,30 @@ export function registerHandlers(
         },
       }).catch(() => {}); // Non-critical
 
-      // Step 6: Show result
+      // Step 6: Auto-submit reputation review (opt-out via env var)
+      if (process.env.AUTO_REPUTATION_ENABLED !== 'false') {
+        try {
+          const userPrivateKey = await walletManager.exportPrivateKey(order.telegramId);
+          const serviceType = order.action === 'airtime' ? 'airtime' :
+                             order.action === 'data' ? 'data' :
+                             order.action === 'bill' ? 'bill_payment' :
+                             'gift_card';
+          const rating = calculateRating(true); // Success = 100/100
+
+          await submitAutoReputation({
+            rating,
+            serviceType,
+            success: true,
+            userPrivateKey,
+          });
+          console.log(`[Auto-Reputation] User ${order.telegramId} rated ${rating}/100 for ${serviceType}`);
+        } catch (error: any) {
+          console.error('[Auto-Reputation Error]', error.message);
+          // Non-critical - don't fail the transaction
+        }
+      }
+
+      // Step 7: Show result
       pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
       const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
 
