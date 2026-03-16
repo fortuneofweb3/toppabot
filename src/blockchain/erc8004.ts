@@ -170,6 +170,27 @@ export function getAgentRegistrationFile(): object {
         method: 'GET',
       },
       {
+        name: 'mcp',
+        description: 'MCP (Model Context Protocol) Streamable HTTP endpoint for direct tool invocation',
+        endpoint: `${apiUrl}/mcp`,
+        method: 'POST',
+        protocol: 'MCP',
+      },
+      {
+        name: 'a2a',
+        description: 'A2A (Agent-to-Agent Protocol) JSON-RPC endpoint for task-based communication',
+        endpoint: `${apiUrl}/a2a`,
+        method: 'POST',
+        protocol: 'A2A',
+      },
+      {
+        name: 'a2a-agent-card',
+        description: 'A2A Agent Card discovery',
+        endpoint: `${apiUrl}/.well-known/agent.json`,
+        method: 'GET',
+        protocol: 'A2A',
+      },
+      {
         name: 'OASF',
         endpoint: 'https://github.com/agntcy/oasf/',
         version: 'v0.8.0',

@@ -30,7 +30,14 @@ export const PAYMENT_TOKEN_ADDRESS = isTestnet
 export const PAYMENT_TOKEN_SYMBOL = isTestnet ? 'USDC' : 'cUSD';
 export const PAYMENT_TOKEN_DECIMALS = isTestnet ? 6 : 18;
 
-const AGENT_WALLET = (process.env.AGENT_WALLET_ADDRESS || '') as `0x${string}`;
+const _rawAgentWallet = process.env.AGENT_WALLET_ADDRESS || '';
+if (_rawAgentWallet && !/^0x[0-9a-fA-F]{40}$/.test(_rawAgentWallet)) {
+  throw new Error(`AGENT_WALLET_ADDRESS is malformed: ${_rawAgentWallet.slice(0, 10)}... Must be 0x + 40 hex chars.`);
+}
+if (!_rawAgentWallet) {
+  console.warn('[WARN] AGENT_WALLET_ADDRESS not set. Payment verification will fail.');
+}
+const AGENT_WALLET = _rawAgentWallet as `0x${string}`;
 const SERVICE_FEE_PERCENT = 0.015; // 1.5% flat fee on product cost
 
 /**
@@ -168,6 +175,18 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
       return { verified: false, error: 'Transaction failed or reverted' };
     }
 
+    // Check transaction age — reject payments older than 1 hour
+    const MAX_TX_AGE_BLOCKS = 720; // ~1 hour at 5s/block on Celo
+    try {
+      const currentBlock = await client.getBlockNumber();
+      const txAge = currentBlock - receipt.blockNumber;
+      if (txAge > MAX_TX_AGE_BLOCKS) {
+        return { verified: false, error: `Transaction too old (${txAge} blocks ago, max ${MAX_TX_AGE_BLOCKS}). Submit a fresh payment.` };
+      }
+    } catch {
+      // If we can't check block number, continue with other checks
+    }
+
     // Look for cUSD Transfer event to our wallet
     const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'; // Transfer(address,address,uint256)
     const agentWalletPadded = AGENT_WALLET.toLowerCase().replace('0x', '0x000000000000000000000000');
@@ -179,10 +198,15 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
       if (
         log.address.toLowerCase() === PAYMENT_TOKEN_ADDRESS.toLowerCase() &&
         log.topics[0] === transferTopic &&
+        log.topics.length >= 3 &&
         log.topics[2]?.toLowerCase() === agentWalletPadded
       ) {
         payer = '0x' + (log.topics[1]?.slice(26) || '');
-        amount = BigInt(log.data);
+        try {
+          amount = BigInt(log.data);
+        } catch {
+          continue; // Malformed log data — skip this log
+        }
         break;
       }
     }
@@ -191,9 +215,9 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
       return { verified: false, error: `No ${PAYMENT_TOKEN_SYMBOL} transfer to agent wallet found in transaction` };
     }
 
-    // Check amount is sufficient (with 1% tolerance for rounding)
+    // Check amount is sufficient (with 0.2% tolerance for minor rounding)
     const minRequired = requiredAmount ?? 0;
-    const requiredWei = BigInt(Math.round(minRequired * (10 ** PAYMENT_TOKEN_DECIMALS) * 0.99));
+    const requiredWei = BigInt(Math.round(minRequired * (10 ** PAYMENT_TOKEN_DECIMALS) * 0.998));
     if (amount < requiredWei) {
       return {
         verified: false,

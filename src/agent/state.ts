@@ -18,7 +18,7 @@ export interface AgentState {
   error?: string;
 
   // Security & Differentiation
-  source?: 'telegram' | 'x402_api';
+  source?: 'telegram' | 'x402_api' | 'a2a';
   rateLimited?: boolean;
 
   // Telegram Wallet Context

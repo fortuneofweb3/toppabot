@@ -1,20 +1,22 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import {
-  sendAirtime, getOperators, detectOperator,
-  getDataOperators, sendData,
-  getBillers, payBill as payReloadlyBill,
-  getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
+  getOperators,
+  getDataOperators,
+  getBillers,
+  getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode,
   getCountryServices, getPromotions,
 } from "../apis/reloadly";
-import { recordTransaction } from "../blockchain/erc8004";
+import { calculateTotalPayment } from "../blockchain/x402";
 
 /**
  * Tool 1: Send airtime top-up (170+ countries)
+ * Payment-gated: returns order details for external payment flow.
+ * Actual execution happens via x402 REST API, MCP, or Telegram bot after payment.
  */
 export const sendAirtimeTool = new DynamicStructuredTool({
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number.",
+  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
@@ -22,21 +24,16 @@ export const sendAirtimeTool = new DynamicStructuredTool({
     useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
   }),
   func: async ({ phone, countryCode, amount, useLocalAmount }) => {
-    try {
-      const result = await sendAirtime({ phone, countryCode, amount, useLocalAmount });
-      await recordTransaction({ type: 'airtime', amount: result.requestedAmount, status: 'success', metadata: { operator: result.operatorName, phone } });
-      return JSON.stringify({
-        success: result.status === 'SUCCESSFUL',
-        operator: result.operatorName,
-        requestedAmount: result.requestedAmount,
-        requestedCurrency: result.requestedAmountCurrencyCode,
-        deliveredAmount: result.deliveredAmount,
-        deliveredCurrency: result.deliveredAmountCurrencyCode,
-        transactionId: result.transactionId,
-      });
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
+    const { total } = calculateTotalPayment(amount);
+    return JSON.stringify({
+      status: 'payment_required',
+      service: 'send_airtime',
+      productAmount: amount,
+      totalWithFee: total,
+      currency: 'cUSD',
+      details: { phone, countryCode, amount, useLocalAmount },
+      message: `Airtime top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
+    });
   },
 });
 
@@ -96,10 +93,11 @@ export const getDataPlansTool = new DynamicStructuredTool({
 
 /**
  * Tool 4: Send data plan top-up
+ * Payment-gated: returns order details for external payment flow.
  */
 export const sendDataTool = new DynamicStructuredTool({
   name: "send_data",
-  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId for data-specific operators.",
+  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
@@ -108,30 +106,26 @@ export const sendDataTool = new DynamicStructuredTool({
     useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
   }),
   func: async ({ phone, countryCode, amount, operatorId, useLocalAmount }) => {
-    try {
-      const result = await sendData({ phone, countryCode, amount, operatorId, useLocalAmount });
-      await recordTransaction({ type: 'data_plan', amount: result.requestedAmount, status: 'success', metadata: { operator: result.operatorName, phone } });
-      return JSON.stringify({
-        success: result.status === 'SUCCESSFUL',
-        operator: result.operatorName,
-        requestedAmount: result.requestedAmount,
-        requestedCurrency: result.requestedAmountCurrencyCode,
-        deliveredAmount: result.deliveredAmount,
-        deliveredCurrency: result.deliveredAmountCurrencyCode,
-        transactionId: result.transactionId,
-      });
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
+    const { total } = calculateTotalPayment(amount);
+    return JSON.stringify({
+      status: 'payment_required',
+      service: 'send_data',
+      productAmount: amount,
+      totalWithFee: total,
+      currency: 'cUSD',
+      details: { phone, countryCode, amount, operatorId, useLocalAmount },
+      message: `Data top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
+    });
   },
 });
 
 /**
  * Tool 5: Pay utility bill (electricity, water, TV, internet)
+ * Payment-gated: returns order details for external payment flow.
  */
 export const payBillTool = new DynamicStructuredTool({
   name: "pay_bill",
-  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId, then call this with the biller ID and account number.",
+  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId. This is a PAID service — payment is required before execution.",
   schema: z.object({
     billerId: z.number().describe("Biller ID from get_billers"),
     accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),
@@ -139,13 +133,16 @@ export const payBillTool = new DynamicStructuredTool({
     useLocalAmount: z.boolean().optional().describe("If true (default), amount is in local currency. If false, amount is in USD."),
   }),
   func: async ({ billerId, accountNumber, amount, useLocalAmount }) => {
-    try {
-      const result = await payReloadlyBill({ billerId, accountNumber, amount, useLocalAmount });
-      await recordTransaction({ type: 'bill_payment', amount, status: 'success', metadata: { billerId, accountNumber } });
-      return JSON.stringify(result);
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
+    const { total } = calculateTotalPayment(amount);
+    return JSON.stringify({
+      status: 'payment_required',
+      service: 'pay_bill',
+      productAmount: amount,
+      totalWithFee: total,
+      currency: 'cUSD',
+      details: { billerId, accountNumber, amount, useLocalAmount },
+      message: `Bill payment requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
+    });
   },
 });
 
@@ -245,10 +242,11 @@ export const getGiftCardsTool = new DynamicStructuredTool({
 
 /**
  * Tool 7: Buy a gift card
+ * Payment-gated: returns order details for external payment flow.
  */
 export const buyGiftCardTool = new DynamicStructuredTool({
   name: "buy_gift_card",
-  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Returns a transaction ID — use get_gift_card_code to retrieve the redeem code/PIN.",
+  description: "Purchase a gift card. Use search_gift_cards first to get the productId. This is a PAID service — payment is required before execution.",
   schema: z.object({
     productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
     amount: z.number().describe("Amount/denomination for the gift card (in recipient currency)"),
@@ -256,27 +254,16 @@ export const buyGiftCardTool = new DynamicStructuredTool({
     quantity: z.number().optional().describe("Number of cards to buy. Default 1."),
   }),
   func: async ({ productId, amount, recipientEmail, quantity }) => {
-    try {
-      const result = await buyGiftCard({
-        productId,
-        unitPrice: amount,
-        recipientEmail,
-        quantity: quantity || 1,
-      });
-      await recordTransaction({ type: 'gift_card', amount: result.amount, status: 'success', metadata: { productId, brand: result.product.brand.brandName } });
-      return JSON.stringify({
-        success: true,
-        transactionId: result.transactionId,
-        amount: result.amount,
-        currency: result.currencyCode,
-        brand: result.product.brand.brandName,
-        product: result.product.productName,
-        status: result.status,
-        note: 'Use get_gift_card_code with the transactionId to retrieve the redeem code.',
-      });
-    } catch (error) {
-      return JSON.stringify({ error: error.message });
-    }
+    const { total } = calculateTotalPayment(amount);
+    return JSON.stringify({
+      status: 'payment_required',
+      service: 'buy_gift_card',
+      productAmount: amount,
+      totalWithFee: total,
+      currency: 'cUSD',
+      details: { productId, amount, recipientEmail, quantity: quantity || 1 },
+      message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
+    });
   },
 });
 
@@ -343,18 +330,28 @@ export const getPromotionsTool = new DynamicStructuredTool({
   },
 });
 
-// Export all tools for LangGraph
-export const tools = [
+// Paid tools — execute real transactions via Reloadly (cost money)
+export const paidTools = [
   sendAirtimeTool,
-  getOperatorsTool,
-  getDataPlansTool,
   sendDataTool,
   payBillTool,
+  buyGiftCardTool,
+];
+
+// Free/discovery tools — no cost, just lookups
+export const freeTools = [
+  getOperatorsTool,
+  getDataPlansTool,
   getBillersTool,
   searchGiftCardsTool,
   getGiftCardsTool,
-  buyGiftCardTool,
   getGiftCardCodeTool,
   checkCountryTool,
   getPromotionsTool,
 ];
+
+// Paid tool names for fast lookup
+export const PAID_TOOL_NAMES = new Set(paidTools.map(t => t.name));
+
+// All tools — paid tools return payment_required (never call Reloadly directly)
+export const tools = [...freeTools, ...paidTools];

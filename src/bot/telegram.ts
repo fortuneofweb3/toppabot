@@ -7,9 +7,9 @@ import { MongoWalletStore } from '../wallet/mongo-store';
 import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orders';
 import { registerHandlers } from './handlers';
 import { userSettingsStore } from './user-settings';
+import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
-const isTestnet = process.env.NODE_ENV !== 'production';
 
 // ─────────────────────────────────────────────────
 // Wallet & Order Infrastructure
@@ -22,8 +22,17 @@ const walletStore = process.env.MONGODB_URI
 const walletManager = new WalletManager(walletStore);
 const pendingOrders = new PendingOrderStore();
 
-// Cleanup expired orders every 5 minutes
-setInterval(() => pendingOrders.cleanup(), 5 * 60 * 1000);
+// Cleanup expired orders and stale rate limits every 5 minutes
+setInterval(() => {
+  pendingOrders.cleanup();
+  // Prune stale rate limit entries (inactive for > 1 hour)
+  const now = Date.now();
+  for (const [userId, limit] of userRateLimits) {
+    if (now - limit.lastReset > 60 * 60 * 1000) {
+      userRateLimits.delete(userId);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // ─────────────────────────────────────────────────
 // Security: Rate Limiting & Spending Limits
@@ -128,15 +137,13 @@ bot.command('start', async (ctx) => {
   const userId = ctx.from.id.toString();
   const { address } = await walletManager.getOrCreateWallet(userId);
 
-  const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
-  const explorerUrl = isTestnet
-    ? `https://alfajores.celoscan.io/address/${address}`
-    : `https://celoscan.io/address/${address}`;
+  const tokenSymbol = TOKEN_SYMBOL;
+  const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
   await ctx.reply(
     `Welcome to Toppa!\n\n` +
     `Your Celo wallet:\n\`${address}\`\n\n` +
-    `Network: Celo ${isTestnet ? 'Sepolia Testnet' : 'Mainnet'}\n` +
+    `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n` +
     `Token: ${tokenSymbol}\n\n` +
     `⚠️ Only deposit ${tokenSymbol} on this network!\n` +
     `Sending other tokens will result in permanent loss.\n\n` +
@@ -164,16 +171,14 @@ bot.command('wallet', async (ctx) => {
 
   try {
     const { balance, address } = await walletManager.getBalance(userId);
-    const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
-    const explorerUrl = isTestnet
-      ? `https://alfajores.celoscan.io/address/${address}`
-      : `https://celoscan.io/address/${address}`;
+    const tokenSymbol = TOKEN_SYMBOL;
+    const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
     await ctx.reply(
       `💰 Your Toppa Wallet\n\n` +
       `Address:\n\`${address}\`\n\n` +
       `Balance: ${balance} ${tokenSymbol}\n` +
-      `Network: Celo ${isTestnet ? 'Sepolia Testnet' : 'Mainnet'}\n\n` +
+      `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\n` +
       `Tap address above to copy, then deposit ${tokenSymbol} to fund your wallet.`,
       {
         parse_mode: 'Markdown',
@@ -220,7 +225,7 @@ bot.command('withdraw', async (ctx) => {
     );
     return;
   }
-  if (isNaN(amount) || amount <= 0) {
+  if (isNaN(amount) || !isFinite(amount) || amount <= 0 || amount > 10000) {
     await ctx.reply(
       `❌ Invalid Amount\n\n` +
       `Amount must be a positive number.\n` +
@@ -393,7 +398,7 @@ bot.on('text', async (ctx) => {
 
         pendingOrders.create(order);
 
-        const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
+        const tokenSymbol = TOKEN_SYMBOL;
 
         await ctx.reply(
           `📋 Order Summary\n\n` +

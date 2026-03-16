@@ -5,8 +5,9 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { createX402PaymentRequest, verifyX402Payment, getX402Info, calculateTotalPayment } from '../blockchain/x402';
+import { reservePaymentHash, releasePaymentHash } from '../blockchain/replay-guard';
 import {
-  sendAirtime, getOperators, detectOperator,
+  sendAirtime, getOperators,
   getDataOperators, sendData,
   getBillers, payBill as payReloadlyBill,
   getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
@@ -15,6 +16,12 @@ import {
   ReloadlyError,
 } from '../apis/reloadly';
 import { recordTransaction, getAgentReputation, getAgentDetails, getAgentRegistrationFile } from '../blockchain/erc8004';
+import { createReceipt, updateReceipt } from '../blockchain/service-receipts';
+import { PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
+import { handleMcpRequest } from '../mcp/server';
+import { generateAgentCard } from '../a2a/agent-card';
+import { handleA2ARequest } from '../a2a/handler';
+import { CELO_CAIP2 } from '../shared/constants';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -46,7 +53,8 @@ const corsOptions: cors.CorsOptions = {
     : '*', // Allow all origins in dev
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-PAYMENT', 'PAYMENT-SIGNATURE', 'X-402-PAYMENT'],
+  allowedHeaders: ['Content-Type', 'X-PAYMENT', 'PAYMENT-SIGNATURE', 'X-402-PAYMENT', 'Mcp-Session-Id'],
+  exposedHeaders: ['PAYMENT-RESPONSE', 'X-Payment-Required'],
 };
 app.use(cors(corsOptions));
 
@@ -113,36 +121,8 @@ function errorResponse(error: any): { error: string; code?: string } {
   return { error: error.message || 'Unknown error' };
 }
 
-/**
- * Sanitize country code input (prevent path traversal, injection)
- * Country codes should be 2-3 uppercase letters only
- */
-function sanitizeCountryCode(code: string | string[]): string {
-  // Handle array case (Express sometimes passes arrays if duplicate params)
-  const input = Array.isArray(code) ? code[0] : code;
-  if (!input || typeof input !== 'string') {
-    throw new Error('Invalid country code format');
-  }
-  const sanitized = input.toUpperCase().replace(/[^A-Z]/g, '');
-  if (sanitized.length < 2 || sanitized.length > 3) {
-    throw new Error('Invalid country code format');
-  }
-  return sanitized;
-}
-
-/**
- * Sanitize phone number (allow digits, +, -, spaces only)
- */
-function sanitizePhone(phone: string): string {
-  if (typeof phone !== 'string') {
-    throw new Error('Invalid phone number format');
-  }
-  const sanitized = phone.replace(/[^0-9+\-\s]/g, '');
-  if (sanitized.length < 5 || sanitized.length > 20) {
-    throw new Error('Invalid phone number format');
-  }
-  return sanitized;
-}
+// Sanitization functions imported from shared module
+import { sanitizeCountryCode, sanitizePhone } from '../shared/sanitize';
 
 /**
  * Parse and validate integer (prevent NaN propagation)
@@ -164,33 +144,14 @@ function parseIntSafe(value: string | string[], fieldName: string): number {
  */
 function parseFloatSafe(value: any, fieldName: string): number {
   const parsed = parseFloat(value);
-  if (isNaN(parsed) || parsed <= 0) {
-    throw new Error(`Invalid ${fieldName}: must be a positive number`);
+  if (isNaN(parsed) || !isFinite(parsed) || parsed <= 0 || parsed > 10000) {
+    throw new Error(`Invalid ${fieldName}: must be a positive number (max 10,000)`);
   }
   return parsed;
 }
 
-/**
- * Reloadly account balance cache
- * Refreshed every 5 minutes to cap max amounts in discovery endpoints
- */
-let balanceCache: { balance: number; fetchedAt: number } | null = null;
-const BALANCE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-async function getReloadlyBalance(): Promise<number> {
-  try {
-    if (balanceCache && Date.now() - balanceCache.fetchedAt < BALANCE_CACHE_TTL) {
-      return balanceCache.balance;
-    }
-    const result = await getAccountBalance();
-    balanceCache = { balance: result.balance, fetchedAt: Date.now() };
-    return result.balance;
-  } catch (error) {
-    console.error('Failed to fetch Reloadly balance:', error instanceof Error ? error.message : error);
-    // Return a high default if balance fetch fails (don't block discovery)
-    return 10000;
-  }
-}
+// Shared balance cache — single instance across API and MCP
+import { getCachedReloadlyBalance as getReloadlyBalance } from '../shared/balance-cache';
 
 /**
  * Cap a max amount based on available Reloadly balance
@@ -205,6 +166,8 @@ function capMaxAmount(max: number | null, balance: number): number {
 // Gates paid endpoints behind HTTP 402 Payment Required
 // ─────────────────────────────────────────────────
 
+// CAIP-2 network identifiers imported from shared/constants
+
 interface X402Request extends Request {
   x402?: {
     verified: boolean;
@@ -216,6 +179,20 @@ interface X402Request extends Request {
 }
 
 /**
+ * Generate x402 PAYMENT-RESPONSE header (Base64-encoded SettleResponse).
+ * Per spec, returned after successful service delivery.
+ */
+function encodePaymentResponse(x402: NonNullable<X402Request['x402']>): string {
+  const settleResponse = {
+    success: true,
+    transaction: x402.txHash,
+    network: CELO_CAIP2,
+    payer: x402.payer,
+  };
+  return Buffer.from(JSON.stringify(settleResponse)).toString('base64');
+}
+
+/**
  * Extract product amount from request body based on endpoint
  * Returns the USD amount the user wants to spend on the product
  */
@@ -223,11 +200,8 @@ function getProductAmount(req: Request): number | undefined {
   const body = req.body;
   if (!body) return undefined;
 
-  // For POST endpoints: amount is in the body
-  // The amount field represents the product cost in USD (or local currency)
-  // For useLocalAmount=true, we still use the amount as approximate USD equivalent
   const amount = parseFloat(body.amount);
-  if (!isNaN(amount) && amount > 0) return amount;
+  if (!isNaN(amount) && isFinite(amount) && amount > 0 && amount <= 10000) return amount;
 
   return undefined;
 }
@@ -260,9 +234,21 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
   }
 
   try {
+    // Reserve hash atomically in MongoDB — prevents replay attacks
+    const isReserved = await reservePaymentHash(paymentHeader, 'x402_api');
+    if (!isReserved) {
+      res.status(402).json({
+        error: 'Payment already used',
+        message: 'This transaction hash has already been used for a previous request. Submit a new payment.',
+      });
+      return;
+    }
+
     const verification = await verifyX402Payment(paymentHeader, total);
 
     if (!verification.verified) {
+      // Release the hash so it can potentially be retried (e.g. wrong amount)
+      await releasePaymentHash(paymentHeader);
       res.status(402).json({
         error: 'Payment verification failed',
         message: verification.error || 'The provided payment could not be verified',
@@ -281,6 +267,8 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
 
     next();
   } catch (error: any) {
+    // Release on unexpected error so hash isn't permanently blocked
+    await releasePaymentHash(paymentHeader).catch(() => {});
     res.status(402).json({
       error: 'Payment verification error',
       message: error.message,
@@ -316,6 +304,18 @@ app.get('/', (_req: Request, res: Response) => {
       erc8004: {
         spec: 'https://eips.ethereum.org/EIPS/eip-8004',
         description: 'On-chain agent identity and reputation',
+      },
+      mcp: {
+        spec: 'https://modelcontextprotocol.io',
+        endpoint: '/mcp',
+        transport: 'Streamable HTTP',
+        tools: 12,
+      },
+      a2a: {
+        spec: 'https://a2a-protocol.org',
+        agentCard: '/.well-known/agent.json',
+        endpoint: '/a2a',
+        methods: ['message/send', 'tasks/get', 'tasks/cancel'],
       },
       selfProtocol: {
         spec: 'https://docs.self.xyz',
@@ -649,6 +649,42 @@ app.get('/reputation', async (_req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────────
+// MCP & A2A Protocol Routes
+// ─────────────────────────────────────────────────
+
+// MCP Streamable HTTP endpoint (12 tools for LLM/agent tool-use)
+app.post('/mcp', paymentLimiter, async (req: Request, res: Response) => {
+  try {
+    await handleMcpRequest(req, res);
+  } catch (error: any) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'MCP request failed', message: error.message });
+    }
+  }
+});
+
+// A2A Agent Card discovery (Google Agent-to-Agent protocol)
+app.get('/.well-known/agent.json', (_req: Request, res: Response) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(generateAgentCard());
+});
+
+// A2A JSON-RPC 2.0 endpoint for task-based agent communication
+app.post('/a2a', async (req: Request, res: Response) => {
+  try {
+    await handleA2ARequest(req, res);
+  } catch (error: any) {
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: '2.0',
+        error: { code: -32603, message: error.message },
+      });
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────
 // Paid Routes (x402 payment required)
 // Other agents pay per request to use these
 // ─────────────────────────────────────────────────
@@ -668,6 +704,7 @@ for (const ep of ['send-airtime', 'send-data', 'pay-bill', 'buy-gift-card']) {
 
 // Send airtime top-up via Reloadly
 app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
+  let receiptId = '';
   try {
     const { phone, countryCode, amount, operatorId, useLocalAmount } = req.body;
 
@@ -695,6 +732,20 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
     const sanitizedCountry = sanitizeCountryCode(countryCode);
     const sanitizedAmount = parseFloatSafe(amount, 'amount');
 
+    // Create receipt before execution (tracks payment → service binding)
+    if (req.x402) {
+      receiptId = await createReceipt({
+        paymentTxHash: req.x402.txHash,
+        payer: req.x402.payer,
+        paymentAmount: req.x402.totalPaid,
+        paymentToken: PAYMENT_TOKEN_SYMBOL,
+        paymentNetwork: CELO_CAIP2,
+        serviceType: 'airtime',
+        source: 'x402_api',
+        serviceArgs: { phone: sanitizedPhone, countryCode: sanitizedCountry, amount: sanitizedAmount },
+      });
+    }
+
     const result = await sendAirtime({
       phone: sanitizedPhone,
       countryCode: sanitizedCountry,
@@ -703,10 +754,19 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
       useLocalAmount
     });
 
+    // Update receipt with result
+    const success = result.status === 'SUCCESSFUL';
+    await updateReceipt(receiptId, {
+      status: success ? 'success' : 'failed',
+      reloadlyTransactionId: result.transactionId,
+      reloadlyStatus: result.status,
+      serviceResult: { operator: result.operatorName, deliveredAmount: result.deliveredAmount },
+    });
+
     await recordTransaction({
       type: 'airtime_api',
       amount: result.requestedAmount,
-      status: result.status === 'SUCCESSFUL' ? 'success' : 'failed',
+      status: success ? 'success' : 'failed',
       metadata: {
         caller: req.x402?.payer,
         operator: result.operatorName,
@@ -716,8 +776,13 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
       },
     });
 
+    // Add PAYMENT-RESPONSE header per x402 spec (settlement receipt)
+    if (req.x402) {
+      res.set('PAYMENT-RESPONSE', encodePaymentResponse(req.x402));
+    }
+
     res.json({
-      success: result.status === 'SUCCESSFUL',
+      success,
       transactionId: result.transactionId,
       operator: result.operatorName,
       requestedAmount: result.requestedAmount,
@@ -730,15 +795,24 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,
         paymentTx: req.x402?.txHash,
+        network: CELO_CAIP2,
       },
     });
   } catch (error) {
+    // Track failed service execution (payment was taken but service failed)
+    if (receiptId) {
+      await updateReceipt(receiptId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
     res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
   }
 });
 
 // Send data plan top-up via Reloadly
 app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
+  let receiptId = '';
   try {
     const { phone, countryCode, amount, operatorId, useLocalAmount } = req.body;
 
@@ -762,10 +836,22 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       return;
     }
 
-    // Sanitize and validate inputs
     const sanitizedPhone = sanitizePhone(phone);
     const sanitizedCountry = sanitizeCountryCode(countryCode);
     const sanitizedAmount = parseFloatSafe(amount, 'amount');
+
+    if (req.x402) {
+      receiptId = await createReceipt({
+        paymentTxHash: req.x402.txHash,
+        payer: req.x402.payer,
+        paymentAmount: req.x402.totalPaid,
+        paymentToken: PAYMENT_TOKEN_SYMBOL,
+        paymentNetwork: CELO_CAIP2,
+        serviceType: 'data',
+        source: 'x402_api',
+        serviceArgs: { phone: sanitizedPhone, countryCode: sanitizedCountry, amount: sanitizedAmount, operatorId },
+      });
+    }
 
     const result = await sendData({
       phone: sanitizedPhone,
@@ -775,10 +861,18 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       useLocalAmount
     });
 
+    const success = result.status === 'SUCCESSFUL';
+    await updateReceipt(receiptId, {
+      status: success ? 'success' : 'failed',
+      reloadlyTransactionId: result.transactionId,
+      reloadlyStatus: result.status,
+      serviceResult: { operator: result.operatorName, deliveredAmount: result.deliveredAmount },
+    });
+
     await recordTransaction({
       type: 'data_plan_api',
       amount: result.requestedAmount,
-      status: result.status === 'SUCCESSFUL' ? 'success' : 'failed',
+      status: success ? 'success' : 'failed',
       metadata: {
         caller: req.x402?.payer,
         operator: result.operatorName,
@@ -788,8 +882,10 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       },
     });
 
+    if (req.x402) res.set('PAYMENT-RESPONSE', encodePaymentResponse(req.x402));
+
     res.json({
-      success: result.status === 'SUCCESSFUL',
+      success,
       transactionId: result.transactionId,
       operator: result.operatorName,
       requestedAmount: result.requestedAmount,
@@ -802,15 +898,20 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,
         paymentTx: req.x402?.txHash,
+        network: CELO_CAIP2,
       },
     });
   } catch (error) {
+    if (receiptId) {
+      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
     res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
   }
 });
 
 // Pay utility bill via Reloadly (electricity, water, TV, internet)
 app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
+  let receiptId = '';
   try {
     const { billerId, accountNumber, amount, useLocalAmount } = req.body;
 
@@ -833,7 +934,27 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
       return;
     }
 
+    if (req.x402) {
+      receiptId = await createReceipt({
+        paymentTxHash: req.x402.txHash,
+        payer: req.x402.payer,
+        paymentAmount: req.x402.totalPaid,
+        paymentToken: PAYMENT_TOKEN_SYMBOL,
+        paymentNetwork: CELO_CAIP2,
+        serviceType: 'bill_payment',
+        source: 'x402_api',
+        serviceArgs: { billerId, accountNumber, amount },
+      });
+    }
+
     const result = await payReloadlyBill({ billerId, accountNumber, amount, useLocalAmount });
+
+    await updateReceipt(receiptId, {
+      status: 'success',
+      reloadlyTransactionId: result.id,
+      reloadlyStatus: result.status,
+      serviceResult: { referenceId: result.referenceId, message: result.message },
+    });
 
     await recordTransaction({
       type: 'bill_payment_api',
@@ -847,6 +968,8 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
       },
     });
 
+    if (req.x402) res.set('PAYMENT-RESPONSE', encodePaymentResponse(req.x402));
+
     res.json({
       success: true,
       transactionId: result.id,
@@ -857,15 +980,20 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,
         paymentTx: req.x402?.txHash,
+        network: CELO_CAIP2,
       },
     });
   } catch (error) {
+    if (receiptId) {
+      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
     res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
   }
 });
 
 // Buy a gift card
 app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
+  let receiptId = '';
   try {
     const { productId, amount, recipientEmail, quantity } = req.body;
 
@@ -889,11 +1017,31 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
       return;
     }
 
+    if (req.x402) {
+      receiptId = await createReceipt({
+        paymentTxHash: req.x402.txHash,
+        payer: req.x402.payer,
+        paymentAmount: req.x402.totalPaid,
+        paymentToken: PAYMENT_TOKEN_SYMBOL,
+        paymentNetwork: CELO_CAIP2,
+        serviceType: 'gift_card',
+        source: 'x402_api',
+        serviceArgs: { productId, amount, recipientEmail, quantity: quantity || 1 },
+      });
+    }
+
     const result = await buyGiftCard({
       productId,
       unitPrice: amount,
       recipientEmail,
       quantity: quantity || 1,
+    });
+
+    await updateReceipt(receiptId, {
+      status: 'success',
+      reloadlyTransactionId: result.transactionId,
+      reloadlyStatus: result.status,
+      serviceResult: { brand: result.product.brand.brandName, amount: result.amount },
     });
 
     await recordTransaction({
@@ -916,6 +1064,8 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
       // Codes not ready yet — caller can retry with GET /gift-card-code/:id
     }
 
+    if (req.x402) res.set('PAYMENT-RESPONSE', encodePaymentResponse(req.x402));
+
     res.json({
       success: true,
       transactionId: result.transactionId,
@@ -930,9 +1080,13 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,
         paymentTx: req.x402?.txHash,
+        network: CELO_CAIP2,
       },
     });
   } catch (error) {
+    if (receiptId) {
+      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
+    }
     res.status(error instanceof ReloadlyError ? error.httpStatus : 500).json(errorResponse(error));
   }
 });
@@ -974,6 +1128,9 @@ export function startApiServer() {
     console.log(`   Paid:    POST /pay-bill                      - Pay utility bill`);
     console.log(`   Paid:    POST /buy-gift-card                 - Buy a gift card (includes codes)`);
     console.log(`   Public:  GET  /gift-card-code/:id            - Retrieve gift card codes`);
+    console.log(`   MCP:     POST /mcp                          - MCP Streamable HTTP (12 tools)`);
+    console.log(`   A2A:     GET  /.well-known/agent.json       - A2A Agent Card`);
+    console.log(`   A2A:     POST /a2a                          - A2A JSON-RPC endpoint`);
     const x = getX402Info();
     console.log(`   Payment: x402 (product + ${x.feePercent * 100}% fee in ${x.currency})`);
   });

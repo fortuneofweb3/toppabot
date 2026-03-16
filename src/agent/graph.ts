@@ -6,10 +6,17 @@ import { tools } from "./tools";
 
 /**
  * Toppa Agent - LangGraph Workflow
+ *
+ * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
+ * they return payment_required responses instead of executing Reloadly directly.
+ *
+ * Actual paid execution only happens through payment-gated paths:
+ * - x402 REST API: payment verified at HTTP middleware layer (server.ts)
+ * - MCP tools: payment verified via paymentTxHash param (mcp/tools.ts)
+ * - Telegram bot: wallet transfer + on-chain verification (bot/handlers.ts)
  */
 
-// Initialize LLM with tool binding
-// Supports OpenAI, DeepSeek, or any OpenAI-compatible API
+// LLM with all tools — paid tools are payment-gated (return payment_required, never call Reloadly)
 const llm = new ChatOpenAI({
   modelName: process.env.LLM_MODEL || "gpt-4-turbo-preview",
   temperature: 0.7,
@@ -51,8 +58,8 @@ Important:
 - Always show transaction details after completion (amounts, IDs, status)
 - For gift cards, always retrieve and show the redeem code after purchase
 
-TELEGRAM WALLET MODE:
-When source is 'telegram', users have an in-app cUSD wallet. Before executing ANY paid transaction (airtime, data, bills, gift cards), you MUST:
+PAYMENT-GATED MODE (Telegram & A2A):
+When source is 'telegram' or 'a2a', you MUST NOT directly execute paid tools. Before executing ANY paid transaction (airtime, data, bills, gift cards), you MUST:
 
 1. First gather ALL required info from the user (phone, country, amount, etc.) by asking questions normally and calling discovery tools (get_operators, get_billers, search_gift_cards, etc.) as needed.
 2. Once you have everything, DO NOT call the paid tool (send_airtime, send_data, pay_bill, buy_gift_card). Instead, return ONLY a JSON block in this exact format:
@@ -130,6 +137,7 @@ async function executeTools(state: AgentState) {
   const toolCalls = lastMessage.additional_kwargs?.tool_calls || [];
 
   // Execute each tool call
+  // Safe: paid tools return payment_required responses (never call Reloadly directly)
   const toolMessages = await Promise.all(
     toolCalls.map(async (toolCall: any) => {
       const tool = tools.find((t) => t.name === toolCall.function.name);

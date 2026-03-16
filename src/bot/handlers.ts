@@ -11,6 +11,10 @@ import {
   payBill as payReloadlyBill,
   buyGiftCard, getGiftCardRedeemCode,
 } from '../apis/reloadly';
+import { createReceipt, updateReceipt } from '../blockchain/service-receipts';
+import { PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
+import { reservePaymentHash } from '../blockchain/replay-guard';
+import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 
 /**
  * Execute a Reloadly service tool by name
@@ -77,6 +81,9 @@ function formatServiceResult(toolName: string, result: any): string {
   }
 }
 
+// Track in-progress withdrawals to prevent double-click race conditions
+const withdrawalsInProgress = new Set<string>();
+
 /**
  * Register all inline keyboard callback handlers on the bot
  */
@@ -96,6 +103,12 @@ export function registerHandlers(
 
       if (!order || !userId || order.telegramId !== userId) {
         await ctx.answerCbQuery('Order expired or not found.');
+        return;
+      }
+
+      // Guard: only allow confirmation from pending_confirmation state (prevents double-click)
+      if (order.status !== 'pending_confirmation') {
+        await ctx.answerCbQuery('Order already confirmed.');
         return;
       }
 
@@ -170,10 +183,18 @@ export function registerHandlers(
       return;
     }
 
+    // Guard: only allow payment from pending_payment state (prevents double-click race)
+    // This check is synchronous — no await between check and status update — so it's atomic in JS.
+    if (order.status !== 'pending_payment') {
+      await ctx.answerCbQuery('Payment already processing.');
+      return;
+    }
+
     pendingOrders.updateStatus(orderId, 'processing');
     await ctx.editMessageText('⏳ Processing payment... (1/4)');
     await ctx.answerCbQuery();
 
+    let receiptId = '';
     try {
       // Step 1: Transfer cUSD from user wallet → agent wallet
       await ctx.editMessageText('⏳ Transferring cUSD... (2/4)');
@@ -182,12 +203,33 @@ export function registerHandlers(
         order.totalAmount,
       );
 
-      // Step 2: Verify payment on-chain (reuses existing x402 verification)
+      // Step 2: Reserve payment hash to prevent cross-channel replay attacks
       await ctx.editMessageText('⏳ Verifying on-chain... (3/4)');
+      const isReserved = await reservePaymentHash(txHash, 'telegram');
+      if (!isReserved) {
+        throw new Error('Payment hash already used. This should not happen — contact support.');
+      }
+
       const verification = await verifyX402Payment(txHash, order.totalAmount);
       if (!verification.verified) {
         throw new Error(`Payment verification failed: ${verification.error}`);
       }
+
+      // Create receipt after payment is verified (tracks payment → service binding)
+      const serviceType = order.action === 'airtime' ? 'airtime' :
+                          order.action === 'data' ? 'data' :
+                          order.action === 'bill' ? 'bill_payment' :
+                          'gift_card' as const;
+      receiptId = await createReceipt({
+        paymentTxHash: txHash,
+        payer: order.telegramId,
+        paymentAmount: order.totalAmount.toString(),
+        paymentToken: PAYMENT_TOKEN_SYMBOL,
+        paymentNetwork: CELO_CAIP2,
+        serviceType,
+        source: 'telegram',
+        serviceArgs: { toolName: order.toolName, ...order.toolArgs },
+      });
 
       // Step 3: Execute the Reloadly service
       const actionLabel = order.action === 'airtime' ? 'Sending airtime' :
@@ -196,6 +238,14 @@ export function registerHandlers(
                           'Purchasing gift card';
       await ctx.editMessageText(`⏳ ${actionLabel}... (4/4)`);
       const result = await executeServiceTool(order.toolName, order.toolArgs);
+
+      // Update receipt with success
+      await updateReceipt(receiptId, {
+        status: 'success',
+        reloadlyTransactionId: result.transactionId,
+        reloadlyStatus: result.status,
+        serviceResult: { toolName: order.toolName },
+      });
 
       // Step 4: Record spending for rate limiting
       recordSpending(order.telegramId, order.productAmount);
@@ -242,11 +292,8 @@ export function registerHandlers(
       pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
       const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
 
-      const isTestnet = process.env.NODE_ENV !== 'production';
-      const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
-      const explorerUrl = isTestnet
-        ? `https://alfajores.celoscan.io/tx/${txHash}`
-        : `https://celoscan.io/tx/${txHash}`;
+      const tokenSymbol = TOKEN_SYMBOL;
+      const explorerUrl = `${EXPLORER_BASE}/tx/${txHash}`;
 
       // Show completion message
       const completionText =
@@ -290,6 +337,11 @@ export function registerHandlers(
         userId: order.telegramId,
         error: error.message,
       });
+
+      // Track failed service execution in receipt (payment was taken, service failed)
+      if (receiptId) {
+        await updateReceipt(receiptId, { status: 'failed', error: error.message });
+      }
 
       pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
 
@@ -361,39 +413,58 @@ export function registerHandlers(
       // Format: userId_amount_address
       const userId = parts[0];
       const amount = parseFloat(parts[1]);
-      const toAddress = parts.slice(2).join('_'); // Address might not have underscores, but be safe
+      const toAddress = parts.slice(2).join('_');
 
       if (ctx.from?.id.toString() !== userId) {
         await ctx.answerCbQuery('Unauthorized');
         return;
       }
 
-      await ctx.editMessageText('⏳ Processing withdrawal...');
-      await ctx.answerCbQuery();
+      // Validate parsed callback data (defense-in-depth)
+      if (!amount || !isFinite(amount) || amount <= 0) {
+        await ctx.answerCbQuery('Invalid withdrawal amount.');
+        return;
+      }
+      if (!toAddress || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) {
+        await ctx.answerCbQuery('Invalid withdrawal address.');
+        return;
+      }
 
-      const result = await walletManager.withdraw(userId, toAddress, amount);
-      const { balance: newBalance } = await walletManager.getBalance(userId);
+      // Guard: prevent double-click — check synchronously before any await
+      const withdrawKey = `${userId}_${amount}_${toAddress}`;
+      if (withdrawalsInProgress.has(withdrawKey)) {
+        await ctx.answerCbQuery('Withdrawal already processing.');
+        return;
+      }
+      withdrawalsInProgress.add(withdrawKey);
 
-      const isTestnet = process.env.NODE_ENV !== 'production';
-      const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
-      const explorerUrl = isTestnet
-        ? `https://alfajores.celoscan.io/tx/${result.txHash}`
-        : `https://celoscan.io/tx/${result.txHash}`;
+      try {
+        await ctx.editMessageText('⏳ Processing withdrawal...');
+        await ctx.answerCbQuery();
 
-      await ctx.editMessageText(
-        `✅ Withdrawal Complete!\n\n` +
-        `Sent: ${result.amount} ${tokenSymbol}\n` +
-        `To: \`${result.to}\`\n\n` +
-        `Balance: ${newBalance} ${tokenSymbol}`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '🔍 View on Celoscan', url: explorerUrl }
-            ]]
+        const result = await walletManager.withdraw(userId, toAddress, amount);
+        const { balance: newBalance } = await walletManager.getBalance(userId);
+
+        const tokenSymbol = TOKEN_SYMBOL;
+        const explorerUrl = `${EXPLORER_BASE}/tx/${result.txHash}`;
+
+        await ctx.editMessageText(
+          `✅ Withdrawal Complete!\n\n` +
+          `Sent: ${result.amount} ${tokenSymbol}\n` +
+          `To: \`${result.to}\`\n\n` +
+          `Balance: ${newBalance} ${tokenSymbol}`,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [[
+                { text: '🔍 View on Celoscan', url: explorerUrl }
+              ]]
+            }
           }
-        }
-      );
+        );
+      } finally {
+        withdrawalsInProgress.delete(withdrawKey);
+      }
     } catch (error: any) {
       console.error('[Withdraw Error]', error.message);
       await ctx.editMessageText(`Withdrawal failed: ${error.message}`);
@@ -433,8 +504,7 @@ export function registerHandlers(
 
     try {
       const { balance, address } = await walletManager.getBalance(userId);
-      const isTestnet = process.env.NODE_ENV !== 'production';
-      const tokenSymbol = isTestnet ? 'USDC' : 'cUSD';
+      const tokenSymbol = TOKEN_SYMBOL;
 
       await ctx.editMessageText(
         `💰 Your Wallet\n\n` +

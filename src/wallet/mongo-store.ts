@@ -11,13 +11,26 @@ import { IWalletStore, StoredWallet } from './store';
 let _client: MongoClient | null = null;
 let _db: Db | null = null;
 
-async function getDb(): Promise<Db> {
+export async function getDb(): Promise<Db> {
   if (_db) return _db;
 
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI not configured');
 
-  _client = new MongoClient(uri);
+  // serverApi + tls options help with Atlas SSL compatibility across Node.js versions
+  _client = new MongoClient(uri, {
+    tls: true,
+    // Retry on transient network/SSL errors
+    retryWrites: true,
+    retryReads: true,
+    // Connection pool settings
+    maxPoolSize: 10,
+    minPoolSize: 1,
+    // Timeout settings
+    connectTimeoutMS: 30000,
+    socketTimeoutMS: 45000,
+    serverSelectionTimeoutMS: 30000,
+  });
   await _client.connect();
   _db = _client.db(); // Uses db name from URI (toppa)
   console.log('Connected to MongoDB');
