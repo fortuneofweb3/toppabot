@@ -843,6 +843,7 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
       deliveredCurrency: result.deliveredAmountCurrencyCode,
       phone: result.recipientPhone,
       status: result.status,
+      pinDetail: result.pinDetail || null,
       x402: {
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,
@@ -946,6 +947,7 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       deliveredCurrency: result.deliveredAmountCurrencyCode,
       phone: result.recipientPhone,
       status: result.status,
+      pinDetail: result.pinDetail || null,
       x402: {
         totalPaid: req.x402?.totalPaid,
         breakdown: req.x402?.breakdown,

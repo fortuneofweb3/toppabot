@@ -51,13 +51,21 @@ async function executeServiceTool(
 function formatServiceResult(toolName: string, result: any): string {
   switch (toolName) {
     case 'send_airtime':
-    case 'send_data':
-      return (
+    case 'send_data': {
+      let text = (
         `Operator: ${result.operatorName || 'Auto-detected'}\n` +
         `Amount: ${result.deliveredAmount} ${result.deliveredAmountCurrencyCode || ''}\n` +
         `Status: ${result.status}\n` +
         `Transaction ID: ${result.transactionId}`
       );
+      if (result.pinDetail) {
+        text += `\n\nPIN Code: ${result.pinDetail.code}`;
+        if (result.pinDetail.ivr) text += `\nDial: ${result.pinDetail.ivr}`;
+        if (result.pinDetail.validity) text += `\nValid: ${result.pinDetail.validity}`;
+        if (result.pinDetail.info1) text += `\n${result.pinDetail.info1}`;
+      }
+      return text;
+    }
     case 'pay_bill':
       return (
         `Status: ${result.status}\n` +

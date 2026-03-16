@@ -191,9 +191,12 @@ export interface ReloadlyOperator {
   name: string;
   bundle: boolean;
   data: boolean;
+  pin: boolean;
   denominationType: 'RANGE' | 'FIXED';
   senderCurrencyCode: string;
+  senderCurrencySymbol: string;
   destinationCurrencyCode: string;
+  destinationCurrencySymbol: string;
   minAmount: number;
   maxAmount: number;
   localMinAmount: number;
@@ -202,8 +205,17 @@ export interface ReloadlyOperator {
   fixedAmountsDescriptions: Record<string, string> | null;
   localFixedAmounts: number[] | null;
   localFixedAmountsDescriptions: Record<string, string> | null;
+  suggestedAmounts: number[] | null;
+  suggestedAmountsMap: Record<string, number> | null;
+  mostPopularAmount: number | null;
+  mostPopularLocalAmount: number | null;
   supportsLocalAmounts: boolean;
+  internationalDiscount: number;
+  localDiscount: number;
   commission: number;
+  logoUrls: string[];
+  promotions: any[];
+  status: string;
   country: { isoName: string; name: string };
   fx: { rate: number; currencyCode: string };
 }
@@ -221,7 +233,19 @@ export interface ReloadlyTopupResponse {
   requestedAmountCurrencyCode: string;
   deliveredAmount: number;
   deliveredAmountCurrencyCode: string;
+  discount: number;
+  discountCurrencyCode: string;
   transactionDate: string;
+  pinDetail: {
+    serial: number;
+    info1: string;
+    info2: string;
+    info3: string;
+    value: string | null;
+    code: number;
+    ivr: string;
+    validity: string;
+  } | null;
   balanceInfo: {
     oldBalance: number;
     newBalance: number;
@@ -242,7 +266,16 @@ export interface ReloadlyBiller {
   minLocalTransactionAmount: number;
   maxLocalTransactionAmount: number;
   localTransactionFee: number;
+  localTransactionFeeCurrencyCode: string;
+  localDiscountPercentage: number;
+  internationalAmountSupported: boolean;
+  internationalTransactionCurrencyCode: string;
+  minInternationalTransactionAmount: number;
+  maxInternationalTransactionAmount: number;
   internationalTransactionFee: number;
+  internationalTransactionFeeCurrencyCode: string;
+  internationalDiscountPercentage: number;
+  fx: { rate: number; currencyCode: string };
 }
 
 export interface ReloadlyBillPaymentResponse {
@@ -252,6 +285,7 @@ export interface ReloadlyBillPaymentResponse {
   code: string;
   message: string;
   submittedAt: string;
+  finalStatusAvailabilityAt: string | null;
 }
 
 // ─── Airtime Functions ───
@@ -397,9 +431,11 @@ export interface ReloadlyGiftCardProduct {
   recipientCurrencyCode: string;
   senderFee: number;
   senderFeePercentage: number;
+  discountPercentage: number;
   denominationType: 'FIXED' | 'RANGE';
   fixedRecipientDenominations: number[];
   fixedSenderDenominations: number[];
+  fixedRecipientToSenderDenominationsMap: Record<string, number> | null;
   minRecipientDenomination: number | null;
   maxRecipientDenomination: number | null;
   minSenderDenomination: number | null;
@@ -408,15 +444,21 @@ export interface ReloadlyGiftCardProduct {
     brandId: number;
     brandName: string;
   };
+  category: {
+    id: number;
+    name: string;
+  };
   country: {
     isoName: string;
     name: string;
+    flagUrl: string;
   };
   logoUrls: string[];
   redeemInstruction: {
     concise: string;
     verbose: string;
   };
+  status: string;
 }
 
 export interface ReloadlyGiftCardOrderResponse {

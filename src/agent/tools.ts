@@ -7,6 +7,7 @@ import {
   getCountryServices, getPromotions,
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
+import { getCachedReloadlyBalance } from "../shared/balance-cache";
 import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
 import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
 import { setUserCountry } from "./user-activity";
@@ -62,15 +63,18 @@ export const getOperatorsTool: Tool = {
     try {
       if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getOperators(countryCode);
+      const balance = await getCachedReloadlyBalance();
       return JSON.stringify(operators.map(op => ({
         id: op.operatorId,
         name: op.name,
         denominationType: op.denominationType,
-        fixedAmounts: op.fixedAmounts || [],
+        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
         localFixedAmounts: op.localFixedAmounts || [],
         localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
+        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
         minAmount: op.minAmount,
-        maxAmount: op.maxAmount,
+        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
         type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
       })));
@@ -93,18 +97,21 @@ export const getDataPlansTool: Tool = {
     try {
       if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getDataOperators(countryCode);
+      const balance = await getCachedReloadlyBalance();
       return JSON.stringify(operators.map(op => ({
         operatorId: op.operatorId,
         name: op.name,
         isData: op.data,
         isBundle: op.bundle,
         denominationType: op.denominationType,
-        fixedAmounts: op.fixedAmounts || [],
+        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
         fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
         localFixedAmounts: op.localFixedAmounts || [],
         localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
+        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
         minAmount: op.minAmount,
-        maxAmount: op.maxAmount,
+        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
       })));
     } catch (error: any) {
@@ -187,9 +194,14 @@ export const getBillersTool: Tool = {
         name: b.name,
         type: b.type,
         serviceType: b.serviceType,
-        currency: b.localTransactionCurrencyCode,
-        minAmount: b.minLocalTransactionAmount,
-        maxAmount: b.maxLocalTransactionAmount,
+        localCurrency: b.localTransactionCurrencyCode,
+        minLocalAmount: b.minLocalTransactionAmount,
+        maxLocalAmount: b.maxLocalTransactionAmount,
+        internationalSupported: b.internationalAmountSupported,
+        internationalCurrency: b.internationalTransactionCurrencyCode || null,
+        minInternationalAmount: b.minInternationalTransactionAmount || null,
+        maxInternationalAmount: b.maxInternationalTransactionAmount || null,
+        fx: b.fx || null,
       })));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
@@ -210,16 +222,19 @@ export const searchGiftCardsTool: Tool = {
   func: async ({ query, countryCode }) => {
     try {
       const results = await searchGiftCards(query, countryCode);
+      const balance = await getCachedReloadlyBalance();
       return JSON.stringify(results.slice(0, 10).map(p => ({
         productId: p.productId,
         name: p.productName,
         brand: p.brand.brandName,
+        category: p.category?.name || null,
         country: p.country.isoName,
         currency: p.recipientCurrencyCode,
         denominationType: p.denominationType,
-        fixedDenominations: p.fixedRecipientDenominations?.slice(0, 5),
+        fixedDenominations: (p.fixedRecipientDenominations || []).filter(d => d <= balance).slice(0, 10),
         minAmount: p.minRecipientDenomination,
-        maxAmount: p.maxRecipientDenomination,
+        maxAmount: p.maxRecipientDenomination ? Math.min(p.maxRecipientDenomination, balance) : null,
+        redeemInstruction: p.redeemInstruction?.concise || null,
       })));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
@@ -239,7 +254,8 @@ export const getGiftCardsTool: Tool = {
   func: async ({ countryCode }) => {
     try {
       const products = await getGiftCardProducts(countryCode);
-      const brands = new Map<string, { brandName: string; products: number; minPrice: number; maxPrice: number; currency: string }>();
+      const balance = await getCachedReloadlyBalance();
+      const brands = new Map<string, { brandName: string; category: string | null; products: number; minPrice: number; maxPrice: number; currency: string }>();
       for (const p of products) {
         const existing = brands.get(p.brand.brandName);
         const min = p.minSenderDenomination || p.fixedSenderDenominations?.[0] || 0;
@@ -247,9 +263,9 @@ export const getGiftCardsTool: Tool = {
         if (existing) {
           existing.products++;
           existing.minPrice = Math.min(existing.minPrice, min);
-          existing.maxPrice = Math.max(existing.maxPrice, max);
+          existing.maxPrice = Math.min(Math.max(existing.maxPrice, max), balance);
         } else {
-          brands.set(p.brand.brandName, { brandName: p.brand.brandName, products: 1, minPrice: min, maxPrice: max, currency: p.senderCurrencyCode });
+          brands.set(p.brand.brandName, { brandName: p.brand.brandName, category: p.category?.name || null, products: 1, minPrice: min, maxPrice: Math.min(max, balance), currency: p.senderCurrencyCode });
         }
       }
       return JSON.stringify({

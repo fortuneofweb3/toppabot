@@ -102,6 +102,12 @@ export function registerMcpTools(server: McpServer) {
             text: JSON.stringify(operators.map(op => ({
               id: op.operatorId,
               name: op.name,
+              denominationType: op.denominationType,
+              fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
+              localFixedAmounts: op.localFixedAmounts || [],
+              localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
+              suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+              mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
               minAmount: op.minAmount,
               maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
               localCurrency: op.destinationCurrencyCode,
@@ -135,6 +141,12 @@ export function registerMcpTools(server: McpServer) {
               isData: op.data,
               isBundle: op.bundle,
               denominationType: op.denominationType,
+              fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
+              fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
+              localFixedAmounts: op.localFixedAmounts || [],
+              localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
+              suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+              mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
               minAmount: op.minAmount,
               maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
               localCurrency: op.destinationCurrencyCode,
@@ -169,11 +181,14 @@ export function registerMcpTools(server: McpServer) {
               name: b.name,
               type: b.type,
               serviceType: b.serviceType,
-              currency: b.localTransactionCurrencyCode,
-              minAmount: b.minLocalTransactionAmount,
-              maxAmount: b.maxLocalTransactionAmount
-                ? Math.min(b.maxLocalTransactionAmount, balance)
-                : balance,
+              localCurrency: b.localTransactionCurrencyCode,
+              minLocalAmount: b.minLocalTransactionAmount,
+              maxLocalAmount: b.maxLocalTransactionAmount,
+              internationalSupported: b.internationalAmountSupported,
+              internationalCurrency: b.internationalTransactionCurrencyCode || null,
+              minInternationalAmount: b.minInternationalTransactionAmount || null,
+              maxInternationalAmount: b.maxInternationalTransactionAmount || null,
+              fx: b.fx || null,
             }))),
           }],
         };
@@ -204,16 +219,18 @@ export function registerMcpTools(server: McpServer) {
               productId: p.productId,
               name: p.productName,
               brand: p.brand.brandName,
+              category: p.category?.name || null,
               country: p.country.isoName,
               currency: p.recipientCurrencyCode,
               denominationType: p.denominationType,
-              fixedDenominations: p.fixedRecipientDenominations
-                ?.filter((d: number) => d <= balance)
-                .slice(0, 5),
+              fixedDenominations: (p.fixedRecipientDenominations || [])
+                .filter((d: number) => d <= balance)
+                .slice(0, 10),
               minAmount: p.minRecipientDenomination,
               maxAmount: p.maxRecipientDenomination
                 ? Math.min(p.maxRecipientDenomination, balance)
                 : balance,
+              redeemInstruction: p.redeemInstruction?.concise || null,
             }))),
           }],
         };
@@ -382,6 +399,7 @@ export function registerMcpTools(server: McpServer) {
               deliveredAmount: result.deliveredAmount,
               deliveredCurrency: result.deliveredAmountCurrencyCode,
               transactionId: result.transactionId,
+              pinDetail: result.pinDetail || null,
             }),
           }],
         };
@@ -455,6 +473,7 @@ export function registerMcpTools(server: McpServer) {
               deliveredAmount: result.deliveredAmount,
               deliveredCurrency: result.deliveredAmountCurrencyCode,
               transactionId: result.transactionId,
+              pinDetail: result.pinDetail || null,
             }),
           }],
         };
