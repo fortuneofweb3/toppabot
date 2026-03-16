@@ -284,6 +284,44 @@ export async function registerAgent() {
 }
 
 /**
+ * Update the on-chain tokenURI with fresh metadata
+ * Run this after adding new services (MCP, A2A, etc.) to push changes to 8004scan
+ */
+export async function updateAgentURI() {
+  try {
+    const agentId = getAgentId();
+    const agentURI = getAgentURI();
+    const account = getWalletClient().account;
+
+    console.log('Updating on-chain metadata for agent', agentId.toString());
+
+    const { request } = await getPublicClient().simulateContract({
+      address: IDENTITY_REGISTRY,
+      abi: identityRegistryAbi,
+      functionName: 'setAgentURI',
+      args: [agentId, agentURI],
+      account,
+    });
+
+    const hash = await getWalletClient().writeContract(request);
+    console.log('  Transaction submitted:', hash);
+
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    console.log('  Confirmed in block:', receipt.blockNumber);
+
+    return {
+      updated: true,
+      agentId: agentId.toString(),
+      transactionHash: hash,
+      blockNumber: Number(receipt.blockNumber),
+    };
+  } catch (error: any) {
+    console.error('URI update failed:', error.message);
+    return { updated: false, error: error.message };
+  }
+}
+
+/**
  * Get or set the agent ID (from env or registration)
  */
 function getAgentId(): bigint {
