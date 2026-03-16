@@ -6,6 +6,7 @@ import { InMemoryWalletStore } from '../wallet/store';
 import { MongoWalletStore } from '../wallet/mongo-store';
 import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orders';
 import { registerHandlers } from './handlers';
+import { userSettingsStore } from './user-settings';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 const isTestnet = process.env.NODE_ENV !== 'production';
@@ -270,10 +271,14 @@ bot.command('settings', async (ctx) => {
     return;
   }
 
+  const settings = userSettingsStore.get(userId);
+  const autoReviewStatus = settings.autoReviewEnabled ? 'ON ✅' : 'OFF ❌';
+
   await ctx.reply(
     `⚙️ Wallet Settings\n\n` +
     `Choose an option:`,
     Markup.inlineKeyboard([
+      [Markup.button.callback(`⭐ Auto-Review: ${autoReviewStatus}`, `toggle_autoreview_${userId}`)],
       [Markup.button.callback('🔑 Export Private Key', `export_confirm_${userId}`)],
       [Markup.button.callback('📊 Transaction History', `history_${userId}`)],
       [Markup.button.callback('💰 Check Balance', `balance_${userId}`)],

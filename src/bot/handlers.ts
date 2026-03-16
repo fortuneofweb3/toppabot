@@ -5,6 +5,7 @@ import { PendingOrderStore } from './pending-orders';
 import { verifyX402Payment, calculateTotalPayment } from '../blockchain/x402';
 import { recordTransaction } from '../blockchain/erc8004';
 import { submitAutoReputation, calculateRating } from '../blockchain/reputation';
+import { userSettingsStore } from './user-settings';
 import {
   sendAirtime, sendData,
   payBill as payReloadlyBill,
@@ -212,25 +213,27 @@ export function registerHandlers(
         },
       }).catch(() => {}); // Non-critical
 
-      // Step 6: Auto-submit reputation review (opt-out via env var)
-      if (process.env.AUTO_REPUTATION_ENABLED !== 'false') {
+      // Step 6: Handle reputation review (auto or manual)
+      const userSettings = userSettingsStore.get(order.telegramId);
+
+      if (userSettings.autoReviewEnabled) {
+        // Auto-review: submit 5 stars immediately
         try {
           const userPrivateKey = await walletManager.exportPrivateKey(order.telegramId);
           const serviceType = order.action === 'airtime' ? 'airtime' :
                              order.action === 'data' ? 'data' :
                              order.action === 'bill' ? 'bill_payment' :
                              'gift_card';
-          const rating = calculateRating(true); // Success = 100/100
 
           await submitAutoReputation({
-            rating,
+            rating: 100, // 5 stars = 100/100
             serviceType,
             success: true,
             userPrivateKey,
           });
-          console.log(`[Auto-Reputation] User ${order.telegramId} rated ${rating}/100 for ${serviceType}`);
+          console.log(`[Auto-Review] User ${order.telegramId} auto-rated 100/100 (5★) for ${serviceType}`);
         } catch (error: any) {
-          console.error('[Auto-Reputation Error]', error.message);
+          console.error('[Auto-Review Error]', error.message);
           // Non-critical - don't fail the transaction
         }
       }
@@ -245,18 +248,42 @@ export function registerHandlers(
         ? `https://alfajores.celoscan.io/tx/${txHash}`
         : `https://celoscan.io/tx/${txHash}`;
 
-      await ctx.editMessageText(
+      // Show completion message
+      const completionText =
         `✅ ${order.action.charAt(0).toUpperCase() + order.action.slice(1)} Complete!\n\n` +
         `${formatServiceResult(order.toolName, result)}\n\n` +
-        `Balance: ${newBalance} ${tokenSymbol}`,
-        {
+        `Balance: ${newBalance} ${tokenSymbol}`;
+
+      if (userSettings.autoReviewEnabled) {
+        // Auto-review enabled: just show result
+        await ctx.editMessageText(completionText, {
           reply_markup: {
             inline_keyboard: [[
               { text: '🔍 View Payment on Celoscan', url: explorerUrl }
             ]]
           }
-        }
-      );
+        });
+      } else {
+        // Manual review: prompt for rating
+        await ctx.editMessageText(completionText + `\n\n⭐ How was your experience?`);
+        await ctx.reply(
+          'Rate this service:',
+          Markup.inlineKeyboard([
+            [
+              Markup.button.callback('⭐', `rate_${orderId}_1`),
+              Markup.button.callback('⭐⭐', `rate_${orderId}_2`),
+              Markup.button.callback('⭐⭐⭐', `rate_${orderId}_3`),
+            ],
+            [
+              Markup.button.callback('⭐⭐⭐⭐', `rate_${orderId}_4`),
+              Markup.button.callback('⭐⭐⭐⭐⭐', `rate_${orderId}_5`),
+            ],
+            [
+              Markup.button.callback('Skip', `rate_${orderId}_skip`),
+            ]
+          ])
+        );
+      }
     } catch (error: any) {
       console.error('[Payment Execute Error]', {
         orderId,
@@ -425,5 +452,99 @@ export function registerHandlers(
   bot.action(/^settings_close_(.+)$/, async (ctx: Context) => {
     await ctx.deleteMessage();
     await ctx.answerCbQuery('Closed');
+  });
+
+  bot.action(/^toggle_autoreview_(.+)$/, async (ctx: Context) => {
+    try {
+      const userId = (ctx as any).match[1];
+
+      if (ctx.from?.id.toString() !== userId) {
+        await ctx.answerCbQuery('Unauthorized');
+        return;
+      }
+
+      const newStatus = userSettingsStore.toggleAutoReview(userId);
+      const statusText = newStatus ? 'ON ✅' : 'OFF ❌';
+
+      await ctx.editMessageText(
+        `⚙️ Wallet Settings\n\n` +
+        `Choose an option:`,
+        Markup.inlineKeyboard([
+          [Markup.button.callback(`⭐ Auto-Review: ${statusText}`, `toggle_autoreview_${userId}`)],
+          [Markup.button.callback('🔑 Export Private Key', `export_confirm_${userId}`)],
+          [Markup.button.callback('📊 Transaction History', `history_${userId}`)],
+          [Markup.button.callback('💰 Check Balance', `balance_${userId}`)],
+          [Markup.button.callback('❌ Close', `settings_close_${userId}`)],
+        ]),
+      );
+
+      await ctx.answerCbQuery(
+        newStatus
+          ? '⭐ Auto-review enabled: You\'ll automatically give 5★ after each service'
+          : '⭐ Auto-review disabled: You\'ll be asked to rate after each service',
+        { show_alert: true }
+      );
+    } catch (error: any) {
+      console.error('[Toggle AutoReview Error]', error.message);
+      await ctx.answerCbQuery('Error');
+    }
+  });
+
+  // ─── Star Rating Handler ──────────────────────────
+
+  bot.action(/^rate_(.+)_(\d+|skip)$/, async (ctx: Context) => {
+    try {
+      const orderId = (ctx as any).match[1];
+      const ratingStr = (ctx as any).match[2];
+      const userId = ctx.from?.id.toString();
+
+      if (!userId) {
+        await ctx.answerCbQuery('Error');
+        return;
+      }
+
+      const order = pendingOrders.get(orderId);
+      if (!order || order.telegramId !== userId) {
+        await ctx.answerCbQuery('Order expired or not found.');
+        return;
+      }
+
+      // Delete rating prompt
+      await ctx.deleteMessage().catch(() => {});
+
+      if (ratingStr === 'skip') {
+        await ctx.answerCbQuery('Skipped rating');
+        return;
+      }
+
+      const stars = parseInt(ratingStr);
+      const rating = stars * 20; // 1★=20, 2★=40, 3★=60, 4★=80, 5★=100
+
+      await ctx.answerCbQuery(`${stars} star${stars > 1 ? 's' : ''}`);
+      await ctx.reply(`Thanks for rating ${stars}⭐!`);
+
+      // Submit rating on-chain
+      try {
+        const userPrivateKey = await walletManager.exportPrivateKey(userId);
+        const serviceType = order.action === 'airtime' ? 'airtime' :
+                           order.action === 'data' ? 'data' :
+                           order.action === 'bill' ? 'bill_payment' :
+                           'gift_card';
+
+        await submitAutoReputation({
+          rating,
+          serviceType,
+          success: true,
+          userPrivateKey,
+        });
+        console.log(`[Manual-Review] User ${userId} rated ${rating}/100 (${stars}★) for ${serviceType}`);
+      } catch (error: any) {
+        console.error('[Manual-Review Error]', error.message);
+        // Non-critical - user already saw confirmation
+      }
+    } catch (error: any) {
+      console.error('[Rating Handler Error]', error.message);
+      await ctx.answerCbQuery('Error');
+    }
   });
 }
