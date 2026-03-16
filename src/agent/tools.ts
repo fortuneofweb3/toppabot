@@ -1,4 +1,3 @@
-import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import {
   getOperators,
@@ -10,18 +9,28 @@ import {
 import { calculateTotalPayment } from "../blockchain/x402";
 
 /**
+ * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
+ * Each tool has a name, description, Zod schema, and async function.
+ */
+interface Tool {
+  name: string;
+  description: string;
+  schema: z.ZodObject<any>;
+  func: (args: any) => Promise<string>;
+}
+
+/**
  * Tool 1: Send airtime top-up (170+ countries)
  * Payment-gated: returns order details for external payment flow.
- * Actual execution happens via x402 REST API, MCP, or Telegram bot after payment.
  */
-export const sendAirtimeTool = new DynamicStructuredTool({
+export const sendAirtimeTool: Tool = {
   name: "send_airtime",
   description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
     amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
-    useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
+    useLocalAmount: z.boolean().optional().nullable().describe("If true, amount is in local currency. Default false (USD)."),
   }),
   func: async ({ phone, countryCode, amount, useLocalAmount }) => {
     const { total } = calculateTotalPayment(amount);
@@ -35,12 +44,12 @@ export const sendAirtimeTool = new DynamicStructuredTool({
       message: `Airtime top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
-});
+};
 
 /**
  * Tool 2: Get mobile operators for a country
  */
-export const getOperatorsTool = new DynamicStructuredTool({
+export const getOperatorsTool: Tool = {
   name: "get_operators",
   description: "List available mobile operators for a country. Use this to show the user which operators are supported for airtime top-ups.",
   schema: z.object({
@@ -57,16 +66,16 @@ export const getOperatorsTool = new DynamicStructuredTool({
         localCurrency: op.destinationCurrencyCode,
         type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
       })));
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
  * Tool 3: Get data plan operators for a country
  */
-export const getDataPlansTool = new DynamicStructuredTool({
+export const getDataPlansTool: Tool = {
   name: "get_data_plans",
   description: "List available mobile data plan operators for a country. Returns operators that offer data bundles. Use the operatorId from results to send data with send_data.",
   schema: z.object({
@@ -85,17 +94,17 @@ export const getDataPlansTool = new DynamicStructuredTool({
         maxAmount: op.maxAmount,
         localCurrency: op.destinationCurrencyCode,
       })));
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
  * Tool 4: Send data plan top-up
  * Payment-gated: returns order details for external payment flow.
  */
-export const sendDataTool = new DynamicStructuredTool({
+export const sendDataTool: Tool = {
   name: "send_data",
   description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. This is a PAID service — payment is required before execution.",
   schema: z.object({
@@ -103,7 +112,7 @@ export const sendDataTool = new DynamicStructuredTool({
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
     amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
     operatorId: z.number().describe("Data operator ID from get_data_plans"),
-    useLocalAmount: z.boolean().optional().describe("If true, amount is in local currency. Default false (USD)."),
+    useLocalAmount: z.boolean().optional().nullable().describe("If true, amount is in local currency. Default false (USD)."),
   }),
   func: async ({ phone, countryCode, amount, operatorId, useLocalAmount }) => {
     const { total } = calculateTotalPayment(amount);
@@ -117,20 +126,20 @@ export const sendDataTool = new DynamicStructuredTool({
       message: `Data top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
-});
+};
 
 /**
  * Tool 5: Pay utility bill (electricity, water, TV, internet)
  * Payment-gated: returns order details for external payment flow.
  */
-export const payBillTool = new DynamicStructuredTool({
+export const payBillTool: Tool = {
   name: "pay_bill",
   description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId. This is a PAID service — payment is required before execution.",
   schema: z.object({
     billerId: z.number().describe("Biller ID from get_billers"),
     accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),
     amount: z.number().describe("Amount to pay (in local currency by default)"),
-    useLocalAmount: z.boolean().optional().describe("If true (default), amount is in local currency. If false, amount is in USD."),
+    useLocalAmount: z.boolean().optional().nullable().describe("If true (default), amount is in local currency. If false, amount is in USD."),
   }),
   func: async ({ billerId, accountNumber, amount, useLocalAmount }) => {
     const { total } = calculateTotalPayment(amount);
@@ -144,17 +153,17 @@ export const payBillTool = new DynamicStructuredTool({
       message: `Bill payment requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
-});
+};
 
 /**
- * Tool 4: Get utility billers for a country
+ * Tool 6: Get utility billers for a country
  */
-export const getBillersTool = new DynamicStructuredTool({
+export const getBillersTool: Tool = {
   name: "get_billers",
   description: "List available utility billers for a country. Types: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT.",
   schema: z.object({
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    type: z.string().optional().describe("Bill type filter: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT"),
+    type: z.string().optional().nullable().describe("Bill type filter: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT"),
   }),
   func: async ({ countryCode, type }) => {
     try {
@@ -168,21 +177,21 @@ export const getBillersTool = new DynamicStructuredTool({
         minAmount: b.minLocalTransactionAmount,
         maxAmount: b.maxLocalTransactionAmount,
       })));
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
- * Tool 5: Search gift cards by brand name
+ * Tool 7: Search gift cards by brand name
  */
-export const searchGiftCardsTool = new DynamicStructuredTool({
+export const searchGiftCardsTool: Tool = {
   name: "search_gift_cards",
   description: "Search for available gift cards by brand name (e.g. 'Amazon', 'Steam', 'Netflix', 'Spotify', 'PlayStation', 'Xbox', 'Uber', 'Google Play', 'Apple'). Returns product IDs needed to buy gift cards.",
   schema: z.object({
     query: z.string().describe("Brand or product name to search for (e.g. 'Steam', 'Netflix', 'Amazon')"),
-    countryCode: z.string().optional().describe("Country ISO code to filter by (e.g. US, NG, KE)"),
+    countryCode: z.string().optional().nullable().describe("Country ISO code to filter by (e.g. US, NG, KE)"),
   }),
   func: async ({ query, countryCode }) => {
     try {
@@ -198,16 +207,16 @@ export const searchGiftCardsTool = new DynamicStructuredTool({
         minAmount: p.minRecipientDenomination,
         maxAmount: p.maxRecipientDenomination,
       })));
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
- * Tool 6: Get gift cards for a country
+ * Tool 8: Get gift cards for a country
  */
-export const getGiftCardsTool = new DynamicStructuredTool({
+export const getGiftCardsTool: Tool = {
   name: "get_gift_cards",
   description: "List all available gift card brands for a specific country. Returns brands like Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, etc.",
   schema: z.object({
@@ -234,24 +243,24 @@ export const getGiftCardsTool = new DynamicStructuredTool({
         totalProducts: products.length,
         brands: Array.from(brands.values()).slice(0, 20),
       });
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
- * Tool 7: Buy a gift card
+ * Tool 9: Buy a gift card
  * Payment-gated: returns order details for external payment flow.
  */
-export const buyGiftCardTool = new DynamicStructuredTool({
+export const buyGiftCardTool: Tool = {
   name: "buy_gift_card",
   description: "Purchase a gift card. Use search_gift_cards first to get the productId. This is a PAID service — payment is required before execution.",
   schema: z.object({
     productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
     amount: z.number().describe("Amount/denomination for the gift card (in recipient currency)"),
     recipientEmail: z.string().describe("Email to deliver the gift card to"),
-    quantity: z.number().optional().describe("Number of cards to buy. Default 1."),
+    quantity: z.number().optional().nullable().describe("Number of cards to buy. Default 1."),
   }),
   func: async ({ productId, amount, recipientEmail, quantity }) => {
     const { total } = calculateTotalPayment(amount);
@@ -265,12 +274,12 @@ export const buyGiftCardTool = new DynamicStructuredTool({
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
-});
+};
 
 /**
- * Tool 8: Get gift card redeem code
+ * Tool 10: Get gift card redeem code
  */
-export const getGiftCardCodeTool = new DynamicStructuredTool({
+export const getGiftCardCodeTool: Tool = {
   name: "get_gift_card_code",
   description: "Get the redeem code/PIN for a purchased gift card. Call this after buy_gift_card with the transactionId.",
   schema: z.object({
@@ -280,16 +289,16 @@ export const getGiftCardCodeTool = new DynamicStructuredTool({
     try {
       const codes = await getGiftCardRedeemCode(transactionId);
       return JSON.stringify({ codes });
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
- * Tool 9: Check country service availability
+ * Tool 11: Check country service availability
  */
-export const checkCountryTool = new DynamicStructuredTool({
+export const checkCountryTool: Tool = {
   name: "check_country",
   description: "Check what services (airtime, data, bills, gift cards) are available in a specific country. Use this FIRST when a user mentions a country to know what you can offer them.",
   schema: z.object({
@@ -299,16 +308,16 @@ export const checkCountryTool = new DynamicStructuredTool({
     try {
       const services = await getCountryServices(countryCode);
       return JSON.stringify(services);
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 /**
- * Tool 10: Get active promotions for a country
+ * Tool 12: Get active promotions for a country
  */
-export const getPromotionsTool = new DynamicStructuredTool({
+export const getPromotionsTool: Tool = {
   name: "get_promotions",
   description: "Get active operator promotions and bonus deals for a country. Useful to tell users about extra value they can get (e.g. 'buy X get 2X bonus').",
   schema: z.object({
@@ -324,11 +333,11 @@ export const getPromotionsTool = new DynamicStructuredTool({
         startDate: p.startDate,
         endDate: p.endDate,
       })));
-    } catch (error) {
+    } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
   },
-});
+};
 
 // Paid tools — execute real transactions via Reloadly (cost money)
 export const paidTools = [
@@ -354,4 +363,4 @@ export const freeTools = [
 export const PAID_TOOL_NAMES = new Set(paidTools.map(t => t.name));
 
 // All tools — paid tools return payment_required (never call Reloadly directly)
-export const tools = [...freeTools, ...paidTools];
+export const tools: Tool[] = [...freeTools, ...paidTools];

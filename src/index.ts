@@ -2,7 +2,7 @@
 import 'dotenv/config';
 
 import { startTelegramBot } from './bot/telegram';
-import { startApiServer } from './api/server';
+import { startApiServer, app } from './api/server';
 import { closeMongoConnection } from './wallet/mongo-store';
 
 /**
@@ -37,7 +37,7 @@ async function main() {
 
   // Start Telegram bot only if token is configured
   if (process.env.TELEGRAM_BOT_TOKEN && !process.env.TELEGRAM_BOT_TOKEN.startsWith('your_')) {
-    startTelegramBot();
+    await startTelegramBot(app);
   } else {
     console.log('Telegram bot skipped (no TELEGRAM_BOT_TOKEN configured)');
   }

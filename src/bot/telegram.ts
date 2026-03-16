@@ -451,10 +451,41 @@ bot.catch((err, ctx) => {
 // Start Bot
 // ─────────────────────────────────────────────────
 
-export function startTelegramBot() {
-  bot.launch();
-  console.log('Toppa Telegram bot is running...');
+/**
+ * Start the Telegram bot.
+ *
+ * In production with API_URL set: uses webhook mode mounted on the Express app.
+ *   - More efficient: Telegram pushes updates instead of bot polling
+ *   - No open long-poll connection consuming resources
+ *   - Faster response times (no polling interval delay)
+ *
+ * In dev / no API_URL: falls back to long-polling (works without public URL).
+ */
+export async function startTelegramBot(expressApp?: import('express').Express) {
+  const apiUrl = process.env.API_URL;
+  const webhookPath = `/bot/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
 
-  process.once('SIGINT', () => bot.stop('SIGINT'));
-  process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  if (apiUrl && expressApp) {
+    // Webhook mode: mount on existing Express server
+    const webhookUrl = `${apiUrl}${webhookPath}`;
+
+    // Set the webhook with Telegram
+    await bot.telegram.setWebhook(webhookUrl, {
+      drop_pending_updates: true, // Don't process messages queued while offline
+    });
+
+    // Mount the webhook handler on Express
+    expressApp.use(bot.webhookCallback(webhookPath));
+
+    console.log(`Toppa Telegram bot running (webhook: ${apiUrl}/bot/webhook/***)`);
+  } else {
+    // Long-polling fallback for dev
+    // First delete any existing webhook to avoid conflicts
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    bot.launch();
+    console.log('Toppa Telegram bot running (long-polling mode)');
+
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  }
 }

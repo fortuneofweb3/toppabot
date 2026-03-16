@@ -1,11 +1,10 @@
-import { StateGraph, END } from "@langchain/langgraph";
-import { ChatOpenAI } from "@langchain/openai";
-import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from "@langchain/core/messages";
-import { AgentState } from "./state";
-import { tools } from "./tools";
+import OpenAI from 'openai';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { AgentState } from './state';
+import { tools } from './tools';
 
 /**
- * Toppa Agent - LangGraph Workflow
+ * Toppa Agent — Direct OpenAI SDK with tool-calling loop
  *
  * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
  * they return payment_required responses instead of executing Reloadly directly.
@@ -16,18 +15,29 @@ import { tools } from "./tools";
  * - Telegram bot: wallet transfer + on-chain verification (bot/handlers.ts)
  */
 
-// LLM with all tools — paid tools are payment-gated (return payment_required, never call Reloadly)
-const llm = new ChatOpenAI({
-  modelName: process.env.LLM_MODEL || "gpt-4-turbo-preview",
-  temperature: 0.7,
-  openAIApiKey: process.env.OPENAI_API_KEY,
-  configuration: {
-    baseURL: process.env.LLM_BASE_URL || "https://api.openai.com/v1",
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
+});
+
+// Convert tool Zod schemas to OpenAI function definitions (done once at module load)
+const openaiTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
+  type: 'function',
+  function: {
+    name: tool.name,
+    description: tool.description,
+    parameters: zodToJsonSchema(tool.schema) as Record<string, unknown>,
   },
-}).bindTools(tools);
+}));
+
+// Map tool names → tool functions for fast lookup
+const toolMap = new Map(tools.map(t => [t.name, t]));
+
+// Max tool-calling iterations to prevent infinite loops
+const MAX_ITERATIONS = 10;
 
 /**
- * System prompt - defines agent behavior
+ * System prompt — defines agent behavior
  */
 const SYSTEM_PROMPT = `You are Toppa, an autonomous AI agent for digital goods and utility payments across 170+ countries, powered by Celo blockchain.
 
@@ -89,7 +99,7 @@ For multi-intent requests, return ONE order_confirmation at a time for the first
 /**
  * Build system prompt with wallet context for Telegram users
  */
-function buildSystemPrompt(state: AgentState): string {
+function buildSystemPrompt(state: Partial<AgentState>): string {
   let prompt = SYSTEM_PROMPT;
   if (state.source === 'telegram' && state.walletAddress) {
     prompt += `\nUser's wallet: ${state.walletAddress}`;
@@ -99,147 +109,69 @@ function buildSystemPrompt(state: AgentState): string {
 }
 
 /**
- * Agent decision node - decides what to do next
+ * Run the Toppa agent — simple tool-calling loop using OpenAI SDK directly.
+ *
+ * Each call gets its own messages array — fully isolated between concurrent users.
  */
-async function callAgent(state: AgentState) {
-  const messages = [
-    new SystemMessage(buildSystemPrompt(state)),
-    ...state.messages,
+export async function runToppaAgent(
+  userMessage: string,
+  state: Partial<AgentState> = {},
+): Promise<{ response: string }> {
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: 'system', content: buildSystemPrompt(state) },
+    { role: 'user', content: userMessage },
   ];
 
-  const response = await llm.invoke(messages);
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const completion = await openai.chat.completions.create({
+      model: process.env.LLM_MODEL || 'gpt-4-turbo-preview',
+      temperature: 0.7,
+      messages,
+      tools: openaiTools,
+    });
 
-  return {
-    messages: [...state.messages, response],
-  };
-}
+    const choice = completion.choices[0];
+    if (!choice) {
+      return { response: 'No response from AI model.' };
+    }
 
-/**
- * Check if agent should continue or end
- */
-function shouldContinue(state: AgentState) {
-  const lastMessage = state.messages[state.messages.length - 1];
+    // Add assistant message to history
+    messages.push(choice.message);
 
-  // If AI used tools, continue to execute them
-  if (lastMessage.additional_kwargs?.tool_calls) {
-    return "tools";
+    // If no tool calls, return the final text response
+    if (!choice.message.tool_calls?.length) {
+      return { response: choice.message.content || '' };
+    }
+
+    // Execute all tool calls in parallel
+    // Safe: paid tools return payment_required responses (never call Reloadly directly)
+    const toolResults = await Promise.all(
+      choice.message.tool_calls.map(async (toolCall) => {
+        const tool = toolMap.get(toolCall.function.name);
+        let result: string;
+
+        if (!tool) {
+          result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
+        } else {
+          try {
+            result = await tool.func(JSON.parse(toolCall.function.arguments));
+          } catch (err: any) {
+            result = JSON.stringify({ error: err.message });
+          }
+        }
+
+        return {
+          role: 'tool' as const,
+          tool_call_id: toolCall.id,
+          content: result,
+        };
+      }),
+    );
+
+    // Add all tool results to messages
+    messages.push(...toolResults);
   }
 
-  // Otherwise, end (send response to user)
-  return END;
-}
-
-/**
- * Execute tools that the agent decided to use
- */
-async function executeTools(state: AgentState) {
-  const lastMessage = state.messages[state.messages.length - 1];
-  const toolCalls = lastMessage.additional_kwargs?.tool_calls || [];
-
-  // Execute each tool call
-  // Safe: paid tools return payment_required responses (never call Reloadly directly)
-  const toolMessages = await Promise.all(
-    toolCalls.map(async (toolCall: any) => {
-      const tool = tools.find((t) => t.name === toolCall.function.name);
-      if (!tool) {
-        return new AIMessage({
-          content: `Tool ${toolCall.function.name} not found`,
-          tool_call_id: toolCall.id,
-        });
-      }
-
-      const result = await tool.func(JSON.parse(toolCall.function.arguments));
-      return new AIMessage({
-        content: result,
-        tool_call_id: toolCall.id,
-      });
-    })
-  );
-
-  return {
-    messages: [...state.messages, ...toolMessages],
-  };
-}
-
-/**
- * Build the agent graph
- */
-export function createToppaAgent() {
-  const workflow = new StateGraph<AgentState>({
-    channels: {
-      messages: {
-        value: (prev: BaseMessage[], next: BaseMessage[]) => [...prev, ...next],
-        default: () => [],
-      },
-      userAddress: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      amount: {
-        value: (prev?: number, next?: number) => next ?? prev,
-      },
-      country: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      selfClawVerified: {
-        value: (prev?: boolean, next?: boolean) => next ?? prev,
-        default: () => false,
-      },
-      transactionHash: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      error: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      source: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      rateLimited: {
-        value: (prev?: boolean, next?: boolean) => next ?? prev,
-      },
-      walletAddress: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-      walletBalance: {
-        value: (prev?: string, next?: string) => next ?? prev,
-      },
-    },
-  });
-
-  // Add nodes
-  workflow.addNode("agent", callAgent);
-  workflow.addNode("tools", executeTools);
-
-  // Set entry point
-  workflow.setEntryPoint("agent");
-
-  // Add edges
-  workflow.addConditionalEdges("agent", shouldContinue, {
-    tools: "tools",
-    [END]: END,
-  });
-
-  workflow.addEdge("tools", "agent"); // After tools, go back to agent
-
-  return workflow.compile();
-}
-
-/**
- * Main function to run the agent
- */
-export async function runToppaAgent(userMessage: string, state: Partial<AgentState> = {}) {
-  const agent = createToppaAgent();
-
-  const initialState: AgentState = {
-    messages: [new HumanMessage(userMessage)],
-    ...state,
-  };
-
-  const result = await agent.invoke(initialState);
-
-  // Return the last AI message
-  const lastMessage = result.messages[result.messages.length - 1];
-  return {
-    response: lastMessage.content,
-    state: result,
-  };
+  // Safety: hit max iterations
+  return { response: 'I ran into a processing limit. Please try a simpler request.' };
 }

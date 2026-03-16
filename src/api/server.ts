@@ -23,7 +23,7 @@ import { generateAgentCard } from '../a2a/agent-card';
 import { handleA2ARequest } from '../a2a/handler';
 import { CELO_CAIP2 } from '../shared/constants';
 
-const app = express();
+export const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Trust Railway proxy for correct IP detection (rate limiting, logging)

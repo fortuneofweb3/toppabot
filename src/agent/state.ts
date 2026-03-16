@@ -1,10 +1,7 @@
-import { BaseMessage } from "@langchain/core/messages";
-
 /**
- * Agent State - Tracks the conversation and agent context
+ * Agent State — context passed to the agent for each request
  */
 export interface AgentState {
-  messages: BaseMessage[];
   userAddress?: string;
   amount?: number;
   currency?: string;
