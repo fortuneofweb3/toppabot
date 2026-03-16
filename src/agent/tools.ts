@@ -8,6 +8,7 @@ import {
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
 import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
+import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
 
 /**
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
@@ -444,6 +445,72 @@ export const cancelTaskTool: Tool = {
   },
 };
 
+/**
+ * Tool 16: Save a standing instruction / user preference
+ */
+export const saveInstructionTool: Tool = {
+  name: "save_instruction",
+  description: `Save a standing instruction, preference, or goal for the user. Use this PROACTIVELY when the user tells you something you should remember permanently — like contact details, preferences, recurring needs, or alerts they want. Categories: "contact" (phone numbers, accounts), "preference" (default country, operator preference), "recurring" (monthly top-ups, regular bills), "alert" (notify about promos), "general" (anything else).`,
+  schema: z.object({
+    instruction: z.string().describe("The instruction to remember (e.g. 'Brother\\'s number is +2348147658721, MTN Nigeria')"),
+    category: z.enum(['preference', 'recurring', 'contact', 'alert', 'general']).describe("Category of instruction"),
+  }),
+  func: async ({ instruction, category }) => {
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Instructions are only available in Telegram' });
+    }
+    const id = await saveUserGoal(ctx.userId, instruction, category);
+    return JSON.stringify({ saved: true, id, message: `Got it — I'll remember: "${instruction}"` });
+  },
+};
+
+/**
+ * Tool 17: View saved instructions
+ */
+export const getInstructionsTool: Tool = {
+  name: "get_instructions",
+  description: "Retrieve the user's saved instructions, preferences, and goals. Use when user asks what you remember about them.",
+  schema: z.object({}),
+  func: async () => {
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Instructions are only available in Telegram' });
+    }
+    const goals = await getUserGoals(ctx.userId);
+    if (goals.length === 0) {
+      return JSON.stringify({ message: 'No saved instructions yet. Tell me things to remember!' });
+    }
+    return JSON.stringify(goals.map(g => ({
+      instruction: g.instruction,
+      category: g.category,
+      savedAt: g.createdAt,
+    })));
+  },
+};
+
+/**
+ * Tool 18: Remove a saved instruction
+ */
+export const removeInstructionTool: Tool = {
+  name: "remove_instruction",
+  description: "Remove a saved instruction by matching text. Use when user wants to forget/remove a standing instruction.",
+  schema: z.object({
+    instructionFragment: z.string().describe("Part of the instruction text to match and remove"),
+  }),
+  func: async ({ instructionFragment }) => {
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Instructions are only available in Telegram' });
+    }
+    const removed = await removeUserGoal(ctx.userId, instructionFragment);
+    return JSON.stringify({
+      success: removed,
+      message: removed ? 'Instruction removed.' : 'No matching instruction found.',
+    });
+  },
+};
+
 // Scheduling context — set by the caller before each agent run so tools can access userId/chatId
 let _schedulingContext: { userId: string; chatId: number } | null = null;
 
@@ -472,6 +539,9 @@ export const freeTools = [
   scheduleTaskTool,
   myTasksTool,
   cancelTaskTool,
+  saveInstructionTool,
+  getInstructionsTool,
+  removeInstructionTool,
 ];
 
 // Paid tool names for fast lookup
