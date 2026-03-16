@@ -1,7 +1,8 @@
 import OpenAI from 'openai';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { AgentState } from './state';
-import { tools } from './tools';
+import { tools, setSchedulingContext } from './tools';
+import { getConversationHistory, saveConversation } from './memory';
 
 /**
  * Toppa Agent — Direct OpenAI SDK with tool-calling loop
@@ -39,12 +40,21 @@ const MAX_ITERATIONS = 10;
 /**
  * System prompt — defines agent behavior
  */
-const SYSTEM_PROMPT = `You are Toppa, an autonomous AI agent for digital goods and utility payments across 170+ countries, powered by Celo blockchain.
+const SYSTEM_PROMPT = `You are Toppa, an autonomous personal AI agent for digital goods and utility payments across 170+ countries, powered by Celo blockchain.
+
+You have MEMORY — you remember past conversations with each user. Use this to:
+- Reference things the user told you before ("your brother's number", "your DStv account")
+- Avoid asking for info the user already provided in past sessions
+- Be personal: "Welcome back! Last time you topped up +234... — need that again?"
+
+You can SCHEDULE tasks — users can say "send airtime at 5pm", "pay my bill tomorrow", "remind me Friday". Use the schedule_task tool. Always confirm the scheduled time with the user.
 
 Your capabilities:
 1. **Airtime & Data**: Send mobile top-ups to any phone number across 170+ countries (800+ operators). Auto-detect operator from phone number.
 2. **Utility Bills**: Pay electricity, water, TV (DStv, GOtv, Startimes), and internet bills.
 3. **Gift Cards**: Buy gift cards from 300+ brands — Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Airbnb, Apple, Google Play, prepaid Visa/Mastercard, and more. Available across 14,000+ products globally.
+4. **Scheduling**: Schedule any paid task for later. User says when, you handle the rest.
+5. **Task Management**: Users can view (my_tasks) and cancel (cancel_task) scheduled tasks.
 
 Key strength — **Multi-intent resolution**:
 Users can request multiple things at once. Parse and execute them all.
@@ -55,6 +65,7 @@ Workflow for each service:
 - **Airtime**: Ask for phone number + country code → auto-detect operator → send top-up
 - **Bills**: Ask for country → show billers (use get_billers) → ask for account number → pay
 - **Gift Cards**: Search by brand (use search_gift_cards) or browse by country (use get_gift_cards) → confirm product + amount → ask for recipient email → purchase → retrieve redeem code
+- **Scheduling**: Parse the time ("at 5pm", "tomorrow morning", "next Friday 3pm"), convert to ISO 8601 datetime, and call schedule_task with the full tool details.
 
 Personality:
 - Friendly, helpful, and concise
@@ -62,11 +73,13 @@ Personality:
 - Always confirm the amount and recipient before executing a transaction
 - If country isn't clear, ask
 - For gift cards, always show available denominations before purchasing
+- Remember returning users and reference past interactions naturally
 
 Important:
 - All payments are in cUSD on Celo blockchain
 - Always show transaction details after completion (amounts, IDs, status)
 - For gift cards, always retrieve and show the redeem code after purchase
+- Current datetime is provided in the system context — use it for scheduling calculations
 
 PAYMENT-GATED MODE (Telegram & A2A):
 When source is 'telegram' or 'a2a', you MUST NOT directly execute paid tools. Before executing ANY paid transaction (airtime, data, bills, gift cards), you MUST:
@@ -94,13 +107,16 @@ The bot will show the user a confirmation card with Confirm/Cancel buttons, hand
 For FREE/discovery queries (checking operators, browsing gift cards, checking country services, getting billers), call tools normally without the JSON block.
 
 For multi-intent requests, return ONE order_confirmation at a time for the first item. After it completes, the user can continue with the next.
+
+For SCHEDULED tasks, use schedule_task tool directly — these will be executed automatically at the scheduled time (user will be notified and asked to confirm payment when the time comes).
 `;
 
 /**
- * Build system prompt with wallet context for Telegram users
+ * Build system prompt with wallet context and current time
  */
 function buildSystemPrompt(state: Partial<AgentState>): string {
   let prompt = SYSTEM_PROMPT;
+  prompt += `\nCurrent datetime: ${new Date().toISOString()}`;
   if (state.source === 'telegram' && state.walletAddress) {
     prompt += `\nUser's wallet: ${state.walletAddress}`;
     prompt += `\nUser's cUSD balance: ${state.walletBalance || 'unknown'}`;
@@ -112,15 +128,34 @@ function buildSystemPrompt(state: Partial<AgentState>): string {
  * Run the Toppa agent — simple tool-calling loop using OpenAI SDK directly.
  *
  * Each call gets its own messages array — fully isolated between concurrent users.
+ * Loads conversation history from MongoDB for context continuity.
  */
 export async function runToppaAgent(
   userMessage: string,
   state: Partial<AgentState> = {},
 ): Promise<{ response: string }> {
+  // Set scheduling context so schedule_task/my_tasks/cancel_task tools can access userId/chatId
+  if (state.userAddress && state.source === 'telegram') {
+    setSchedulingContext({ userId: state.userAddress, chatId: (state as any).chatId || 0 });
+  } else {
+    setSchedulingContext(null);
+  }
+
+  // Build messages with system prompt
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: 'system', content: buildSystemPrompt(state) },
-    { role: 'user', content: userMessage },
   ];
+
+  // Load conversation history (provides memory across sessions)
+  if (state.userAddress) {
+    const history = await getConversationHistory(state.userAddress);
+    messages.push(...history);
+  }
+
+  // Add the current user message
+  messages.push({ role: 'user', content: userMessage });
+
+  let finalResponse = '';
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const completion = await openai.chat.completions.create({
@@ -132,15 +167,17 @@ export async function runToppaAgent(
 
     const choice = completion.choices[0];
     if (!choice) {
-      return { response: 'No response from AI model.' };
+      finalResponse = 'No response from AI model.';
+      break;
     }
 
     // Add assistant message to history
     messages.push(choice.message);
 
-    // If no tool calls, return the final text response
+    // If no tool calls, we have the final text response
     if (!choice.message.tool_calls?.length) {
-      return { response: choice.message.content || '' };
+      finalResponse = choice.message.content || '';
+      break;
     }
 
     // Execute all tool calls in parallel
@@ -172,6 +209,14 @@ export async function runToppaAgent(
     messages.push(...toolResults);
   }
 
-  // Safety: hit max iterations
-  return { response: 'I ran into a processing limit. Please try a simpler request.' };
+  if (!finalResponse) {
+    finalResponse = 'I ran into a processing limit. Please try a simpler request.';
+  }
+
+  // Save conversation to memory (non-blocking — don't slow down the response)
+  if (state.userAddress) {
+    saveConversation(state.userAddress, userMessage, finalResponse).catch(() => {});
+  }
+
+  return { response: finalResponse };
 }

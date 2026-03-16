@@ -7,6 +7,7 @@ import {
   getCountryServices, getPromotions,
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
+import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
 
 /**
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
@@ -339,6 +340,117 @@ export const getPromotionsTool: Tool = {
   },
 };
 
+/**
+ * Tool 13: Schedule a task for later execution
+ */
+export const scheduleTaskTool: Tool = {
+  name: "schedule_task",
+  description: `Schedule a paid task (airtime, data, bill, gift card) for later execution. Use when the user says things like "send airtime at 5pm", "pay my bill tomorrow morning", "buy a gift card on Friday". The scheduledAt must be an ISO 8601 datetime string. The toolName and toolArgs must match exactly what you'd use for the corresponding paid tool.`,
+  schema: z.object({
+    description: z.string().describe("Human-readable description of the task (e.g. 'Send 500 NGN airtime to +234...')"),
+    toolName: z.string().describe("The tool to execute: send_airtime, send_data, pay_bill, or buy_gift_card"),
+    toolArgs: z.record(z.any()).describe("Arguments for the tool (same as you'd pass to the paid tool)"),
+    productAmount: z.number().describe("Product amount in USD"),
+    scheduledAt: z.string().describe("ISO 8601 datetime for when to execute (e.g. '2025-03-15T17:00:00Z')"),
+  }),
+  func: async ({ description, toolName, toolArgs, productAmount, scheduledAt }) => {
+    // This is called by the agent — userId and chatId are injected by the caller
+    // via the _schedulingContext (set before each agent run)
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Scheduling is only available in Telegram' });
+    }
+
+    const validTools = ['send_airtime', 'send_data', 'pay_bill', 'buy_gift_card'];
+    if (!validTools.includes(toolName)) {
+      return JSON.stringify({ error: `Invalid toolName. Must be one of: ${validTools.join(', ')}` });
+    }
+
+    const scheduledDate = new Date(scheduledAt);
+    if (isNaN(scheduledDate.getTime()) || scheduledDate.getTime() < Date.now()) {
+      return JSON.stringify({ error: 'scheduledAt must be a valid future datetime in ISO 8601 format' });
+    }
+
+    const taskId = await createScheduledTask({
+      userId: ctx.userId,
+      chatId: ctx.chatId,
+      description,
+      toolName,
+      toolArgs,
+      productAmount,
+      scheduledAt: scheduledDate,
+    });
+
+    const { total } = calculateTotalPayment(productAmount);
+    return JSON.stringify({
+      status: 'scheduled',
+      taskId,
+      description,
+      scheduledAt: scheduledDate.toISOString(),
+      totalWithFee: total,
+      message: `Task scheduled for ${scheduledDate.toLocaleString()}. You'll be asked to confirm payment when it's time. Total: ${total} cUSD.`,
+    });
+  },
+};
+
+/**
+ * Tool 14: View scheduled tasks
+ */
+export const myTasksTool: Tool = {
+  name: "my_tasks",
+  description: "Show the user's pending scheduled tasks. Use when user asks about their upcoming/scheduled tasks.",
+  schema: z.object({}),
+  func: async () => {
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Tasks are only available in Telegram' });
+    }
+
+    const tasks = await getUserScheduledTasks(ctx.userId);
+    if (tasks.length === 0) {
+      return JSON.stringify({ message: 'No scheduled tasks.' });
+    }
+
+    return JSON.stringify(tasks.map(t => ({
+      taskId: t._id?.toString(),
+      description: t.description,
+      scheduledAt: t.scheduledAt,
+      productAmount: t.productAmount,
+      status: t.status,
+    })));
+  },
+};
+
+/**
+ * Tool 15: Cancel a scheduled task
+ */
+export const cancelTaskTool: Tool = {
+  name: "cancel_task",
+  description: "Cancel a pending scheduled task by ID. Use when user wants to cancel a scheduled task.",
+  schema: z.object({
+    taskId: z.string().describe("Task ID to cancel (from my_tasks)"),
+  }),
+  func: async ({ taskId }) => {
+    const ctx = _schedulingContext;
+    if (!ctx) {
+      return JSON.stringify({ error: 'Tasks are only available in Telegram' });
+    }
+
+    const cancelled = await cancelScheduledTask(taskId, ctx.userId);
+    return JSON.stringify({
+      success: cancelled,
+      message: cancelled ? 'Task cancelled.' : 'Task not found or already executed.',
+    });
+  },
+};
+
+// Scheduling context — set by the caller before each agent run so tools can access userId/chatId
+let _schedulingContext: { userId: string; chatId: number } | null = null;
+
+export function setSchedulingContext(ctx: { userId: string; chatId: number } | null) {
+  _schedulingContext = ctx;
+}
+
 // Paid tools — execute real transactions via Reloadly (cost money)
 export const paidTools = [
   sendAirtimeTool,
@@ -357,6 +469,9 @@ export const freeTools = [
   getGiftCardCodeTool,
   checkCountryTool,
   getPromotionsTool,
+  scheduleTaskTool,
+  myTasksTool,
+  cancelTaskTool,
 ];
 
 // Paid tool names for fast lookup

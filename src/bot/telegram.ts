@@ -8,6 +8,8 @@ import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orde
 import { registerHandlers } from './handlers';
 import { userSettingsStore } from './user-settings';
 import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
+import { startScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask } from '../agent/scheduler';
+import { clearConversationHistory } from '../agent/memory';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
@@ -326,6 +328,15 @@ bot.command('cancel', async (ctx) => {
 });
 
 /**
+ * /clear — Clear conversation memory
+ */
+bot.command('clear', async (ctx) => {
+  const userId = ctx.from.id.toString();
+  await clearConversationHistory(userId);
+  await ctx.reply('Conversation memory cleared. I won\'t remember our previous chats.');
+});
+
+/**
  * /export — Export private key (now redirects to /settings)
  */
 bot.command('export', async (ctx) => {
@@ -358,14 +369,15 @@ bot.on('text', async (ctx) => {
     // Get wallet context
     const { balance, address } = await walletManager.getBalance(userId);
 
-    // Run AI agent with wallet context
+    // Run AI agent with wallet context + chatId for scheduling
     const { response } = await runToppaAgent(sanitizedMessage, {
       userAddress: userId,
       source: 'telegram',
       rateLimited: true,
       walletAddress: address,
       walletBalance: balance,
-    });
+      chatId: ctx.chat.id,
+    } as any);
 
     const responseText = response as string;
 
@@ -485,7 +497,57 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
     bot.launch();
     console.log('Toppa Telegram bot running (long-polling mode)');
 
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    process.once('SIGINT', () => { bot.stop('SIGINT'); stopScheduler(); });
+    process.once('SIGTERM', () => { bot.stop('SIGTERM'); stopScheduler(); });
   }
+
+  // Start the task scheduler — executes due tasks and notifies users
+  startScheduler(async (task: ScheduledTask) => {
+    try {
+      const { total, serviceFee } = calculateTotalPayment(task.productAmount);
+      const orderId = generateOrderId();
+      const order: PendingOrder = {
+        orderId,
+        telegramId: task.userId,
+        chatId: task.chatId,
+        action: task.toolName.replace('send_', '').replace('pay_', '').replace('buy_', '') as any,
+        description: `[Scheduled] ${task.description}`,
+        productAmount: task.productAmount,
+        serviceFee,
+        totalAmount: total,
+        toolName: task.toolName,
+        toolArgs: task.toolArgs,
+        status: 'pending_confirmation',
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 30 * 60 * 1000, // 30 min for scheduled tasks
+      };
+
+      pendingOrders.create(order);
+      const tokenSymbol = TOKEN_SYMBOL;
+
+      // Notify the user their scheduled task is ready
+      await bot.telegram.sendMessage(
+        task.chatId,
+        `⏰ Scheduled Task Ready\n\n` +
+        `${task.description}\n\n` +
+        `Amount: $${task.productAmount.toFixed(2)}\n` +
+        `Service Fee (1.5%): $${serviceFee.toFixed(2)}\n` +
+        `Total: $${total.toFixed(2)} ${tokenSymbol}\n\n` +
+        `This was scheduled earlier. Confirm to proceed.`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '✅ Confirm & Pay', callback_data: `order_confirm_${orderId}` }],
+              [{ text: '❌ Skip', callback_data: `order_cancel_${orderId}` }],
+            ],
+          },
+        },
+      );
+
+      await markTaskCompleted(task._id!, 'Notification sent — awaiting user confirmation');
+    } catch (err: any) {
+      console.error(`[Scheduler] Failed to notify user for task ${task._id}:`, err.message);
+      await markTaskFailed(task._id!, err.message);
+    }
+  });
 }
