@@ -380,6 +380,25 @@ app.get('/agent-image.svg', (_req: Request, res: Response) => {
   res.sendFile(path.join(process.cwd(), 'public/agent-image.svg'));
 });
 
+// ─────────────────────────────────────────────────
+// Base route info (no params) — so scanners don't get 404
+// ─────────────────────────────────────────────────
+app.get('/operators', (_req: Request, res: Response) => {
+  res.json({ endpoint: 'GET /operators/:country', description: 'List mobile operators for a country', example: '/operators/NG', params: { country: 'ISO country code (e.g. NG, KE, GH, US)' } });
+});
+app.get('/data-plans', (_req: Request, res: Response) => {
+  res.json({ endpoint: 'GET /data-plans/:country', description: 'List data plan operators for a country', example: '/data-plans/NG', params: { country: 'ISO country code' } });
+});
+app.get('/billers', (_req: Request, res: Response) => {
+  res.json({ endpoint: 'GET /billers/:country', description: 'List utility billers for a country', example: '/billers/NG', params: { country: 'ISO country code' } });
+});
+app.get('/gift-cards', (_req: Request, res: Response) => {
+  res.json({ endpoint: 'GET /gift-cards/:country', description: 'List gift card brands for a country', example: '/gift-cards/US', alternateEndpoint: 'GET /gift-cards/search?q=Steam' });
+});
+app.get('/transaction', (_req: Request, res: Response) => {
+  res.json({ endpoint: 'GET /transaction/:type/:id', description: 'Check transaction status', example: '/transaction/airtime/12345', params: { type: 'airtime | data | bill', id: 'Transaction ID from Reloadly' } });
+});
+
 // Get mobile operators for a country (for airtime)
 app.get('/operators/:country', async (req: Request, res: Response) => {
   try {
