@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "NODE_OPTIONS='--max-old-space-size=4096' tsc",
     "register": "tsx scripts/register-agent.ts",
     "generate-wallet": "tsx scripts/generate-wallet.ts",
     "test": "jest"
