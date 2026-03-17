@@ -8,6 +8,13 @@ import { formatUserContext } from './goals';
 /**
  * Toppa Agent — LLM tool-calling loop (DeepSeek via OpenAI-compatible SDK)
  *
+ * DeepSeek reliability hardening:
+ * - Beta endpoint with strict mode (schema-enforced tool args)
+ * - Dynamic tool_choice: "required" for operational queries, "auto" after tool results
+ * - Temperature 0 for deterministic tool calling
+ * - Post-response fidelity check catches operator name mismatches
+ * - Tool call logging for debugging
+ *
  * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
  * they return payment_required responses instead of executing Reloadly directly.
  *
@@ -19,18 +26,28 @@ import { formatUserContext } from './goals';
 
 const llm = new OpenAI({
   apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/beta',
 });
 
 // Convert tool Zod schemas to LLM function definitions (done once at module load)
-const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
-  type: 'function',
-  function: {
-    name: tool.name,
-    description: tool.description,
-    parameters: zodToJsonSchema(tool.schema) as Record<string, unknown>,
-  },
-}));
+// strict: true ensures DeepSeek's output always matches the JSON schema
+const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
+  const params = zodToJsonSchema(tool.schema) as Record<string, unknown>;
+  // Ensure strict mode compatibility: all properties required, no additionalProperties
+  if (params.type === 'object' && params.properties) {
+    params.required = Object.keys(params.properties as Record<string, unknown>);
+    params.additionalProperties = false;
+  }
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: params,
+      strict: true,
+    },
+  };
+});
 
 // Map tool names → tool functions for fast lookup
 const toolMap = new Map(tools.map(t => [t.name, t]));
@@ -75,6 +92,12 @@ Examples of CORRECT behavior:
 Examples of WRONG behavior (NEVER do this):
   User: "08021520800" → "That's MTN Nigeria" (WRONG — you guessed without calling detect_operator)
   User: "data plans?" → listing plans from memory (WRONG — call get_data_plans first)
+
+TOOL RESULT FIDELITY (ABSOLUTE RULE):
+When a tool returns a result, you MUST report EXACTLY what the tool returned. Do NOT substitute, rephrase, or "correct" tool results using your training data. Your training data about telecom operators is WRONG and OUTDATED.
+If detect_operator returns {"name": "MTN Nigeria"}, you MUST say "MTN Nigeria". NOT "Airtel", NOT "Glo", NOT any other name.
+If detect_operator returns {"name": "Airtel Nigeria"}, you MUST say "Airtel Nigeria". NOT "MTN", NOT any other name.
+COPY-PASTE the operator name, plan names, and prices from the tool output. NEVER generate them from memory.
 
 If a tool call fails, say "I couldn't look that up, please try again." Do NOT fall back to guessing.
 
@@ -151,6 +174,8 @@ async function executeToolCalls(
       const tool = toolMap.get(toolCall.function.name);
       let result: string;
 
+      console.log(`[Tool Call] ${toolCall.function.name}(${toolCall.function.arguments})`);
+
       if (!tool) {
         result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
       } else {
@@ -165,6 +190,8 @@ async function executeToolCalls(
       if (result.length > MAX_TOOL_RESULT_LENGTH) {
         result = result.slice(0, MAX_TOOL_RESULT_LENGTH) + '...(truncated)';
       }
+
+      console.log(`[Tool Result] ${toolCall.function.name} → ${result.slice(0, 200)}`);
 
       return { role: 'tool' as const, tool_call_id: toolCall.id, content: result };
     }),
@@ -218,6 +245,58 @@ function checkPaymentShortCircuit(
 }
 
 /**
+ * Verify that the LLM's response doesn't contradict tool results.
+ * Catches the DeepSeek bug where it receives "MTN Nigeria" but says "Airtel Nigeria".
+ * Returns a corrected response if a contradiction is found, null otherwise.
+ */
+const KNOWN_OPERATORS = [
+  'mtn', 'airtel', 'glo', '9mobile', 'etisalat', 'safaricom',
+  'vodafone', 'orange', 'tigo', 'telkom', 'cell c', 'vodacom',
+  'at&t', 't-mobile', 'verizon', 'jio', 'bsnl',
+];
+
+function checkToolResultFidelity(
+  response: string,
+  toolResults: Array<{ content: string; toolName?: string }>,
+): string | null {
+  const responseLower = response.toLowerCase();
+
+  for (const tr of toolResults) {
+    if (tr.toolName !== 'detect_operator') continue;
+    try {
+      const parsed = JSON.parse(tr.content);
+      if (!parsed.valid || !parsed.name) continue;
+
+      const correctName = parsed.name.toLowerCase();
+
+      // Check if the response mentions a DIFFERENT known operator
+      for (const op of KNOWN_OPERATORS) {
+        if (responseLower.includes(op) && !correctName.includes(op)) {
+          // Model mentioned wrong operator — check the correct one ISN'T also there
+          const correctFirst = correctName.split(' ')[0];
+          if (!responseLower.includes(correctFirst)) {
+            console.warn(
+              `[Fidelity Fix] LLM said "${op}" but detect_operator returned "${parsed.name}". Overriding response.`
+            );
+            let corrected = `That number is on ${parsed.name} (${parsed.country}).`;
+            if (parsed.denominationType === 'RANGE') {
+              corrected += ` Supports top-ups from ${parsed.minAmountCUSD} to ${parsed.maxAmountCUSD} cUSD.`;
+            }
+            if (parsed.fxRate && parsed.fxRate > 1) {
+              corrected += ` Rate: 1 cUSD = ${parsed.fxRate} ${parsed.localCurrency}.`;
+            }
+            return corrected;
+          }
+        }
+      }
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/**
  * Run the Toppa agent with LLM streaming support.
  *
  * Each call gets its own messages array — fully isolated between concurrent users.
@@ -254,15 +333,29 @@ export async function runToppaAgent(
 
   const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
   let finalResponse = '';
+  let lastToolResults: Array<{ content: string; toolName?: string }> = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    // Dynamic tool_choice: force tool calling on first turn when message
+    // contains phone numbers or action keywords (prevents DeepSeek skipping tools)
+    const lastMsg = messages[messages.length - 1];
+    const isAfterToolResult = lastMsg.role === 'tool';
+    let toolChoice: 'auto' | 'required' = 'auto';
+    if (i === 0 && !isAfterToolResult) {
+      const needsTool = /(\+?\d{7,15}|0[78]\d{9})|\b(airtime|data|top.?up|recharge|send|check|detect|operator|plan|bill|gift.?card|promo|biller|convert)\b/i;
+      if (needsTool.test(userMessage)) {
+        toolChoice = 'required';
+      }
+    }
+
     // Stream the LLM response — accumulate text + tool calls from chunks
     const stream = await llm.chat.completions.create({
-      model: process.env.LLM_MODEL || 'gpt-4-turbo-preview',
-      temperature: 0.3,
+      model: process.env.LLM_MODEL || 'deepseek-chat',
+      temperature: 0,
       max_tokens: 1024,
       messages,
       tools: llmTools,
+      tool_choice: toolChoice,
       stream: true,
     });
 
@@ -320,6 +413,12 @@ export async function runToppaAgent(
       })),
     );
 
+    // Track tool results for post-response fidelity check
+    lastToolResults = toolResults.map((tr, idx) => ({
+      content: tr.content,
+      toolName: toolCallsArray[idx]?.name,
+    }));
+
     // Short-circuit: payment_required → order_confirmation (saves LLM round trip)
     if (useShortCircuit) {
       const orderJson = checkPaymentShortCircuit(toolResults);
@@ -336,6 +435,15 @@ export async function runToppaAgent(
 
   if (!finalResponse) {
     finalResponse = 'I ran into a processing limit. Please try a simpler request.';
+  }
+
+  // Post-response fidelity check: catch DeepSeek misreading tool results
+  // (e.g., tool returns "MTN Nigeria" but LLM says "Airtel Nigeria")
+  if (finalResponse && lastToolResults.length > 0) {
+    const correction = checkToolResultFidelity(finalResponse, lastToolResults);
+    if (correction) {
+      finalResponse = correction;
+    }
   }
 
   // Save conversation to memory (non-blocking — don't slow down the response)
