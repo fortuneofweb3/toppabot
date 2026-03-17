@@ -107,16 +107,26 @@ export function registerHandlers(
     try {
       const orderId = (ctx as any).match[1];
       const userId = ctx.from?.id.toString();
-      const order = pendingOrders.get(orderId);
 
-      if (!order || !userId || order.telegramId !== userId) {
-        await ctx.answerCbQuery('Order expired or not found.');
+      if (!userId) {
+        await ctx.answerCbQuery('Error');
         return;
       }
 
-      // Guard: only allow confirmation from pending_confirmation state (prevents double-click)
-      if (order.status !== 'pending_confirmation') {
-        await ctx.answerCbQuery('Order already confirmed.');
+      // Atomic: only transition if status is still pending_confirmation (prevents double-click)
+      const order = await pendingOrders.atomicTransition(orderId, 'pending_confirmation', 'pending_payment');
+
+      if (!order) {
+        // Either expired, not found, or already confirmed by another click
+        await ctx.answerCbQuery('Order expired or already confirmed.');
+        return;
+      }
+
+      // Server-side ownership check — never trust callback data alone
+      if (order.telegramId !== userId) {
+        // Revert the transition since this isn't the order owner
+        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
+        await ctx.answerCbQuery('Unauthorized.');
         return;
       }
 
@@ -125,6 +135,8 @@ export function registerHandlers(
       const balanceNum = parseFloat(balance);
 
       if (balanceNum < order.totalAmount) {
+        // Revert to pending_confirmation so user can try again after depositing
+        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
         const address = await walletManager.getAddress(order.telegramId);
         const shortage = order.totalAmount - balanceNum;
         await ctx.editMessageText(
@@ -139,8 +151,7 @@ export function registerHandlers(
         return;
       }
 
-      // Show payment acceptance screen
-      pendingOrders.updateStatus(orderId, 'pending_payment');
+      // Show payment acceptance screen (status already transitioned atomically above)
       const remaining = (balanceNum - order.totalAmount).toFixed(2);
 
       await ctx.editMessageText(
@@ -166,11 +177,22 @@ export function registerHandlers(
   bot.action(/^order_cancel_(.+)$/, async (ctx: Context) => {
     try {
       const orderId = (ctx as any).match[1];
-      const order = pendingOrders.get(orderId);
-      if (order) {
-        pendingOrders.updateStatus(orderId, 'cancelled');
-        pendingOrders.remove(orderId);
+      const userId = ctx.from?.id.toString();
+
+      // Atomic cancel — only from pre-payment states (can't cancel mid-processing)
+      const order = await pendingOrders.atomicTransition(
+        orderId,
+        ['pending_confirmation', 'pending_payment'],
+        'cancelled',
+      );
+
+      if (order && userId && order.telegramId !== userId) {
+        // Revert — not the owner
+        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
+        await ctx.answerCbQuery('Unauthorized.');
+        return;
       }
+
       await ctx.editMessageText('Order cancelled.');
       await ctx.answerCbQuery();
     } catch (error: any) {
@@ -184,26 +206,45 @@ export function registerHandlers(
   bot.action(/^pay_accept_(.+)$/, async (ctx: Context) => {
     const orderId = (ctx as any).match[1];
     const userId = ctx.from?.id.toString();
-    const order = pendingOrders.get(orderId);
 
-    if (!order || !userId || order.telegramId !== userId) {
-      await ctx.answerCbQuery('Order expired or not found.');
+    if (!userId) {
+      await ctx.answerCbQuery('Error');
       return;
     }
 
-    // Guard: only allow payment from pending_payment state (prevents double-click race)
-    // This check is synchronous — no await between check and status update — so it's atomic in JS.
-    if (order.status !== 'pending_payment') {
-      await ctx.answerCbQuery('Payment already processing.');
+    // Atomic: only transition if status is still pending_payment (prevents double-click double-payment)
+    const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'processing');
+
+    if (!order) {
+      // Either expired, not found, or already processing from another click
+      await ctx.answerCbQuery('Order expired or already processing.');
       return;
     }
 
-    pendingOrders.updateStatus(orderId, 'processing');
+    // Server-side ownership check — never trust callback data alone
+    if (order.telegramId !== userId) {
+      await pendingOrders.updateStatus(orderId, 'pending_payment');
+      await ctx.answerCbQuery('Unauthorized.');
+      return;
+    }
+
     await ctx.editMessageText('⏳ Processing payment... (1/4)');
     await ctx.answerCbQuery();
 
     let receiptId = '';
     try {
+      // Re-check balance before transfer (user could have moved funds since confirmation)
+      const { balance: currentBalance } = await walletManager.getBalance(order.telegramId);
+      if (parseFloat(currentBalance) < order.totalAmount) {
+        await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
+        const address = await walletManager.getAddress(order.telegramId);
+        await ctx.editMessageText(
+          `Insufficient balance. Your balance dropped to ${currentBalance} cUSD since confirmation.\n\n` +
+          `Required: ${order.totalAmount.toFixed(2)} cUSD\nDeposit to: ${address}`,
+        );
+        return;
+      }
+
       // Step 1: Transfer cUSD from user wallet → agent wallet
       await ctx.editMessageText('⏳ Transferring cUSD... (2/4)');
       const { txHash } = await walletManager.transferToAgent(
@@ -269,10 +310,10 @@ export function registerHandlers(
           paymentTx: txHash,
           source: 'telegram',
         },
-      }).catch(() => {}); // Non-critical
+      }).catch((err: any) => console.error('[ERC-8004 Record Error]', err.message));
 
       // Step 6: Handle reputation review (auto or manual)
-      const userSettings = userSettingsStore.get(order.telegramId);
+      const userSettings = await userSettingsStore.get(order.telegramId);
 
       if (userSettings.autoReviewEnabled) {
         // Auto-review: submit 5 stars immediately
@@ -297,7 +338,7 @@ export function registerHandlers(
       }
 
       // Step 7: Show result
-      pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
+      await pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
       const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
 
       const tokenSymbol = TOKEN_SYMBOL;
@@ -351,7 +392,7 @@ export function registerHandlers(
         await updateReceipt(receiptId, { status: 'failed', error: error.message });
       }
 
-      pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
+      await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
 
       let errorMsg = error.message;
       if (errorMsg.includes('Insufficient balance')) {
@@ -372,11 +413,17 @@ export function registerHandlers(
   bot.action(/^pay_decline_(.+)$/, async (ctx: Context) => {
     try {
       const orderId = (ctx as any).match[1];
-      const order = pendingOrders.get(orderId);
-      if (order) {
-        pendingOrders.updateStatus(orderId, 'cancelled');
-        pendingOrders.remove(orderId);
+      const userId = ctx.from?.id.toString();
+
+      // Atomic cancel — only from pending_payment state
+      const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'cancelled');
+
+      if (order && userId && order.telegramId !== userId) {
+        await pendingOrders.updateStatus(orderId, 'pending_payment');
+        await ctx.answerCbQuery('Unauthorized.');
+        return;
       }
+
       await ctx.editMessageText('Payment declined. Order cancelled.');
       await ctx.answerCbQuery();
     } catch (error: any) {
@@ -541,7 +588,7 @@ export function registerHandlers(
         return;
       }
 
-      const newStatus = userSettingsStore.toggleAutoReview(userId);
+      const newStatus = await userSettingsStore.toggleAutoReview(userId);
       const statusText = newStatus ? 'ON ✅' : 'OFF ❌';
 
       await ctx.editMessageText(
@@ -581,9 +628,15 @@ export function registerHandlers(
         return;
       }
 
-      const order = pendingOrders.get(orderId);
+      const order = await pendingOrders.get(orderId);
       if (!order || order.telegramId !== userId) {
         await ctx.answerCbQuery('Order expired or not found.');
+        return;
+      }
+
+      // Only allow rating completed orders
+      if (order.status !== 'completed') {
+        await ctx.answerCbQuery('Order not completed yet.');
         return;
       }
 
@@ -596,6 +649,10 @@ export function registerHandlers(
       }
 
       const stars = parseInt(ratingStr);
+      if (stars < 1 || stars > 5) {
+        await ctx.answerCbQuery('Invalid rating');
+        return;
+      }
       const rating = stars * 20; // 1★=20, 2★=40, 3★=60, 4★=80, 5★=100
 
       await ctx.answerCbQuery(`${stars} star${stars > 1 ? 's' : ''}`);

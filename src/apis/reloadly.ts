@@ -103,84 +103,138 @@ async function getToken(product: 'airtime' | 'utilities' | 'giftcards'): Promise
   return tokenData.token;
 }
 
-async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  const token = await getToken('airtime');
-
-  const response = await fetch(`${AIRTIME_BASE_URL}${path}`, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/com.reloadly.topups-v1+json',
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30000), // 30 second timeout
-  });
-
-  if (!response.ok) {
+/**
+ * Retry wrapper with exponential backoff for transient failures.
+ * Retries on: network errors, timeouts, 429, 500, 502, 503, 504.
+ * Does NOT retry on: 400, 401, 403, 404 (client errors).
+ */
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const err = await response.json();
-      throw parseReloadlyError(response.status, err);
-    } catch (e) {
-      if (e instanceof ReloadlyError) throw e;
-      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+      return await fn();
+    } catch (error: any) {
+      const isLastAttempt = attempt === maxRetries;
+      const isRetryable = (
+        error.name === 'AbortError' ||
+        error.name === 'FetchError' ||
+        error.code === 'ECONNRESET' ||
+        error.code === 'ETIMEDOUT' ||
+        (error instanceof ReloadlyError && [429, 500, 502, 503, 504].includes(error.httpStatus))
+      );
+
+      if (isLastAttempt || !isRetryable) throw error;
+
+      const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+      console.warn(`[Reloadly] Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${error.message}`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
+  throw new Error('Unreachable');
+}
 
-  return response.json() as Promise<T>;
+/** Invalidate a cached token (called on 401 to force refresh) */
+function invalidateToken(product: 'airtime' | 'utilities' | 'giftcards') {
+  if (product === 'airtime') airtimeToken = null;
+  else if (product === 'utilities') utilitiesToken = null;
+  else giftcardsToken = null;
+}
+
+async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
+  return withRetry(async () => {
+    const token = await getToken('airtime');
+
+    const response = await fetch(`${AIRTIME_BASE_URL}${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/com.reloadly.topups-v1+json',
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (response.status === 401) {
+      invalidateToken('airtime');
+    }
+
+    if (!response.ok) {
+      try {
+        const err = await response.json();
+        throw parseReloadlyError(response.status, err);
+      } catch (e) {
+        if (e instanceof ReloadlyError) throw e;
+        throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+      }
+    }
+
+    return response.json() as Promise<T>;
+  });
 }
 
 async function utilitiesRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  const token = await getToken('utilities');
+  return withRetry(async () => {
+    const token = await getToken('utilities');
 
-  const response = await fetch(`${UTILITIES_BASE_URL}${path}`, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30000), // 30 second timeout
-  });
+    const response = await fetch(`${UTILITIES_BASE_URL}${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000),
+    });
 
-  if (!response.ok) {
-    try {
-      const err = await response.json();
-      throw parseReloadlyError(response.status, err);
-    } catch (e) {
-      if (e instanceof ReloadlyError) throw e;
-      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+    if (response.status === 401) {
+      invalidateToken('utilities');
     }
-  }
 
-  return response.json() as Promise<T>;
+    if (!response.ok) {
+      try {
+        const err = await response.json();
+        throw parseReloadlyError(response.status, err);
+      } catch (e) {
+        if (e instanceof ReloadlyError) throw e;
+        throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+      }
+    }
+
+    return response.json() as Promise<T>;
+  });
 }
 
 async function giftcardsRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  const token = await getToken('giftcards');
+  return withRetry(async () => {
+    const token = await getToken('giftcards');
 
-  const response = await fetch(`${GIFTCARDS_BASE_URL}${path}`, {
-    method,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/com.reloadly.giftcards-v1+json',
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30000), // 30 second timeout
-  });
+    const response = await fetch(`${GIFTCARDS_BASE_URL}${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/com.reloadly.giftcards-v1+json',
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30000),
+    });
 
-  if (!response.ok) {
-    try {
-      const err = await response.json();
-      throw parseReloadlyError(response.status, err);
-    } catch (e) {
-      if (e instanceof ReloadlyError) throw e;
-      throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+    if (response.status === 401) {
+      invalidateToken('giftcards');
     }
-  }
 
-  return response.json() as Promise<T>;
+    if (!response.ok) {
+      try {
+        const err = await response.json();
+        throw parseReloadlyError(response.status, err);
+      } catch (e) {
+        if (e instanceof ReloadlyError) throw e;
+        throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
+      }
+    }
+
+    return response.json() as Promise<T>;
+  });
 }
 
 // ─── Types ───
@@ -668,4 +722,22 @@ export async function getCountryServices(countryCode: string) {
       brands: Array.from(brands.keys()),
     },
   };
+}
+
+/**
+ * Get FX rate for a country (local currency per 1 USD).
+ * Uses operator data to extract the rate — cached via normal Reloadly caching.
+ */
+export async function getFxRate(countryCode: string): Promise<{ rate: number; currencyCode: string } | null> {
+  try {
+    const operators = await getOperators(countryCode.toUpperCase());
+    for (const op of operators) {
+      if (op.fx?.rate && op.fx.rate > 0) {
+        return { rate: op.fx.rate, currencyCode: op.fx.currencyCode };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

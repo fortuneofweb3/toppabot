@@ -21,37 +21,39 @@ Toppa parses this into three parallel operations and executes them all. This is 
 
 ## Architecture
 
+## Architecture
+
 ```
-                    ┌─────────────────┐
-                    │  Other AI Agents │
-                    └────────┬────────┘
-                             │ x402 payment (USDC/cUSD)
-                             ▼
-┌────────────────────────────────────────────────┐
-│                  Toppa Agent                    │
-│                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │
-│  │ HTTP API │  │ Telegram │  │  LangGraph   │ │
-│  │ (x402)   │  │   Bot    │  │  AI Agent    │ │
-│  └────┬─────┘  └────┬─────┘  └──────┬───────┘ │
-│       └──────────────┴───────────────┘         │
-│                      │                          │
-│  ┌──────────┐  ┌─────┴──────┐  ┌────────────┐ │
-│  │ ERC-8004 │  │  Reloadly  │  │    Self     │ │
-│  │ Identity │  │  170+ ctry │  │  Protocol   │ │
-│  └──────────┘  └────────────┘  └────────────┘ │
-└────────────────────────────────────────────────┘
-                       │
-              ┌────────┴────────┐
-              │   Celo Network  │
-              └─────────────────┘
+                     ┌─────────────────┐       ┌─────────────────┐
+                     │  Desktop (MCP)  │       │  Other AI Agents │
+                     └────────┬────────┘       └────────┬────────┘
+                              │ STDIO (Local)           │ x402 payment (USDC/cUSD)
+                              ▼                         ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                           Toppa Agent                                 │
+│                                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐  │
+│  │ HTTP API │  │ Telegram │  │   MCP    │  │   Direct OpenAI SDK   │  │
+│  │ (x402)   │  │   Bot    │  │  Server  │  │   Tool-Calling Loop   │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────────┬───────────┘  │
+│       └─────────────┼─────────────┘                    │              │
+│                     │                                  │              │
+│  ┌──────────┐  ┌────┴───────┐  ┌────────────┐          │              │
+│  │ ERC-8004 │  │  Reloadly  │  │    Self    │          │              │
+│  │ Identity │  │ 170+ ctry  │  │  Protocol  │          │              │
+│  └──────────┘  └────────────┘  └────────────┘          │              │
+└────────────────────────────────────────────────────────┼──────────────┘
+                       │                                 │
+              ┌────────┴─────────────────────────────────┴┐
+              │                Celo Network               │
+              └───────────────────────────────────────────┘
 ```
 
 ## Tech Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Agent** | LangGraph | Tool-calling AI agent with multi-intent resolution (11 tools) |
+| **Agent** | OpenAI SDK | Direct, lightweight tool-calling loop with multi-intent execution |
 | **LLM** | DeepSeek | OpenAI-compatible, 97% cheaper |
 | **Identity** | ERC-8004 | On-chain agent identity and reputation (deployed on Celo) |
 | **Payments** | x402 | HTTP 402 Payment Required for agent micropayments |
@@ -88,10 +90,10 @@ Toppa parses this into three parallel operations and executes them all. This is 
 ### x402 Payment Flow
 ```bash
 # 1. Call without payment — get 402 with payment requirements
-curl -X POST https://toppa.cc/send-airtime
+curl -X POST https://api.toppa.cc/send-airtime
 
 # 2. Send USDC to agent wallet on Celo, then call with tx hash
-curl -X POST https://toppa.cc/send-airtime \
+curl -X POST https://api.toppa.cc/send-airtime \
   -H "X-PAYMENT: 0xYOUR_USDC_TX_HASH" \
   -H "Content-Type: application/json" \
   -d '{"phone": "08147658721", "countryCode": "NG", "amount": 5}'

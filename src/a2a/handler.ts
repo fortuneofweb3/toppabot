@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import { Collection } from 'mongodb';
+import { getDb } from '../wallet/mongo-store';
 import { runToppaAgent } from '../agent/graph';
 
 /**
@@ -7,14 +9,11 @@ import { runToppaAgent } from '../agent/graph';
  * Follows the A2A spec v1.0: https://a2a-protocol.org
  *
  * Supports:
- * - SendMessage: Submit a natural-language task, routed through the LangGraph agent
+ * - SendMessage: Submit a natural-language task, routed through the agent
  * - GetTask: Retrieve a task by ID
  * - CancelTask: Cancel a non-terminal task
  *
- * Error codes follow A2A spec:
- * - -32001: TaskNotFoundError
- * - -32002: TaskNotCancelableError
- * - -32004: UnsupportedOperationError
+ * Tasks are stored in MongoDB — survives server restarts.
  */
 
 // ─── A2A Error Codes (per spec) ───
@@ -33,39 +32,52 @@ interface A2ATask {
   id: string;
   contextId: string;
   status: {
-    state: string; // TASK_STATE_SUBMITTED | TASK_STATE_WORKING | TASK_STATE_COMPLETED | TASK_STATE_FAILED | TASK_STATE_CANCELED
+    state: string;
     message?: { role: string; parts: Array<{ text?: string }> };
     timestamp: string;
   };
   history: Array<{ messageId: string; role: string; parts: Array<{ text?: string; mediaType?: string }> }>;
   artifacts: Array<{ artifactId: string; name?: string; parts: Array<{ text?: string; mediaType?: string }> }>;
   metadata?: Record<string, any>;
+  _expiresAt?: Date; // TTL field
 }
 
-// ─── In-memory task store ───
+// ─── MongoDB-backed task store ───
 
-const MAX_TASKS = 1000;
-const TASK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const COLLECTION_NAME = 'a2a_tasks';
+const TASK_TTL_SECONDS = 30 * 60; // 30 minutes
 const MAX_TEXT_LENGTH = 10000;
-const tasks = new Map<string, A2ATask>();
+let _collection: Collection<A2ATask> | null = null;
+let _indexesCreated = false;
 
-function pruneExpiredTasks() {
-  const now = Date.now();
-  for (const [id, task] of tasks) {
-    if (now - new Date(task.status.timestamp).getTime() > TASK_TTL_MS) {
-      tasks.delete(id);
-    }
+async function getCollection(): Promise<Collection<A2ATask>> {
+  if (_collection && _indexesCreated) return _collection;
+
+  const db = await getDb();
+  _collection = db.collection<A2ATask>(COLLECTION_NAME);
+
+  if (!_indexesCreated) {
+    await _collection.createIndex({ id: 1 }, { unique: true });
+    // TTL index — MongoDB auto-deletes tasks after 30 minutes
+    await _collection.createIndex({ _expiresAt: 1 }, { expireAfterSeconds: 0 });
+    _indexesCreated = true;
   }
+
+  return _collection;
 }
 
-function evictOldestIfFull() {
-  if (tasks.size >= MAX_TASKS) {
-    pruneExpiredTasks();
-  }
-  if (tasks.size >= MAX_TASKS) {
-    const oldestKey = tasks.keys().next().value;
-    if (oldestKey) tasks.delete(oldestKey);
-  }
+async function getTask(taskId: string): Promise<A2ATask | null> {
+  const col = await getCollection();
+  return col.findOne({ id: taskId });
+}
+
+async function saveTask(task: A2ATask): Promise<void> {
+  const col = await getCollection();
+  await col.updateOne(
+    { id: task.id },
+    { $set: { ...task, _expiresAt: new Date(Date.now() + TASK_TTL_SECONDS * 1000) } },
+    { upsert: true },
+  );
 }
 
 function a2aError(code: number, message: string, data?: any) {
@@ -89,18 +101,17 @@ export async function handleA2ARequest(req: Request, res: Response) {
 
   try {
     switch (method) {
-      // A2A spec uses PascalCase method names in JSON-RPC binding
       case 'SendMessage':
-      case 'message/send': // Also support legacy method name
+      case 'message/send':
         await handleSendMessage(id, params, res);
         return;
       case 'GetTask':
       case 'tasks/get':
-        handleGetTask(id, params, res);
+        await handleGetTask(id, params, res);
         return;
       case 'CancelTask':
       case 'tasks/cancel':
-        handleCancelTask(id, params, res);
+        await handleCancelTask(id, params, res);
         return;
       case 'SendStreamingMessage':
         res.json({ jsonrpc: '2.0', id, error: a2aError(A2A_ERRORS.UNSUPPORTED_OPERATION, 'Streaming is not supported. Use SendMessage instead.') });
@@ -138,7 +149,7 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
 
   // If taskId is provided, check if task exists and is not terminal
   if (message.taskId) {
-    const existingTask = tasks.get(message.taskId);
+    const existingTask = await getTask(message.taskId);
     if (!existingTask) {
       res.json({
         jsonrpc: '2.0',
@@ -177,10 +188,9 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
   const contextId = message.contextId || crypto.randomUUID();
   const messageId = message.messageId || crypto.randomUUID();
 
-  evictOldestIfFull();
-
   const now = new Date().toISOString();
-  const task: A2ATask = tasks.get(taskId) || {
+  const existingTask = message.taskId ? await getTask(taskId) : null;
+  const task: A2ATask = existingTask || {
     id: taskId,
     contextId,
     status: {
@@ -203,7 +213,7 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
     state: 'TASK_STATE_WORKING',
     timestamp: new Date().toISOString(),
   };
-  tasks.set(taskId, task);
+  await saveTask(task);
 
   try {
     const result = await runToppaAgent(userText, { source: 'a2a' as any });
@@ -234,6 +244,7 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
       timestamp: new Date().toISOString(),
     };
 
+    await saveTask(task);
     res.json({ jsonrpc: '2.0', id: rpcId, result: { task } });
   } catch (err: any) {
     task.status = {
@@ -248,20 +259,21 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
       parts: [{ text: `Error: ${err.message}` }],
     });
 
+    await saveTask(task);
     res.json({ jsonrpc: '2.0', id: rpcId, result: { task } });
   }
 }
 
 // ─── GetTask ───
 
-function handleGetTask(rpcId: any, params: any, res: Response) {
+async function handleGetTask(rpcId: any, params: any, res: Response) {
   const taskId = params?.taskId;
   if (!taskId || typeof taskId !== 'string') {
     res.json({ jsonrpc: '2.0', id: rpcId, error: a2aError(-32602, 'taskId (string) required') });
     return;
   }
 
-  const task = tasks.get(taskId);
+  const task = await getTask(taskId);
   if (!task) {
     res.json({
       jsonrpc: '2.0',
@@ -276,14 +288,14 @@ function handleGetTask(rpcId: any, params: any, res: Response) {
 
 // ─── CancelTask ───
 
-function handleCancelTask(rpcId: any, params: any, res: Response) {
+async function handleCancelTask(rpcId: any, params: any, res: Response) {
   const taskId = params?.taskId;
   if (!taskId || typeof taskId !== 'string') {
     res.json({ jsonrpc: '2.0', id: rpcId, error: a2aError(-32602, 'taskId (string) required') });
     return;
   }
 
-  const task = tasks.get(taskId);
+  const task = await getTask(taskId);
   if (!task) {
     res.json({
       jsonrpc: '2.0',
@@ -308,5 +320,6 @@ function handleCancelTask(rpcId: any, params: any, res: Response) {
     timestamp: new Date().toISOString(),
   };
 
+  await saveTask(task);
   res.json({ jsonrpc: '2.0', id: rpcId, result: { task } });
 }

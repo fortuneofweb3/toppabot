@@ -7,7 +7,7 @@ import { getX402Info } from '../blockchain/x402';
  * Uses camelCase field names per spec (protobuf -> JSON serialization).
  */
 export function generateAgentCard() {
-  const apiUrl = process.env.API_URL || 'https://toppa.cc';
+  const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
   const x402Info = getX402Info();
 
   return {
@@ -99,7 +99,7 @@ export function generateAgentCard() {
       mcp: {
         endpoint: `${apiUrl}/mcp`,
         transport: 'Streamable HTTP',
-        description: 'MCP endpoint for direct tool invocation (12 tools)',
+        description: 'MCP endpoint for direct tool invocation (13 tools)',
       },
     },
   };

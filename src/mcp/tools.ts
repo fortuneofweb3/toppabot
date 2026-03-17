@@ -6,6 +6,7 @@ import {
   getBillers, payBill as payReloadlyBill,
   getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
   getCountryServices, getPromotions,
+  getFxRate,
 } from '../apis/reloadly';
 import { verifyX402Payment, calculateTotalPayment, getX402Info, PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
 import { reservePaymentHash, releasePaymentHash } from '../blockchain/replay-guard';
@@ -80,7 +81,7 @@ async function requirePayment(paymentTxHash: string | undefined, amount: number)
 }
 
 /**
- * Register all 12 tools on an MCP server instance.
+ * Register all 13 tools on an MCP server instance.
  */
 export function registerMcpTools(server: McpServer) {
   // ─── FREE TOOLS ───
@@ -103,14 +104,15 @@ export function registerMcpTools(server: McpServer) {
               id: op.operatorId,
               name: op.name,
               denominationType: op.denominationType,
-              fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
-              localFixedAmounts: op.localFixedAmounts || [],
-              localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
-              suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-              mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-              minAmount: op.minAmount,
-              maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+              currency: 'USD',
+              fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
+              fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
+              suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
+              mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+              minAmountUSD: op.minAmount,
+              maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
               localCurrency: op.destinationCurrencyCode,
+              fxRate: op.fx?.rate || null,
               type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
             }))),
           }],
@@ -123,7 +125,7 @@ export function registerMcpTools(server: McpServer) {
 
   server.tool(
     'get_data_plans',
-    'List available mobile data plan operators for a country. Use operatorId from results to send data.',
+    'List available mobile data plan operators for a country. Use operatorId from results to send data. All amounts in USD.',
     { countryCode: z.string().describe('Country ISO code (e.g. NG, KE, GH)') },
     async ({ countryCode }) => {
       try {
@@ -141,15 +143,15 @@ export function registerMcpTools(server: McpServer) {
               isData: op.data,
               isBundle: op.bundle,
               denominationType: op.denominationType,
-              fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
+              currency: 'USD',
+              fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
               fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-              localFixedAmounts: op.localFixedAmounts || [],
-              localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
-              suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-              mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-              minAmount: op.minAmount,
-              maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+              suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
+              mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+              minAmountUSD: op.minAmount,
+              maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
               localCurrency: op.destinationCurrencyCode,
+              fxRate: op.fx?.rate || null,
             }))),
           }],
         };
@@ -173,23 +175,30 @@ export function registerMcpTools(server: McpServer) {
           getBillers({ countryCode: sanitizedCountry, type: type as any }),
           getCachedReloadlyBalance(),
         ]);
+        const mappedBillers = billers.map(b => {
+          const fxRate = b.fx?.rate || 1;
+          return {
+            id: b.id,
+            name: b.name,
+            type: b.type,
+            serviceType: b.serviceType,
+            currency: 'USD',
+            minAmountUSD: b.internationalAmountSupported
+              ? (b.minInternationalTransactionAmount || Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100)
+              : Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100,
+            maxAmountUSD: b.internationalAmountSupported
+              ? (b.maxInternationalTransactionAmount || Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100)
+              : Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100,
+            localCurrency: b.localTransactionCurrencyCode,
+            minLocalAmount: b.minLocalTransactionAmount,
+            maxLocalAmount: b.maxLocalTransactionAmount,
+            fxRate,
+          };
+        });
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify(billers.map(b => ({
-              id: b.id,
-              name: b.name,
-              type: b.type,
-              serviceType: b.serviceType,
-              localCurrency: b.localTransactionCurrencyCode,
-              minLocalAmount: b.minLocalTransactionAmount,
-              maxLocalAmount: b.maxLocalTransactionAmount,
-              internationalSupported: b.internationalAmountSupported,
-              internationalCurrency: b.internationalTransactionCurrencyCode || null,
-              minInternationalAmount: b.minInternationalTransactionAmount || null,
-              maxInternationalAmount: b.maxInternationalTransactionAmount || null,
-              fx: b.fx || null,
-            }))),
+            text: JSON.stringify(mappedBillers),
           }],
         };
       } catch (error: any) {
@@ -221,14 +230,16 @@ export function registerMcpTools(server: McpServer) {
               brand: p.brand.brandName,
               category: p.category?.name || null,
               country: p.country.isoName,
-              currency: p.recipientCurrencyCode,
+              recipientCurrency: p.recipientCurrencyCode,
               denominationType: p.denominationType,
-              fixedDenominations: (p.fixedRecipientDenominations || [])
+              currency: 'USD',
+              fixedAmountsUSD: (p.fixedSenderDenominations || [])
                 .filter((d: number) => d <= balance)
                 .slice(0, 10),
-              minAmount: p.minRecipientDenomination,
-              maxAmount: p.maxRecipientDenomination
-                ? Math.min(p.maxRecipientDenomination, balance)
+              fixedRecipientAmounts: (p.fixedRecipientDenominations || []).slice(0, 10),
+              minAmountUSD: p.minSenderDenomination,
+              maxAmountUSD: p.maxSenderDenomination
+                ? Math.min(p.maxSenderDenomination, balance)
                 : balance,
               redeemInstruction: p.redeemInstruction?.concise || null,
             }))),
@@ -337,16 +348,67 @@ export function registerMcpTools(server: McpServer) {
     },
   );
 
+  server.tool(
+    'convert_currency',
+    'Convert between USD (cUSD) and a country\'s local currency using live FX rates. Useful for price conversions.',
+    {
+      amount: z.number().positive().describe('Amount to convert'),
+      fromCurrency: z.enum(['USD', 'LOCAL']).describe("'USD' to convert USD→local, 'LOCAL' to convert local→USD"),
+      countryCode: z.string().min(2).max(3).describe('Country ISO code for the local currency (e.g. NG, KE, GH)'),
+    },
+    async ({ amount, fromCurrency, countryCode }) => {
+      try {
+        const sanitizedCountry = sanitizeCountryCode(countryCode);
+        const fxData = await getFxRate(sanitizedCountry);
+        if (!fxData) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `No FX rate available for country ${countryCode}` }) }] };
+        }
+
+        const { rate, currencyCode } = fxData;
+
+        if (fromCurrency === 'USD') {
+          const localAmount = Math.round(amount * rate * 100) / 100;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                from: { amount, currency: 'USD' },
+                to: { amount: localAmount, currency: currencyCode },
+                fxRate: rate,
+                description: `${amount} USD = ${localAmount.toLocaleString()} ${currencyCode}`,
+              }),
+            }],
+          };
+        } else {
+          const usdAmount = Math.round((amount / rate) * 100) / 100;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                from: { amount, currency: currencyCode },
+                to: { amount: usdAmount, currency: 'USD' },
+                fxRate: rate,
+                description: `${amount.toLocaleString()} ${currencyCode} = ${usdAmount} USD`,
+              }),
+            }],
+          };
+        }
+      } catch (error: any) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }) }] };
+      }
+    },
+  );
+
   // ─── PAID TOOLS (require x402 payment) ───
 
   server.tool(
     'send_airtime',
-    'Send mobile airtime top-up to any phone number (170+ countries). Requires x402 payment — include paymentTxHash.',
+    'Send mobile airtime top-up to any phone number (170+ countries). Amount in USD. Requires x402 payment — include paymentTxHash.',
     {
       phone: z.string().min(5).max(20).describe('Recipient phone number (e.g. 08147658721)'),
       countryCode: z.string().min(2).max(3).describe('Country ISO code (e.g. NG, KE, GH)'),
-      amount: z.number().positive().describe('Amount in USD (or local currency if useLocalAmount is true)'),
-      useLocalAmount: z.boolean().optional().describe('If true, amount is in local currency. Default false (USD).'),
+      amount: z.number().positive().describe('Amount in USD (cUSD). Use fixedAmountsUSD from get_operators.'),
+      useLocalAmount: z.boolean().optional().describe('If true, amount is in local currency. Default false (USD). Prefer USD.'),
       paymentTxHash: z.string().optional().describe('x402 payment transaction hash (cUSD/USDC on Celo). Required for execution.'),
     },
     async ({ phone, countryCode, amount, useLocalAmount, paymentTxHash }) => {
@@ -415,13 +477,13 @@ export function registerMcpTools(server: McpServer) {
 
   server.tool(
     'send_data',
-    'Send mobile data bundle. Use get_data_plans first to find operatorId. Requires x402 payment — include paymentTxHash.',
+    'Send mobile data bundle. Use get_data_plans first to find operatorId. Amount in USD. Requires x402 payment — include paymentTxHash.',
     {
       phone: z.string().min(5).max(20).describe('Recipient phone number'),
       countryCode: z.string().min(2).max(3).describe('Country ISO code (e.g. NG, KE, GH)'),
-      amount: z.number().positive().describe('Amount in USD (or local currency if useLocalAmount is true)'),
+      amount: z.number().positive().describe('Amount in USD (cUSD). Use fixedAmountsUSD from get_data_plans.'),
       operatorId: z.number().int().positive().describe('Data operator ID from get_data_plans'),
-      useLocalAmount: z.boolean().optional().describe('If true, amount is in local currency. Default false (USD).'),
+      useLocalAmount: z.boolean().optional().describe('If true, amount is in local currency. Default false (USD). Prefer USD.'),
       paymentTxHash: z.string().optional().describe('x402 payment transaction hash (cUSD/USDC on Celo). Required for execution.'),
     },
     async ({ phone, countryCode, amount, operatorId, useLocalAmount, paymentTxHash }) => {
@@ -486,12 +548,12 @@ export function registerMcpTools(server: McpServer) {
 
   server.tool(
     'pay_bill',
-    'Pay a utility bill (electricity, water, TV, internet). Use get_billers first. Requires x402 payment — include paymentTxHash.',
+    'Pay a utility bill (electricity, water, TV, internet). Use get_billers first. Amount in USD. Requires x402 payment — include paymentTxHash.',
     {
       billerId: z.number().int().positive().describe('Biller ID from get_billers'),
       accountNumber: z.string().min(1).max(50).describe("Customer's meter/smartcard/account number"),
-      amount: z.number().positive().describe('Amount to pay (in local currency by default)'),
-      useLocalAmount: z.boolean().optional().describe('If true (default), amount is in local currency.'),
+      amount: z.number().positive().describe('Amount in USD (cUSD). Use fxRate from get_billers to convert local amounts.'),
+      useLocalAmount: z.boolean().optional().describe('If true, amount is in local currency. Default false (USD). Prefer USD.'),
       paymentTxHash: z.string().optional().describe('x402 payment transaction hash (cUSD/USDC on Celo). Required for execution.'),
     },
     async ({ billerId, accountNumber, amount, useLocalAmount, paymentTxHash }) => {
@@ -538,10 +600,10 @@ export function registerMcpTools(server: McpServer) {
 
   server.tool(
     'buy_gift_card',
-    'Purchase a gift card. Use search_gift_cards first. Requires x402 payment — include paymentTxHash. Use get_gift_card_code after to get redeem code.',
+    'Purchase a gift card. Use search_gift_cards first. Amount in USD. Requires x402 payment — include paymentTxHash. Use get_gift_card_code after to get redeem code.',
     {
       productId: z.number().int().positive().describe('Product ID from search_gift_cards or get_gift_cards'),
-      amount: z.number().positive().describe('Amount/denomination (in recipient currency)'),
+      amount: z.number().positive().describe('Amount in USD (cUSD). Use fixedAmountsUSD from search_gift_cards.'),
       recipientEmail: z.string().email().describe('Email to deliver the gift card to'),
       quantity: z.number().int().min(1).max(10).optional().describe('Number of cards (1-10). Default 1.'),
       paymentTxHash: z.string().optional().describe('x402 payment transaction hash (cUSD/USDC on Celo). Required for execution.'),

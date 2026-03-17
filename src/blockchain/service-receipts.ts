@@ -105,7 +105,7 @@ export async function createReceipt(receipt: Omit<ServiceReceipt, '_id' | 'creat
  * Update a receipt after service execution completes (success or failure).
  */
 export async function updateReceipt(receiptId: string, update: {
-  status: 'success' | 'failed';
+  status: 'success' | 'failed' | 'pending';
   reloadlyTransactionId?: number;
   reloadlyStatus?: string;
   serviceResult?: Record<string, any>;

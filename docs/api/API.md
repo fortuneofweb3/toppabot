@@ -1,6 +1,6 @@
 # Toppa API Reference
 
-Base URL: `https://toppa.cc`
+Base URL: `https://api.toppa.cc`
 
 ## Payment Model (x402)
 
@@ -354,7 +354,7 @@ Agent ERC-8004 on-chain identity and registration file.
     "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     "name": "Toppa",
     "description": "AI agent for digital goods...",
-    "image": "https://toppa.cc/agent-image.svg",
+    "image": "https://api.toppa.cc/agent-image.svg",
     "x402Support": true,
     "active": true,
     "supportedTrust": ["reputation"]

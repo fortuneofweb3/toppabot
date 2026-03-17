@@ -27,10 +27,9 @@ const walletStore = process.env.MONGODB_URI
 const walletManager = new WalletManager(walletStore);
 const pendingOrders = new PendingOrderStore();
 
-// Cleanup expired orders and stale rate limits every 5 minutes
+// Cleanup stale rate limit entries every 5 minutes (orders auto-expire via MongoDB TTL)
 setInterval(() => {
-  pendingOrders.cleanup();
-  // Prune stale rate limit entries (inactive for > 1 hour)
+  pendingOrders.cleanup().catch(() => {});
   const now = Date.now();
   for (const [userId, limit] of userRateLimits) {
     if (now - limit.lastReset > 60 * 60 * 1000) {
@@ -57,12 +56,44 @@ const MAX_REQUESTS_PER_WINDOW = 10;
 const DAILY_SPENDING_LIMIT = 50;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
-function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
+// Persist daily spending to MongoDB so it survives restarts
+async function loadSpendingFromDb(userId: string): Promise<{ totalSpent: number; spendingResetDate: number }> {
+  try {
+    const { getDb } = await import('../wallet/mongo-store');
+    const db = await getDb();
+    const doc = await db.collection('spending_limits').findOne({ userId });
+    if (doc && Date.now() - doc.spendingResetDate < SPENDING_RESET_WINDOW) {
+      return { totalSpent: doc.totalSpent, spendingResetDate: doc.spendingResetDate };
+    }
+  } catch {}
+  return { totalSpent: 0, spendingResetDate: Date.now() };
+}
+
+function persistSpendingToDb(userId: string, totalSpent: number, spendingResetDate: number) {
+  import('../wallet/mongo-store').then(({ getDb }) =>
+    getDb().then(db =>
+      db.collection('spending_limits').updateOne(
+        { userId },
+        { $set: { userId, totalSpent, spendingResetDate, updatedAt: new Date() } },
+        { upsert: true },
+      ),
+    ),
+  ).catch((err: any) => console.error('[Spending Persist Error]', err.message));
+}
+
+async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reason?: string }> {
   const now = Date.now();
   let userLimit = userRateLimits.get(userId);
 
   if (!userLimit || now - userLimit.lastReset > RATE_LIMIT_WINDOW) {
-    userLimit = { requestCount: 0, lastReset: now, totalSpent: 0, spendingResetDate: now };
+    // Load spending from DB on first request (survives restart)
+    const dbSpending = await loadSpendingFromDb(userId);
+    userLimit = {
+      requestCount: 0,
+      lastReset: now,
+      totalSpent: dbSpending.totalSpent,
+      spendingResetDate: dbSpending.spendingResetDate,
+    };
     userRateLimits.set(userId, userLimit);
   }
 
@@ -73,6 +104,7 @@ function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
   if (now - userLimit.spendingResetDate > SPENDING_RESET_WINDOW) {
     userLimit.totalSpent = 0;
     userLimit.spendingResetDate = now;
+    persistSpendingToDb(userId, 0, now);
   }
 
   if (userLimit.totalSpent >= DAILY_SPENDING_LIMIT) {
@@ -87,6 +119,8 @@ function recordSpending(userId: string, amount: number) {
   const userLimit = userRateLimits.get(userId);
   if (userLimit) {
     userLimit.totalSpent += amount;
+    // Persist to DB so spending limit survives server restarts
+    persistSpendingToDb(userId, userLimit.totalSpent, userLimit.spendingResetDate);
   }
 }
 
@@ -150,8 +184,8 @@ bot.command('start', async (ctx) => {
     `Your Celo wallet:\n\`${address}\`\n\n` +
     `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n` +
     `Token: ${tokenSymbol}\n\n` +
-    `⚠️ Only deposit ${tokenSymbol} on this network!\n` +
-    `Sending other tokens will result in permanent loss.\n\n` +
+    `Deposit ${tokenSymbol} on Celo to get started.\n` +
+    `Other tokens sent here won't show in-app, but you can recover them by exporting your private key (/settings).\n\n` +
     `I can:\n` +
     `• Airtime & data (170+ countries)\n` +
     `• Utility bills (electricity, water, TV)\n` +
@@ -284,7 +318,7 @@ bot.command('settings', async (ctx) => {
     return;
   }
 
-  const settings = userSettingsStore.get(userId);
+  const settings = await userSettingsStore.get(userId);
   const autoReviewStatus = settings.autoReviewEnabled ? 'ON ✅' : 'OFF ❌';
 
   await ctx.reply(
@@ -317,15 +351,15 @@ bot.command('history', async (ctx) => {
  */
 bot.command('cancel', async (ctx) => {
   const userId = ctx.from.id.toString();
-  const order = pendingOrders.getByUser(userId);
+  const order = await pendingOrders.getByUser(userId);
 
   if (!order) {
     await ctx.reply('You have no pending orders.');
     return;
   }
 
-  pendingOrders.updateStatus(order.orderId, 'cancelled');
-  pendingOrders.remove(order.orderId);
+  await pendingOrders.updateStatus(order.orderId, 'cancelled');
+  await pendingOrders.remove(order.orderId);
 
   await ctx.reply(
     `❌ Order cancelled\n\n` +
@@ -423,7 +457,7 @@ bot.on('text', async (ctx) => {
 
   try {
     // Rate limiting
-    const rateLimitCheck = checkRateLimit(userId);
+    const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
       await ctx.reply(rateLimitCheck.reason!);
       return;
@@ -475,7 +509,7 @@ bot.on('text', async (ctx) => {
           expiresAt: Date.now() + 10 * 60 * 1000,
         };
 
-        pendingOrders.create(order);
+        await pendingOrders.create(order);
 
         const tokenSymbol = TOKEN_SYMBOL;
 
@@ -589,7 +623,7 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
         expiresAt: Date.now() + 30 * 60 * 1000, // 30 min for scheduled tasks
       };
 
-      pendingOrders.create(order);
+      await pendingOrders.create(order);
       const tokenSymbol = TOKEN_SYMBOL;
 
       // Notify the user their scheduled task is ready
@@ -620,6 +654,6 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
 
   // Start the heartbeat engine — proactively checks on users every 15 min
   startHeartbeat(async (chatId: number, text: string) => {
-    await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(chatId, text);
   });
 }

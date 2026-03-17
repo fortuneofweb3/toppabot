@@ -95,7 +95,7 @@ let cachedAgentId: bigint | null = null;
  * Fields: type, name, description, image, services, x402Support, active, registrations, supportedTrust
  */
 export function getAgentRegistrationFile(): object {
-  const apiUrl = process.env.API_URL || 'https://toppa.cc';
+  const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
   const agentId = process.env.AGENT_ID ? parseInt(process.env.AGENT_ID) : null;
   const chainId = isTestnet ? 44787 : 42220;
 

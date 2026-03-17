@@ -5,6 +5,7 @@ import {
   getBillers,
   getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode,
   getCountryServices, getPromotions,
+  getFxRate,
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
 import { getCachedReloadlyBalance } from "../shared/balance-cache";
@@ -29,14 +30,13 @@ interface Tool {
  */
 export const sendAirtimeTool: Tool = {
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. This is a PAID service — payment is required before execution.",
+  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsUSD values from get_operators). This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
-    useLocalAmount: z.boolean().optional().nullable().describe("If true, amount is in local currency. Default false (USD)."),
+    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsUSD or within minAmountUSD-maxAmountUSD range."),
   }),
-  func: async ({ phone, countryCode, amount, useLocalAmount }) => {
+  func: async ({ phone, countryCode, amount }) => {
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -44,7 +44,7 @@ export const sendAirtimeTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { phone, countryCode, amount, useLocalAmount },
+      details: { phone, countryCode, amount, useLocalAmount: false },
       message: `Airtime top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -68,14 +68,15 @@ export const getOperatorsTool: Tool = {
         id: op.operatorId,
         name: op.name,
         denominationType: op.denominationType,
-        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
-        localFixedAmounts: op.localFixedAmounts || [],
-        localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
-        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmount: op.minAmount,
-        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        currency: 'USD',
+        fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
+        fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
+        suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+        minAmountUSD: op.minAmount,
+        maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
+        fxRate: op.fx?.rate || null,
         type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
       })));
     } catch (error: any) {
@@ -104,15 +105,15 @@ export const getDataPlansTool: Tool = {
         isData: op.data,
         isBundle: op.bundle,
         denominationType: op.denominationType,
-        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
+        currency: 'USD',
+        fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
         fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        localFixedAmounts: op.localFixedAmounts || [],
-        localFixedAmountsDescriptions: op.localFixedAmountsDescriptions || {},
-        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmount: op.minAmount,
-        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+        minAmountUSD: op.minAmount,
+        maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
+        fxRate: op.fx?.rate || null,
       })));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
@@ -126,15 +127,14 @@ export const getDataPlansTool: Tool = {
  */
 export const sendDataTool: Tool = {
   name: "send_data",
-  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. This is a PAID service — payment is required before execution.",
+  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. Amount MUST be in USD (use fixedAmountsUSD values from get_data_plans). This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (or local currency if useLocalAmount is true)"),
+    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsUSD or within minAmountUSD-maxAmountUSD range."),
     operatorId: z.number().describe("Data operator ID from get_data_plans"),
-    useLocalAmount: z.boolean().optional().nullable().describe("If true, amount is in local currency. Default false (USD)."),
   }),
-  func: async ({ phone, countryCode, amount, operatorId, useLocalAmount }) => {
+  func: async ({ phone, countryCode, amount, operatorId }) => {
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -142,7 +142,7 @@ export const sendDataTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { phone, countryCode, amount, operatorId, useLocalAmount },
+      details: { phone, countryCode, amount, operatorId, useLocalAmount: false },
       message: `Data top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -154,14 +154,13 @@ export const sendDataTool: Tool = {
  */
 export const payBillTool: Tool = {
   name: "pay_bill",
-  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId. This is a PAID service — payment is required before execution.",
+  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId. Amount MUST be in USD. Use the FX rate from get_billers to convert local currency amounts. This is a PAID service — payment is required before execution.",
   schema: z.object({
     billerId: z.number().describe("Biller ID from get_billers"),
     accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),
-    amount: z.number().describe("Amount to pay (in local currency by default)"),
-    useLocalAmount: z.boolean().optional().nullable().describe("If true (default), amount is in local currency. If false, amount is in USD."),
+    amount: z.number().describe("Amount in USD (cUSD). Convert local currency using the fxRate from get_billers."),
   }),
-  func: async ({ billerId, accountNumber, amount, useLocalAmount }) => {
+  func: async ({ billerId, accountNumber, amount }) => {
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -169,7 +168,7 @@ export const payBillTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { billerId, accountNumber, amount, useLocalAmount },
+      details: { billerId, accountNumber, amount, useLocalAmount: false },
       message: `Bill payment requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -189,20 +188,26 @@ export const getBillersTool: Tool = {
     try {
       if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const billers = await getBillers({ countryCode, type: type as any });
-      return JSON.stringify(billers.map(b => ({
-        id: b.id,
-        name: b.name,
-        type: b.type,
-        serviceType: b.serviceType,
-        localCurrency: b.localTransactionCurrencyCode,
-        minLocalAmount: b.minLocalTransactionAmount,
-        maxLocalAmount: b.maxLocalTransactionAmount,
-        internationalSupported: b.internationalAmountSupported,
-        internationalCurrency: b.internationalTransactionCurrencyCode || null,
-        minInternationalAmount: b.minInternationalTransactionAmount || null,
-        maxInternationalAmount: b.maxInternationalTransactionAmount || null,
-        fx: b.fx || null,
-      })));
+      return JSON.stringify(billers.map(b => {
+        const fxRate = b.fx?.rate || 1;
+        return {
+          id: b.id,
+          name: b.name,
+          type: b.type,
+          serviceType: b.serviceType,
+          currency: 'USD',
+          minAmountUSD: b.internationalAmountSupported
+            ? (b.minInternationalTransactionAmount || Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100)
+            : Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100,
+          maxAmountUSD: b.internationalAmountSupported
+            ? (b.maxInternationalTransactionAmount || Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100)
+            : Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100,
+          localCurrency: b.localTransactionCurrencyCode,
+          minLocalAmount: b.minLocalTransactionAmount,
+          maxLocalAmount: b.maxLocalTransactionAmount,
+          fxRate,
+        };
+      }));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
@@ -229,11 +234,13 @@ export const searchGiftCardsTool: Tool = {
         brand: p.brand.brandName,
         category: p.category?.name || null,
         country: p.country.isoName,
-        currency: p.recipientCurrencyCode,
+        recipientCurrency: p.recipientCurrencyCode,
         denominationType: p.denominationType,
-        fixedDenominations: (p.fixedRecipientDenominations || []).filter(d => d <= balance).slice(0, 10),
-        minAmount: p.minRecipientDenomination,
-        maxAmount: p.maxRecipientDenomination ? Math.min(p.maxRecipientDenomination, balance) : null,
+        currency: 'USD',
+        fixedAmountsUSD: (p.fixedSenderDenominations || []).filter(d => d <= balance).slice(0, 10),
+        fixedRecipientAmounts: (p.fixedRecipientDenominations || []).slice(0, 10),
+        minAmountUSD: p.minSenderDenomination,
+        maxAmountUSD: p.maxSenderDenomination ? Math.min(p.maxSenderDenomination, balance) : null,
         redeemInstruction: p.redeemInstruction?.concise || null,
       })));
     } catch (error: any) {
@@ -285,10 +292,10 @@ export const getGiftCardsTool: Tool = {
  */
 export const buyGiftCardTool: Tool = {
   name: "buy_gift_card",
-  description: "Purchase a gift card. Use search_gift_cards first to get the productId. This is a PAID service — payment is required before execution.",
+  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Amount MUST be in USD (use fixedAmountsUSD from search_gift_cards). This is a PAID service — payment is required before execution.",
   schema: z.object({
     productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
-    amount: z.number().describe("Amount/denomination for the gift card (in recipient currency)"),
+    amount: z.number().describe("Amount in USD (cUSD). Use fixedAmountsUSD values from search_gift_cards."),
     recipientEmail: z.string().describe("Email to deliver the gift card to"),
     quantity: z.number().optional().nullable().describe("Number of cards to buy. Default 1."),
   }),
@@ -540,6 +547,49 @@ export const removeInstructionTool: Tool = {
   },
 };
 
+/**
+ * Tool 19: Convert currency using Reloadly FX rates
+ */
+export const convertCurrencyTool: Tool = {
+  name: "convert_currency",
+  description: "Convert between USD (cUSD) and a country's local currency using live FX rates. Provide a country code to get the rate. Useful when users ask about prices in their local currency or want to know how much local currency equals a USD amount.",
+  schema: z.object({
+    amount: z.number().describe("Amount to convert"),
+    fromCurrency: z.enum(["USD", "LOCAL"]).describe("Source currency: 'USD' to convert from USD to local, 'LOCAL' to convert from local currency to USD"),
+    countryCode: z.string().describe("Country ISO code for the local currency (e.g. NG for NGN, KE for KES, GH for GHS)"),
+  }),
+  func: async ({ amount, fromCurrency, countryCode }) => {
+    try {
+      const fxData = await getFxRate(countryCode);
+      if (!fxData) {
+        return JSON.stringify({ error: `No FX rate available for country ${countryCode}` });
+      }
+
+      const { rate, currencyCode } = fxData;
+
+      if (fromCurrency === "USD") {
+        const localAmount = Math.round(amount * rate * 100) / 100;
+        return JSON.stringify({
+          from: { amount, currency: "USD" },
+          to: { amount: localAmount, currency: currencyCode },
+          fxRate: rate,
+          description: `${amount} USD = ${localAmount.toLocaleString()} ${currencyCode}`,
+        });
+      } else {
+        const usdAmount = Math.round((amount / rate) * 100) / 100;
+        return JSON.stringify({
+          from: { amount, currency: currencyCode },
+          to: { amount: usdAmount, currency: "USD" },
+          fxRate: rate,
+          description: `${amount.toLocaleString()} ${currencyCode} = ${usdAmount} USD`,
+        });
+      }
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
 // Scheduling context — set by the caller before each agent run so tools can access userId/chatId
 let _schedulingContext: { userId: string; chatId: number } | null = null;
 
@@ -571,6 +621,7 @@ export const freeTools = [
   saveInstructionTool,
   getInstructionsTool,
   removeInstructionTool,
+  convertCurrencyTool,
 ];
 
 // Paid tool names for fast lookup

@@ -1,6 +1,9 @@
 /**
- * User settings store (in-memory for now, can swap to MongoDB later)
+ * User settings store — MongoDB-backed, persists across restarts
  */
+
+import { Collection } from 'mongodb';
+import { getDb } from '../wallet/mongo-store';
 
 export interface UserSettings {
   telegramId: string;
@@ -9,37 +12,71 @@ export interface UserSettings {
   updatedAt: Date;
 }
 
-class UserSettingsStore {
-  private settings = new Map<string, UserSettings>();
+const COLLECTION_NAME = 'user_settings';
+let _collection: Collection<UserSettings> | null = null;
+let _indexesCreated = false;
 
-  get(telegramId: string): UserSettings {
-    if (!this.settings.has(telegramId)) {
-      // Default settings
-      this.settings.set(telegramId, {
+async function getCollection(): Promise<Collection<UserSettings>> {
+  if (_collection && _indexesCreated) return _collection;
+
+  const db = await getDb();
+  _collection = db.collection<UserSettings>(COLLECTION_NAME);
+
+  if (!_indexesCreated) {
+    await _collection.createIndex({ telegramId: 1 }, { unique: true });
+    _indexesCreated = true;
+  }
+
+  return _collection;
+}
+
+class UserSettingsStore {
+  async get(telegramId: string): Promise<UserSettings> {
+    try {
+      const col = await getCollection();
+      const existing = await col.findOne({ telegramId });
+      if (existing) return existing;
+
+      // Default settings — insert and return
+      const defaults: UserSettings = {
         telegramId,
-        autoReviewEnabled: true, // ON by default
+        autoReviewEnabled: true,
         createdAt: new Date(),
         updatedAt: new Date(),
-      });
+      };
+      await col.insertOne(defaults);
+      return defaults;
+    } catch (err: any) {
+      console.error('[UserSettings] Failed to get settings:', err.message);
+      // Return defaults on error so the app doesn't break
+      return {
+        telegramId,
+        autoReviewEnabled: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
     }
-    return this.settings.get(telegramId)!;
   }
 
-  update(telegramId: string, updates: Partial<UserSettings>): UserSettings {
-    const current = this.get(telegramId);
-    const updated = {
-      ...current,
-      ...updates,
-      updatedAt: new Date(),
-    };
-    this.settings.set(telegramId, updated);
-    return updated;
+  async update(telegramId: string, updates: Partial<UserSettings>): Promise<UserSettings> {
+    try {
+      const col = await getCollection();
+      await col.updateOne(
+        { telegramId },
+        { $set: { ...updates, updatedAt: new Date() } },
+        { upsert: true },
+      );
+      return this.get(telegramId);
+    } catch (err: any) {
+      console.error('[UserSettings] Failed to update settings:', err.message);
+      return this.get(telegramId);
+    }
   }
 
-  toggleAutoReview(telegramId: string): boolean {
-    const current = this.get(telegramId);
+  async toggleAutoReview(telegramId: string): Promise<boolean> {
+    const current = await this.get(telegramId);
     const newValue = !current.autoReviewEnabled;
-    this.update(telegramId, { autoReviewEnabled: newValue });
+    await this.update(telegramId, { autoReviewEnabled: newValue });
     return newValue;
   }
 }

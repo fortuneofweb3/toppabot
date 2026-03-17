@@ -4,7 +4,7 @@ import { Request, Response } from 'express';
 import { registerMcpTools } from './tools';
 
 /**
- * MCP Server — Streamable HTTP transport for Toppa's 12 tools.
+ * MCP Server — Streamable HTTP transport for Toppa's 13 tools.
  *
  * Creates a fresh McpServer + transport per request to avoid state leakage
  * between concurrent requests. Tool registration is lightweight (no I/O),
