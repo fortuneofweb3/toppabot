@@ -186,18 +186,25 @@ bot.command('start', async (ctx) => {
     `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n` +
     `Token: ${tokenSymbol}\n\n` +
     `Deposit ${tokenSymbol} on Celo to get started.\n` +
-    `Other tokens sent here won't show in-app, but you can recover them by exporting your private key (/settings).\n\n` +
-    `I can:\n` +
-    `• Airtime & data (170+ countries)\n` +
-    `• Utility bills (electricity, water, TV)\n` +
-    `• Gift cards (300+ brands)\n\n` +
-    `Commands: /help`,
+    `Other tokens sent here won't show in-app, but you can recover them via /settings.\n\n` +
+    `Just tell me what you need in plain English!`,
     {
       parse_mode: 'Markdown',
       reply_markup: {
-        inline_keyboard: [[
-          { text: '🔍 View on Celoscan', url: explorerUrl }
-        ]]
+        inline_keyboard: [
+          [
+            { text: '📱 Send Airtime', callback_data: 'quick_airtime' },
+            { text: '📶 Send Data', callback_data: 'quick_data' },
+          ],
+          [
+            { text: '💡 Pay Bill', callback_data: 'quick_bill' },
+            { text: '🎁 Gift Card', callback_data: 'quick_giftcard' },
+          ],
+          [
+            { text: '💰 My Wallet', callback_data: `balance_${userId}` },
+            { text: '🔍 Celoscan', url: explorerUrl },
+          ],
+        ]
       }
     }
   );
@@ -528,8 +535,11 @@ bot.on('text', async (ctx) => {
     const responseText = response as string;
 
     // Check if agent returned an order confirmation JSON
+    // Matches both raw JSON and ```json code blocks (LLM may use either format)
     const orderMatch = responseText.match(
       /```json\s*(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})\s*```/,
+    ) || responseText.match(
+      /(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})/,
     );
 
     if (orderMatch) {
@@ -561,11 +571,11 @@ bot.on('text', async (ctx) => {
         await ctx.reply(
           `📋 Order Summary\n\n` +
           `${orderData.description}\n\n` +
-          `Amount: $${orderData.productAmount.toFixed(2)}\n` +
-          `Service Fee (1.5%): $${serviceFee.toFixed(2)}\n` +
-          `Total: $${total.toFixed(2)} ${tokenSymbol}\n\n` +
+          `Amount: ${orderData.productAmount.toFixed(2)} cUSD\n` +
+          `Service Fee (1.5%): ${serviceFee.toFixed(2)} cUSD\n` +
+          `Total: ${total.toFixed(2)} cUSD\n\n` +
           `Your Balance: ${balance} ${tokenSymbol}\n\n` +
-          `⏱ Expires in 10 minutes`,
+          `Expires in 10 minutes`,
           Markup.inlineKeyboard([
             [Markup.button.callback('✅ Confirm Order', `order_confirm_${orderId}`)],
             [Markup.button.callback('❌ Cancel', `order_cancel_${orderId}`)],
@@ -623,6 +633,20 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
   const apiUrl = process.env.API_URL;
   const webhookPath = `/bot/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
 
+  // Register command menu so users see commands when they tap /
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: 'Create wallet & get started' },
+    { command: 'wallet', description: 'Check balance & deposit address' },
+    { command: 'withdraw', description: 'Withdraw cUSD to external wallet' },
+    { command: 'rate', description: 'Check FX rate (e.g. /rate NG)' },
+    { command: 'status', description: 'Your profile, instructions & tasks' },
+    { command: 'settings', description: 'Wallet settings & export key' },
+    { command: 'cancel', description: 'Cancel pending order' },
+    { command: 'silent', description: 'Toggle proactive messages' },
+    { command: 'clear', description: 'Clear conversation memory' },
+    { command: 'help', description: 'Show help & examples' },
+  ]);
+
   if (apiUrl && expressApp) {
     // Webhook mode: mount on existing Express server
     const webhookUrl = `${apiUrl}${webhookPath}`;
@@ -669,16 +693,15 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
       };
 
       await pendingOrders.create(order);
-      const tokenSymbol = TOKEN_SYMBOL;
 
       // Notify the user their scheduled task is ready
       await bot.telegram.sendMessage(
         task.chatId,
         `⏰ Scheduled Task Ready\n\n` +
         `${task.description}\n\n` +
-        `Amount: $${task.productAmount.toFixed(2)}\n` +
-        `Service Fee (1.5%): $${serviceFee.toFixed(2)}\n` +
-        `Total: $${total.toFixed(2)} ${tokenSymbol}\n\n` +
+        `Amount: ${task.productAmount.toFixed(2)} cUSD\n` +
+        `Service Fee (1.5%): ${serviceFee.toFixed(2)} cUSD\n` +
+        `Total: ${total.toFixed(2)} cUSD\n\n` +
         `This was scheduled earlier. Confirm to proceed.`,
         {
           reply_markup: {

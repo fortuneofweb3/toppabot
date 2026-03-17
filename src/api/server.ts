@@ -573,6 +573,7 @@ app.get('/data-plans/:country', async (req: Request, res: Response) => {
       operators: operators.map(op => ({
         operatorId: op.operatorId,
         name: op.name,
+        logoUrl: op.logoUrls?.[0] || null,
         isData: op.data,
         isBundle: op.bundle,
         denominationType: op.denominationType,
@@ -584,6 +585,7 @@ app.get('/data-plans/:country', async (req: Request, res: Response) => {
         maxAmount: capMaxAmount(op.maxAmount, balance),
         senderCurrency: op.senderCurrencyCode,
         localCurrency: op.destinationCurrencyCode,
+        fxRate: op.fx?.rate || null,
       })),
       total: operators.length,
       accountBalance: balance,

@@ -682,4 +682,20 @@ export function registerHandlers(
       await ctx.answerCbQuery('Error');
     }
   });
+
+  // ─── Quick Action Buttons (from /start) ───────────
+
+  const quickActions: Record<string, string> = {
+    quick_airtime: 'I want to send airtime. What country and phone number?',
+    quick_data: 'I want to send a data bundle. What country and phone number?',
+    quick_bill: 'I want to pay a utility bill. What country and bill type?',
+    quick_giftcard: 'I want to buy a gift card. What brand and amount?',
+  };
+
+  for (const [action, prompt] of Object.entries(quickActions)) {
+    bot.action(action, async (ctx: Context) => {
+      await ctx.answerCbQuery();
+      await ctx.reply(prompt);
+    });
+  }
 }

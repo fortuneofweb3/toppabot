@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   getOperators,
   getDataOperators,
+  detectOperator,
   getBillers,
   getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode,
   getCountryServices, getPromotions,
@@ -68,6 +69,7 @@ export const getOperatorsTool: Tool = {
       return JSON.stringify(operators.map(op => ({
         id: op.operatorId,
         name: op.name,
+        logoUrl: op.logoUrls?.[0] || null,
         denominationType: op.denominationType,
         currency: 'cUSD',
         fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
@@ -103,6 +105,7 @@ export const getDataPlansTool: Tool = {
       return JSON.stringify(operators.map(op => ({
         operatorId: op.operatorId,
         name: op.name,
+        logoUrl: op.logoUrls?.[0] || null,
         isData: op.data,
         isBundle: op.bundle,
         denominationType: op.denominationType,
@@ -379,7 +382,48 @@ export const getPromotionsTool: Tool = {
 };
 
 /**
- * Tool 13: Schedule a task for later execution
+ * Tool 13: Detect operator from phone number
+ */
+export const detectOperatorTool: Tool = {
+  name: "detect_operator",
+  description: "Auto-detect the mobile operator for a phone number. Use this to validate a phone number and find its operator before sending airtime or data. Returns operator details including supported amounts.",
+  schema: z.object({
+    phone: z.string().describe("Phone number to look up (e.g. +2348147658721 or 08147658721)"),
+    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+  }),
+  func: async ({ phone, countryCode }) => {
+    try {
+      const op = await detectOperator(phone, countryCode);
+      const balance = await getCachedReloadlyBalance();
+      return JSON.stringify({
+        valid: true,
+        operatorId: op.operatorId,
+        name: op.name,
+        country: op.country?.name || countryCode,
+        denominationType: op.denominationType,
+        currency: 'cUSD',
+        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
+        fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
+        minAmount: op.minAmount,
+        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        localCurrency: op.destinationCurrencyCode,
+        fxRate: op.fx?.rate || null,
+        isData: op.data,
+        isBundle: op.bundle,
+        logoUrl: op.logoUrls?.[0] || null,
+      });
+    } catch (error: any) {
+      return JSON.stringify({
+        valid: false,
+        error: error.message,
+        hint: 'Check the phone number and country code. The number may be invalid or the operator not supported.',
+      });
+    }
+  },
+};
+
+/**
+ * Tool 14: Schedule a task for later execution
  */
 export const scheduleTaskTool: Tool = {
   name: "schedule_task",
@@ -610,6 +654,7 @@ export const paidTools = [
 export const freeTools = [
   getOperatorsTool,
   getDataPlansTool,
+  detectOperatorTool,
   getBillersTool,
   searchGiftCardsTool,
   getGiftCardsTool,
