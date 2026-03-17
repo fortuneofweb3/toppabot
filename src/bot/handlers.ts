@@ -119,6 +119,7 @@ export async function handleCallback(
   recordSpending: (userId: string, amount: number) => void,
 ): Promise<void> {
   const data = query.data || '';
+  if (data.length > 100) return; // Reject oversized callback data
   const userId = query.from.id.toString();
   const chatId = query.message?.chat.id;
   const messageId = query.message?.message_id;
@@ -145,7 +146,7 @@ export async function handleCallback(
     }
 
     // ─── Order Confirmation ──────────────────────
-    if ((match = data.match(/^order_confirm_(.+)$/))) {
+    if ((match = data.match(/^order_confirm_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
 
       if (!userId) { await answer('Error'); return; }
@@ -197,7 +198,7 @@ export async function handleCallback(
     }
 
     // ─── Order Cancel ────────────────────────────
-    if ((match = data.match(/^order_cancel_(.+)$/))) {
+    if ((match = data.match(/^order_cancel_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
 
       const order = await pendingOrders.atomicTransition(
@@ -217,7 +218,7 @@ export async function handleCallback(
     }
 
     // ─── Payment Accept (Core Execution Path) ────
-    if ((match = data.match(/^pay_accept_(.+)$/))) {
+    if ((match = data.match(/^pay_accept_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
 
       if (!userId) { await answer('Error'); return; }
@@ -369,7 +370,7 @@ export async function handleCallback(
     }
 
     // ─── Payment Decline ─────────────────────────
-    if ((match = data.match(/^pay_decline_(.+)$/))) {
+    if ((match = data.match(/^pay_decline_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
       const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'cancelled');
 
@@ -385,7 +386,7 @@ export async function handleCallback(
     }
 
     // ─── Export Warning (2-step key export) ───────
-    if ((match = data.match(/^export_warning_(.+)$/))) {
+    if ((match = data.match(/^export_warning_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
       if (query.message?.chat.type !== 'private') {
         await answer('Use this in a private chat for security.', true);
@@ -409,7 +410,7 @@ export async function handleCallback(
     }
 
     // ─── Export Confirm ──────────────────────────
-    if ((match = data.match(/^export_confirm_(.+)$/))) {
+    if ((match = data.match(/^export_confirm_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
       try {
         const privateKey = await walletManager.exportPrivateKey(userId);
@@ -426,14 +427,14 @@ export async function handleCallback(
     }
 
     // ─── Export Cancel ───────────────────────────
-    if ((match = data.match(/^export_cancel_(.+)$/))) {
+    if ((match = data.match(/^export_cancel_(\d+)$/))) {
       await editMsg('Private key export cancelled.');
       await answer();
       return;
     }
 
     // ─── Withdraw Confirm ────────────────────────
-    if ((match = data.match(/^withdraw_confirm_(.+)$/))) {
+    if ((match = data.match(/^withdraw_confirm_(\d+_.+)$/))) {
       const parts = match[1].split('_');
       const targetUserId = parts[0];
       const amount = parseFloat(parts[1]);
@@ -477,14 +478,14 @@ export async function handleCallback(
     }
 
     // ─── Withdraw Cancel ─────────────────────────
-    if ((match = data.match(/^withdraw_cancel_(.+)$/))) {
+    if ((match = data.match(/^withdraw_cancel_(\d+)$/))) {
       await editMsg('Withdrawal cancelled.');
       await answer();
       return;
     }
 
     // ─── Balance ─────────────────────────────────
-    if ((match = data.match(/^balance_(.+)$/))) {
+    if ((match = data.match(/^balance_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
 
       try {
@@ -509,7 +510,7 @@ export async function handleCallback(
     }
 
     // ─── History ─────────────────────────────────
-    if ((match = data.match(/^history_(.+)$/))) {
+    if ((match = data.match(/^history_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
       await editMsg(
         `📊 Transaction History\n\n` +
@@ -521,14 +522,14 @@ export async function handleCallback(
     }
 
     // ─── Settings Close ──────────────────────────
-    if ((match = data.match(/^settings_close_(.+)$/))) {
+    if ((match = data.match(/^settings_close_(\d+)$/))) {
       if (chatId && messageId) await tg('deleteMessage', { chat_id: chatId, message_id: messageId }).catch(() => {});
       await answer('Closed');
       return;
     }
 
     // ─── Toggle Auto-Review ──────────────────────
-    if ((match = data.match(/^toggle_autoreview_(.+)$/))) {
+    if ((match = data.match(/^toggle_autoreview_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
 
       const newStatus = await userSettingsStore.toggleAutoReview(userId);
@@ -556,7 +557,7 @@ export async function handleCallback(
     }
 
     // ─── Star Rating ─────────────────────────────
-    if ((match = data.match(/^rate_(.+)_(\d+|skip)$/))) {
+    if ((match = data.match(/^rate_(\d+)_(\d+|skip)$/))) {
       const orderId = match[1];
       const ratingStr = match[2];
 

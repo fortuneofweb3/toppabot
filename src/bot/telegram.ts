@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isAddress } from 'viem';
 import { tg, tgSilent, TgUpdate } from './tg-client';
 import { runToppaAgent } from '../agent/graph';
 import { calculateTotalPayment } from '../blockchain/x402';
@@ -130,23 +131,35 @@ function recordSpending(userId: string, amount: number) {
 // ─────────────────────────────────────────────────
 
 function sanitizeTelegramInput(input: string): string {
-  const dangerous = [
-    'ignore previous', 'ignore all', 'new instructions', 'forget everything',
-    'system:', 'admin:', 'sudo', 'root:', '```', '<script>', '<|im_end|>',
-    'disregard', 'override', 'jailbreak', 'developer mode',
-  ];
-
-  for (const phrase of dangerous) {
-    if (new RegExp(phrase, 'gi').test(input)) {
-      throw new Error('Message contains potentially malicious content. Please rephrase.');
-    }
-  }
-
   if (input.length > 500) {
     throw new Error('Message too long. Please keep it under 500 characters.');
   }
 
-  return input;
+  // Normalize Unicode tricks (homoglyphs, zero-width chars, encoded variants)
+  const normalized = input
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF]/g, '') // Zero-width chars
+    .replace(/[\u0400-\u04FF]/g, (c) => { // Common Cyrillic homoglyphs → Latin
+      const map: Record<string, string> = { '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0455': 's', '\u0456': 'i', '\u0445': 'x' };
+      return map[c] || c;
+    });
+
+  const dangerous = [
+    'ignore previous', 'ignore all', 'new instructions', 'forget everything',
+    'system:', 'admin:', 'sudo', 'root:', '<script>', '<|im_end|>', '<|im_start|>',
+    'disregard', 'override', 'jailbreak', 'developer mode',
+    '\\[system\\]', '\\{system\\}', '<\\|system\\|>', '<\\|user\\|>',
+    'pretend you', 'act as if', 'roleplay as',
+    'ignore above', 'ignore the above', 'ignore your instructions',
+    'bypass', 'do anything now',
+  ];
+
+  for (const phrase of dangerous) {
+    if (new RegExp(phrase, 'gi').test(normalized)) {
+      throw new Error('Message contains potentially malicious content. Please rephrase.');
+    }
+  }
+
+  return input; // Return original (not normalized) — normalization was only for detection
 }
 
 // ─────────────────────────────────────────────────
@@ -252,15 +265,12 @@ async function cmdWithdraw(chatId: number, userId: string, text: string) {
   const toAddress = parts[1];
   const amount = parseFloat(parts[2]);
 
-  if (!toAddress.startsWith('0x') || toAddress.length !== 42 || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) {
+  if (!isAddress(toAddress)) {
     await tg('sendMessage', {
       chat_id: chatId,
       text:
         `❌ Invalid Address\n\n` +
-        `Celo addresses must:\n` +
-        `• Start with 0x\n` +
-        `• Be exactly 42 characters\n` +
-        `• Contain only 0-9 and a-f\n\n` +
+        `Please provide a valid Celo/Ethereum address.\n\n` +
         `Example:\n\`0x1234567890abcdef1234567890abcdef12345678\``,
       parse_mode: 'Markdown',
     });
