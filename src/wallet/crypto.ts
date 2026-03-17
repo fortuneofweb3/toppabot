@@ -48,15 +48,31 @@ export function encryptPrivateKey(privateKey: string): {
  * Decrypt a private key using AES-256-GCM
  */
 export function decryptPrivateKey(encrypted: string, iv: string, authTag: string): string {
-  const key = getEncryptionKey();
-  const decipher = crypto.createDecipheriv(
-    ALGORITHM,
-    key,
-    Buffer.from(iv, 'hex'),
-  );
-  decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+  // Validate inputs before attempting decryption
+  if (!encrypted || typeof encrypted !== 'string') {
+    throw new Error('Decryption failed');
+  }
+  if (!iv || iv.length !== IV_LENGTH * 2) { // 16 bytes = 32 hex chars
+    throw new Error('Decryption failed');
+  }
+  if (!authTag || authTag.length !== 32) { // 16 bytes = 32 hex chars
+    throw new Error('Decryption failed');
+  }
 
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  try {
+    const key = getEncryptionKey();
+    const decipher = crypto.createDecipheriv(
+      ALGORITHM,
+      key,
+      Buffer.from(iv, 'hex'),
+    );
+    decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch {
+    // Don't leak details about why decryption failed
+    throw new Error('Decryption failed: invalid key or corrupted data');
+  }
 }

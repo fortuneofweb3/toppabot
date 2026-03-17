@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { tg, tgSilent, TgUpdate } from './tg-client';
 import { runToppaAgent } from '../agent/graph';
 import { calculateTotalPayment } from '../blockchain/x402';
@@ -54,10 +55,15 @@ const MAX_REQUESTS_PER_WINDOW = 10;
 const DAILY_SPENDING_LIMIT = 50;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
+let _spendingIndexCreated = false;
 async function loadSpendingFromDb(userId: string): Promise<{ totalSpent: number; spendingResetDate: number }> {
   try {
     const { getDb } = await import('../wallet/mongo-store');
     const db = await getDb();
+    if (!_spendingIndexCreated) {
+      await db.collection('spending_limits').createIndex({ userId: 1 });
+      _spendingIndexCreated = true;
+    }
     const doc = await db.collection('spending_limits').findOne({ userId });
     if (doc && Date.now() - doc.spendingResetDate < SPENDING_RESET_WINDOW) {
       return { totalSpent: doc.totalSpent, spendingResetDate: doc.spendingResetDate };
@@ -466,6 +472,11 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     const sanitizedMessage = sanitizeTelegramInput(userMessage);
     tgSilent('sendChatAction', { chat_id: chatId, action: 'typing' });
 
+    // Refresh typing indicator every 4s (Telegram expires it after ~5s)
+    const typingInterval = setInterval(() => {
+      tgSilent('sendChatAction', { chat_id: chatId, action: 'typing' });
+    }, 4000);
+
     const { balance, address } = await walletManager.getBalance(userId);
 
     // Streaming: accumulate LLM text chunks and push native drafts to Telegram
@@ -495,6 +506,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
       response = result.response;
     } finally {
       clearInterval(draftInterval);
+      clearInterval(typingInterval);
     }
 
     // Check if agent returned an order confirmation JSON
@@ -645,7 +657,10 @@ function stopPolling() { pollingActive = false; }
 
 export async function startTelegramBot(expressApp?: import('express').Express) {
   const apiUrl = process.env.API_URL;
-  const webhookPath = `/bot/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
+  // Use a hash of the token instead of the raw token in the URL path
+  // Prevents token leakage in logs, monitoring tools, and server routing tables
+  const tokenHash = crypto.createHash('sha256').update(process.env.TELEGRAM_BOT_TOKEN || '').digest('hex').slice(0, 32);
+  const webhookPath = `/bot/webhook/${tokenHash}`;
 
   await tg('setMyCommands', {
     commands: [

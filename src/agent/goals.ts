@@ -75,8 +75,10 @@ export async function getUserGoals(userId: string): Promise<UserGoal[]> {
  */
 export async function removeUserGoal(userId: string, instructionFragment: string): Promise<boolean> {
   const col = await collection();
+  // Escape regex special chars to prevent injection / ReDoS
+  const escaped = instructionFragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const result = await col.updateOne(
-    { userId, active: true, instruction: { $regex: instructionFragment, $options: 'i' } },
+    { userId, active: true, instruction: { $regex: escaped, $options: 'i' } },
     { $set: { active: false } },
   );
   return result.modifiedCount > 0;

@@ -120,7 +120,8 @@ export async function handleA2ARequest(req: Request, res: Response) {
         res.json({ jsonrpc: '2.0', id, error: a2aError(-32601, `Method not found: ${method}`) });
     }
   } catch (err: any) {
-    res.json({ jsonrpc: '2.0', id, error: a2aError(-32603, err.message) });
+    console.error('[A2A] Internal error:', err.message);
+    res.json({ jsonrpc: '2.0', id, error: a2aError(-32603, 'Internal error') });
   }
 }
 

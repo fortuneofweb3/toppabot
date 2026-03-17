@@ -50,8 +50,8 @@ app.use(morgan(isProduction ? 'combined' : 'dev'));
 // CORS configuration
 const corsOptions: cors.CorsOptions = {
   origin: isProduction
-    ? (process.env.ALLOWED_ORIGINS?.split(',') || ['https://toppa.cc'])
-    : '*', // Allow all origins in dev
+    ? (process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['https://toppa.cc'])
+    : ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-PAYMENT', 'PAYMENT-SIGNATURE', 'X-402-PAYMENT', 'Mcp-Session-Id'],
@@ -229,8 +229,15 @@ function parseIntSafe(value: string | string[], fieldName: string): number {
  * Parse and validate float (prevent NaN propagation)
  */
 function parseFloatSafe(value: any, fieldName: string): number {
-  const parsed = parseFloat(value);
-  if (isNaN(parsed) || !isFinite(parsed) || parsed <= 0 || parsed > 10000) {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(`Invalid ${fieldName}: must be a number`);
+  }
+  const str = String(value).trim();
+  if (!/^\d+(\.\d+)?$/.test(str)) {
+    throw new Error(`Invalid ${fieldName}: must be a valid positive number`);
+  }
+  const parsed = parseFloat(str);
+  if (!isFinite(parsed) || parsed <= 0 || parsed > 10000) {
     throw new Error(`Invalid ${fieldName}: must be a positive number (max 10,000)`);
   }
   return parsed;
@@ -1367,9 +1374,9 @@ function requireAdmin(req: Request, res: Response): boolean {
     res.status(503).json({ error: 'Admin endpoints not configured. Set ADMIN_API_KEY env var.' });
     return false;
   }
-  const key = req.headers['x-admin-key'] || req.query.key;
-  if (key !== ADMIN_API_KEY) {
-    res.status(401).json({ error: 'Unauthorized. Provide valid X-Admin-Key header.' });
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== ADMIN_API_KEY) {
+    res.status(401).json({ error: 'Unauthorized' });
     return false;
   }
   return true;
