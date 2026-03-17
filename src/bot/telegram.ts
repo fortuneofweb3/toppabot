@@ -13,6 +13,7 @@ import { clearConversationHistory } from '../agent/memory';
 import { startHeartbeat, stopHeartbeat } from '../agent/heartbeat';
 import { trackActivity, setProactiveEnabled, getUserActivity } from '../agent/user-activity';
 import { getUserGoals } from '../agent/goals';
+import { getFxRate } from '../apis/reloadly';
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
 
@@ -291,6 +292,7 @@ bot.command('help', async (ctx) => {
     `/start - Create your wallet & get started\n` +
     `/wallet - Check balance & deposit address\n` +
     `/withdraw <address> <amount> - Withdraw cUSD\n` +
+    `/rate <country> - Check FX rate (e.g. /rate NG)\n` +
     `/settings - Wallet settings & export key\n` +
     `/status - Your profile, instructions & tasks\n` +
     `/silent - Toggle proactive messages on/off\n` +
@@ -305,6 +307,49 @@ bot.command('help', async (ctx) => {
     `• "Remember my sister's number is +234..."\n\n` +
     `I support 170+ countries, 800+ operators, and 300+ gift card brands!`,
   );
+});
+
+/**
+ * /rate — Check FX rate for a country
+ */
+bot.command('rate', async (ctx) => {
+  const parts = ctx.message.text.split(' ');
+  const countryCode = parts[1]?.toUpperCase();
+
+  if (!countryCode || countryCode.length < 2 || countryCode.length > 3) {
+    await ctx.reply(
+      `Usage: /rate <country_code>\n\n` +
+      `Examples:\n` +
+      `/rate NG - Nigeria (NGN)\n` +
+      `/rate KE - Kenya (KES)\n` +
+      `/rate GH - Ghana (GHS)\n` +
+      `/rate ZA - South Africa (ZAR)`,
+    );
+    return;
+  }
+
+  try {
+    const fxData = await getFxRate(countryCode);
+    if (!fxData) {
+      await ctx.reply(`No rate available for ${countryCode}. Check the country code and try again.`);
+      return;
+    }
+
+    const { rate, currencyCode } = fxData;
+    const examples = [1, 5, 10, 25].map(usd => {
+      const local = Math.round(usd * rate);
+      return `${usd} cUSD = ${local.toLocaleString()} ${currencyCode}`;
+    }).join('\n');
+
+    await ctx.reply(
+      `Rate for ${countryCode} (${currencyCode})\n\n` +
+      `1 cUSD = ${rate.toLocaleString()} ${currencyCode}\n\n` +
+      `${examples}\n\n` +
+      `This is the Reloadly delivery rate for airtime/data.`,
+    );
+  } catch (error: any) {
+    await ctx.reply(`Could not fetch rate for ${countryCode}. Try again later.`);
+  }
 });
 
 /**
