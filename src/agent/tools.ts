@@ -69,23 +69,22 @@ export const getOperatorsTool: Tool = {
       return JSON.stringify(operators.map(op => {
         const fxRate = op.fx?.rate || 1;
         const descs = op.fixedAmountsDescriptions || {};
-        const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
-          cUSD: usd,
-          localAmount: Math.round(usd * fxRate),
-          description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
-        }));
+        // Compact plans: only include description when it exists, limit to 10
+        const plans = (op.fixedAmounts || []).filter(a => a <= balance).slice(0, 10).map(usd => {
+          const desc = descs[usd.toString()] || descs[usd.toFixed(2)];
+          const plan: any = { cUSD: usd, local: Math.round(usd * fxRate) };
+          if (desc) plan.desc = desc;
+          return plan;
+        });
         return {
           id: op.operatorId,
           name: op.name,
-          denominationType: op.denominationType,
+          type: op.denominationType,
           plans,
-          suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-          mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-          minAmountCUSD: op.minAmount,
-          maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
-          localCurrency: op.destinationCurrencyCode,
-          fxRate,
-          type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
+          minCUSD: op.minAmount,
+          maxCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+          cur: op.destinationCurrencyCode,
+          fx: fxRate,
         };
       }));
     } catch (error: any) {
@@ -111,24 +110,22 @@ export const getDataPlansTool: Tool = {
       return JSON.stringify(operators.map(op => {
         const fxRate = op.fx?.rate || 1;
         const descs = op.fixedAmountsDescriptions || {};
-        const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
-          cUSD: usd,
-          localAmount: Math.round(usd * fxRate),
-          description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
-        }));
+        // Compact plans: only include description when it exists, limit to 10
+        const plans = (op.fixedAmounts || []).filter(a => a <= balance).slice(0, 10).map(usd => {
+          const desc = descs[usd.toString()] || descs[usd.toFixed(2)];
+          const plan: any = { cUSD: usd, local: Math.round(usd * fxRate) };
+          if (desc) plan.desc = desc;
+          return plan;
+        });
         return {
-          operatorId: op.operatorId,
+          id: op.operatorId,
           name: op.name,
-          isData: op.data,
-          isBundle: op.bundle,
-          denominationType: op.denominationType,
+          type: op.denominationType,
           plans,
-          suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-          mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-          minAmountCUSD: op.minAmount,
-          maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
-          localCurrency: op.destinationCurrencyCode,
-          fxRate,
+          minCUSD: op.minAmount,
+          maxCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+          cur: op.destinationCurrencyCode,
+          fx: fxRate,
         };
       }));
     } catch (error: any) {
@@ -408,11 +405,13 @@ export const detectOperatorTool: Tool = {
       const balance = await getCachedReloadlyBalance();
       const fxRate = op.fx?.rate || 1;
       const descs = op.fixedAmountsDescriptions || {};
-      const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
-        cUSD: usd,
-        localAmount: Math.round(usd * fxRate),
-        description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
-      }));
+      // Compact plans: only include description when it exists, limit to 10
+      const plans = (op.fixedAmounts || []).filter(a => a <= balance).slice(0, 10).map(usd => {
+        const desc = descs[usd.toString()] || descs[usd.toFixed(2)];
+        const plan: any = { cUSD: usd, local: Math.round(usd * fxRate) };
+        if (desc) plan.desc = desc;
+        return plan;
+      });
       return JSON.stringify({
         valid: true,
         operatorId: op.operatorId,
@@ -424,8 +423,6 @@ export const detectOperatorTool: Tool = {
         maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
         fxRate,
-        isData: op.data,
-        isBundle: op.bundle,
       });
     } catch (error: any) {
       return JSON.stringify({

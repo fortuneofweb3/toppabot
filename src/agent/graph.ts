@@ -55,8 +55,7 @@ const toolMap = new Map(tools.map(t => [t.name, t]));
 // Max tool-calling iterations to prevent infinite loops
 const MAX_ITERATIONS = 10;
 
-// Max characters per tool result to keep context small and LLM fast
-const MAX_TOOL_RESULT_LENGTH = 3000;
+// No tool result truncation — DeepSeek supports 64K context, feed everything
 
 /**
  * System prompt — defines agent behavior
@@ -184,11 +183,6 @@ async function executeToolCalls(
         } catch (err: any) {
           result = JSON.stringify({ error: err.message });
         }
-      }
-
-      // Truncate large tool results to keep context small and LLM fast
-      if (result.length > MAX_TOOL_RESULT_LENGTH) {
-        result = result.slice(0, MAX_TOOL_RESULT_LENGTH) + '...(truncated)';
       }
 
       console.log(`[Tool Result] ${toolCall.function.name} → ${result.slice(0, 200)}`);
