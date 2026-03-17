@@ -17,6 +17,7 @@ import { setUserCountry } from "./user-activity";
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
  * Each tool has a name, description, Zod schema, and async function.
  */
+
 interface Tool {
   name: string;
   description: string;
@@ -68,13 +69,13 @@ export const getOperatorsTool: Tool = {
         id: op.operatorId,
         name: op.name,
         denominationType: op.denominationType,
-        currency: 'USD',
-        fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
+        currency: 'cUSD',
+        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
         fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmountUSD: op.minAmount,
-        maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+        minAmount: op.minAmount,
+        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
         fxRate: op.fx?.rate || null,
         type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
@@ -105,13 +106,13 @@ export const getDataPlansTool: Tool = {
         isData: op.data,
         isBundle: op.bundle,
         denominationType: op.denominationType,
-        currency: 'USD',
-        fixedAmountsUSD: (op.fixedAmounts || []).filter(a => a <= balance),
+        currency: 'cUSD',
+        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
         fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        suggestedAmountsUSD: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmountUSD: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmountUSD: op.minAmount,
-        maxAmountUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+        minAmount: op.minAmount,
+        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
         fxRate: op.fx?.rate || null,
       })));
@@ -195,11 +196,11 @@ export const getBillersTool: Tool = {
           name: b.name,
           type: b.type,
           serviceType: b.serviceType,
-          currency: 'USD',
-          minAmountUSD: b.internationalAmountSupported
+          currency: 'cUSD',
+          minAmount: b.internationalAmountSupported
             ? (b.minInternationalTransactionAmount || Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100)
             : Math.round((b.minLocalTransactionAmount / fxRate) * 100) / 100,
-          maxAmountUSD: b.internationalAmountSupported
+          maxAmount: b.internationalAmountSupported
             ? (b.maxInternationalTransactionAmount || Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100)
             : Math.round((b.maxLocalTransactionAmount / fxRate) * 100) / 100,
           localCurrency: b.localTransactionCurrencyCode,
