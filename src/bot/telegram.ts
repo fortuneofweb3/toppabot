@@ -192,6 +192,38 @@ function stripMarkdown(text: string): string {
 }
 
 // ─────────────────────────────────────────────────
+// Telegram Message Splitter (4096 char limit)
+// ─────────────────────────────────────────────────
+
+const TG_MSG_LIMIT = 4096;
+
+async function sendLongMessage(chatId: number, text: string, opts?: { parse_mode?: string; reply_markup?: any }) {
+  if (text.length <= TG_MSG_LIMIT) {
+    await tg('sendMessage', { chat_id: chatId, text, ...opts });
+    return;
+  }
+  // Split on double newlines first, then single newlines, then hard cut
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= TG_MSG_LIMIT) {
+      chunks.push(remaining);
+      break;
+    }
+    let cut = remaining.lastIndexOf('\n\n', TG_MSG_LIMIT);
+    if (cut < TG_MSG_LIMIT / 2) cut = remaining.lastIndexOf('\n', TG_MSG_LIMIT);
+    if (cut < TG_MSG_LIMIT / 2) cut = TG_MSG_LIMIT;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).replace(/^\n+/, '');
+  }
+  for (let i = 0; i < chunks.length; i++) {
+    // Only attach reply_markup to the last chunk
+    const extra = i === chunks.length - 1 ? opts : { parse_mode: opts?.parse_mode };
+    await tg('sendMessage', { chat_id: chatId, text: chunks[i], ...extra });
+  }
+}
+
+// ─────────────────────────────────────────────────
 // Command Handlers
 // ─────────────────────────────────────────────────
 
@@ -498,7 +530,9 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     const draftInterval = setInterval(() => {
       if (streamedText.length > 0 && streamedText !== lastDraftText) {
         lastDraftText = streamedText;
-        tgSilent('sendMessageDraft', { chat_id: chatId, draft_id: draftId, text: stripMarkdown(streamedText) });
+        // Telegram caps messages at 4096 chars — truncate draft to avoid silent failures
+        const draftText = stripMarkdown(streamedText).slice(0, 4096);
+        tgSilent('sendMessageDraft', { chat_id: chatId, draft_id: draftId, text: draftText });
       }
     }, 300);
 
@@ -567,10 +601,10 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
           ]},
         });
       } catch {
-        await tg('sendMessage', { chat_id: chatId, text: stripMarkdown(response) });
+        await sendLongMessage(chatId, stripMarkdown(response));
       }
     } else {
-      await tg('sendMessage', { chat_id: chatId, text: stripMarkdown(response) });
+      await sendLongMessage(chatId, stripMarkdown(response));
     }
   } catch (error: any) {
     console.error('[Telegram Bot Error]', { userId, error: error.message, type: error.name });

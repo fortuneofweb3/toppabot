@@ -32,11 +32,11 @@ interface Tool {
  */
 export const sendAirtimeTool: Tool = {
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsUSD values from get_operators). This is a PAID service — payment is required before execution.",
+  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsCUSD values from get_operators). This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsUSD or within minAmountUSD-maxAmountUSD range."),
+    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsCUSD or within minAmountCUSD-maxAmountCUSD range."),
   }),
   func: async ({ phone, countryCode, amount }) => {
     const { total } = calculateTotalPayment(amount);
@@ -66,22 +66,28 @@ export const getOperatorsTool: Tool = {
       if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getOperators(countryCode);
       const balance = await getCachedReloadlyBalance();
-      return JSON.stringify(operators.map(op => ({
-        id: op.operatorId,
-        name: op.name,
-        logoUrl: op.logoUrls?.[0] || null,
-        denominationType: op.denominationType,
-        currency: 'cUSD',
-        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
-        fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmount: op.minAmount,
-        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
-        localCurrency: op.destinationCurrencyCode,
-        fxRate: op.fx?.rate || null,
-        type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
-      })));
+      return JSON.stringify(operators.map(op => {
+        const fxRate = op.fx?.rate || 1;
+        const descs = op.fixedAmountsDescriptions || {};
+        const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
+          cUSD: usd,
+          localAmount: Math.round(usd * fxRate),
+          description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
+        }));
+        return {
+          id: op.operatorId,
+          name: op.name,
+          denominationType: op.denominationType,
+          plans,
+          suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+          mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+          minAmountCUSD: op.minAmount,
+          maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+          localCurrency: op.destinationCurrencyCode,
+          fxRate,
+          type: op.data ? 'data' : op.bundle ? 'bundle' : 'airtime',
+        };
+      }));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
@@ -102,23 +108,29 @@ export const getDataPlansTool: Tool = {
       if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
       const operators = await getDataOperators(countryCode);
       const balance = await getCachedReloadlyBalance();
-      return JSON.stringify(operators.map(op => ({
-        operatorId: op.operatorId,
-        name: op.name,
-        logoUrl: op.logoUrls?.[0] || null,
-        isData: op.data,
-        isBundle: op.bundle,
-        denominationType: op.denominationType,
-        currency: 'cUSD',
-        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
-        fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
-        mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
-        minAmount: op.minAmount,
-        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
-        localCurrency: op.destinationCurrencyCode,
-        fxRate: op.fx?.rate || null,
-      })));
+      return JSON.stringify(operators.map(op => {
+        const fxRate = op.fx?.rate || 1;
+        const descs = op.fixedAmountsDescriptions || {};
+        const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
+          cUSD: usd,
+          localAmount: Math.round(usd * fxRate),
+          description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
+        }));
+        return {
+          operatorId: op.operatorId,
+          name: op.name,
+          isData: op.data,
+          isBundle: op.bundle,
+          denominationType: op.denominationType,
+          plans,
+          suggestedAmounts: (op.suggestedAmounts || []).filter(a => a <= balance),
+          mostPopularAmount: op.mostPopularAmount && op.mostPopularAmount <= balance ? op.mostPopularAmount : null,
+          minAmountCUSD: op.minAmount,
+          maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+          localCurrency: op.destinationCurrencyCode,
+          fxRate,
+        };
+      }));
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
@@ -131,11 +143,11 @@ export const getDataPlansTool: Tool = {
  */
 export const sendDataTool: Tool = {
   name: "send_data",
-  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. Amount MUST be in USD (use fixedAmountsUSD values from get_data_plans). This is a PAID service — payment is required before execution.",
+  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. Amount MUST be in USD (use fixedAmountsCUSD values from get_data_plans). This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsUSD or within minAmountUSD-maxAmountUSD range."),
+    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsCUSD or within minAmountCUSD-maxAmountCUSD range."),
     operatorId: z.number().describe("Data operator ID from get_data_plans"),
   }),
   func: async ({ phone, countryCode, amount, operatorId }) => {
@@ -240,11 +252,10 @@ export const searchGiftCardsTool: Tool = {
         country: p.country.isoName,
         recipientCurrency: p.recipientCurrencyCode,
         denominationType: p.denominationType,
-        currency: 'USD',
-        fixedAmountsUSD: (p.fixedSenderDenominations || []).filter(d => d <= balance).slice(0, 10),
+        fixedAmountsCUSD: (p.fixedSenderDenominations || []).filter(d => d <= balance).slice(0, 10),
         fixedRecipientAmounts: (p.fixedRecipientDenominations || []).slice(0, 10),
-        minAmountUSD: p.minSenderDenomination,
-        maxAmountUSD: p.maxSenderDenomination ? Math.min(p.maxSenderDenomination, balance) : null,
+        minAmountCUSD: p.minSenderDenomination,
+        maxAmountCUSD: p.maxSenderDenomination ? Math.min(p.maxSenderDenomination, balance) : null,
         redeemInstruction: p.redeemInstruction?.concise || null,
       })));
     } catch (error: any) {
@@ -296,10 +307,10 @@ export const getGiftCardsTool: Tool = {
  */
 export const buyGiftCardTool: Tool = {
   name: "buy_gift_card",
-  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Amount MUST be in USD (use fixedAmountsUSD from search_gift_cards). This is a PAID service — payment is required before execution.",
+  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Amount MUST be in USD (use fixedAmountsCUSD from search_gift_cards). This is a PAID service — payment is required before execution.",
   schema: z.object({
     productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
-    amount: z.number().describe("Amount in USD (cUSD). Use fixedAmountsUSD values from search_gift_cards."),
+    amount: z.number().describe("Amount in USD (cUSD). Use fixedAmountsCUSD values from search_gift_cards."),
     recipientEmail: z.string().describe("Email to deliver the gift card to"),
     quantity: z.number().optional().nullable().describe("Number of cards to buy. Default 1."),
   }),
@@ -395,22 +406,26 @@ export const detectOperatorTool: Tool = {
     try {
       const op = await detectOperator(phone, countryCode);
       const balance = await getCachedReloadlyBalance();
+      const fxRate = op.fx?.rate || 1;
+      const descs = op.fixedAmountsDescriptions || {};
+      const plans = (op.fixedAmounts || []).filter(a => a <= balance).map(usd => ({
+        cUSD: usd,
+        localAmount: Math.round(usd * fxRate),
+        description: descs[usd.toString()] || descs[usd.toFixed(2)] || null,
+      }));
       return JSON.stringify({
         valid: true,
         operatorId: op.operatorId,
         name: op.name,
         country: op.country?.name || countryCode,
         denominationType: op.denominationType,
-        currency: 'cUSD',
-        fixedAmounts: (op.fixedAmounts || []).filter(a => a <= balance),
-        fixedAmountsDescriptions: op.fixedAmountsDescriptions || {},
-        minAmount: op.minAmount,
-        maxAmount: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
+        plans,
+        minAmountCUSD: op.minAmount,
+        maxAmountCUSD: op.maxAmount ? Math.min(op.maxAmount, balance) : balance,
         localCurrency: op.destinationCurrencyCode,
-        fxRate: op.fx?.rate || null,
+        fxRate,
         isData: op.data,
         isBundle: op.bundle,
-        logoUrl: op.logoUrls?.[0] || null,
       });
     } catch (error: any) {
       return JSON.stringify({

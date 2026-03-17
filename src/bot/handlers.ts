@@ -14,6 +14,7 @@ import { createReceipt, updateReceipt } from '../blockchain/service-receipts';
 import { PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
 import { reservePaymentHash } from '../blockchain/replay-guard';
 import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
+import { invalidateReloadlyBalanceCache } from '../shared/balance-cache';
 
 /**
  * Execute a Reloadly service tool by name
@@ -290,6 +291,7 @@ export async function handleCallback(
         });
 
         recordSpending(order.telegramId, order.productAmount);
+        invalidateReloadlyBalanceCache();
 
         await recordTransaction({
           type: `${order.action}_telegram`,

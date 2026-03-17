@@ -11,6 +11,11 @@ import { getAccountBalance } from '../apis/reloadly';
 let balanceCache: { balance: number; fetchedAt: number } | null = null;
 const BALANCE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+/** Invalidate after a purchase so next query gets fresh balance */
+export function invalidateReloadlyBalanceCache(): void {
+  balanceCache = null;
+}
+
 export async function getCachedReloadlyBalance(): Promise<number> {
   try {
     if (balanceCache && Date.now() - balanceCache.fetchedAt < BALANCE_CACHE_TTL) {
