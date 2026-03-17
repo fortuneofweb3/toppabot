@@ -124,6 +124,21 @@ export async function markTaskFailed(taskId: ObjectId, error: string): Promise<v
   );
 }
 
+/**
+ * Check if a user had a scheduled task execute recently (within the last N minutes).
+ * Used by the heartbeat to avoid duplicate messaging — scheduler already notified the user.
+ */
+export async function hasRecentTaskExecution(userId: string, withinMinutes = 30): Promise<boolean> {
+  const col = await collection();
+  const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
+  const count = await col.countDocuments({
+    userId,
+    status: { $in: ['executing', 'completed', 'failed'] },
+    executedAt: { $gte: cutoff },
+  });
+  return count > 0;
+}
+
 // ─── Task Executor (runs every minute) ───
 
 let _executorInterval: NodeJS.Timeout | null = null;

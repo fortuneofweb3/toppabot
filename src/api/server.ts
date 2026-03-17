@@ -908,19 +908,11 @@ app.get('/.well-known/agent.json', (_req: Request, res: Response) => {
   res.json(generateAgentCard());
 });
 
-// A2A info for GET requests (scanners, browsers)
+// A2A discovery for GET requests — return full Agent Card so scanners/testers find skills
 app.get('/a2a', (_req: Request, res: Response) => {
-  const card = generateAgentCard();
-  res.json({
-    protocol: 'A2A',
-    version: '1.0',
-    skills: card.skills.length,
-    skillNames: card.skills.map((s: any) => s.id),
-    agentCard: '/.well-known/agent.json',
-    endpoint: 'POST /a2a',
-    methods: ['message/send', 'tasks/get', 'tasks/cancel'],
-    description: 'Agent-to-Agent JSON-RPC 2.0 endpoint for task-based communication',
-  });
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(generateAgentCard());
 });
 
 // A2A JSON-RPC 2.0 endpoint for task-based agent communication

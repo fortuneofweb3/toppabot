@@ -367,10 +367,11 @@ export async function recordTransaction(params: {
     const hash = await getWalletClient().writeContract(request);
     await getPublicClient().waitForTransactionReceipt({ hash });
 
+    console.log(`[ERC-8004] Recorded ${tag1}/${tag2} feedback, tx: ${hash}`);
     return { recorded: true, transactionHash: hash };
   } catch (error: any) {
     // Don't fail the main operation if reputation recording fails
-    console.error('Failed to record on ERC-8004:', error.message);
+    console.error('[ERC-8004] Failed to record:', error.message);
     return { recorded: false, error: error.message };
   }
 }

@@ -1,11 +1,11 @@
-import { Telegraf, Markup } from 'telegraf';
+import { tg, tgSilent, TgUpdate } from './tg-client';
 import { runToppaAgent } from '../agent/graph';
 import { calculateTotalPayment } from '../blockchain/x402';
 import { WalletManager } from '../wallet/manager';
 import { InMemoryWalletStore } from '../wallet/store';
 import { MongoWalletStore } from '../wallet/mongo-store';
 import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orders';
-import { registerHandlers } from './handlers';
+import { handleCallback } from './handlers';
 import { userSettingsStore } from './user-settings';
 import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 import { startScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask, getUserScheduledTasks } from '../agent/scheduler';
@@ -15,20 +15,17 @@ import { trackActivity, setProactiveEnabled, getUserActivity } from '../agent/us
 import { getUserGoals } from '../agent/goals';
 import { getFxRate } from '../apis/reloadly';
 
-const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN!);
-
 // ─────────────────────────────────────────────────
 // Wallet & Order Infrastructure
 // ─────────────────────────────────────────────────
 
-// Use MongoDB if configured, fall back to in-memory
 const walletStore = process.env.MONGODB_URI
   ? new MongoWalletStore()
   : new InMemoryWalletStore();
 const walletManager = new WalletManager(walletStore);
 const pendingOrders = new PendingOrderStore();
 
-// Cleanup stale rate limit entries every 5 minutes (orders auto-expire via MongoDB TTL)
+// Cleanup stale rate limit entries every 5 minutes
 setInterval(() => {
   pendingOrders.cleanup().catch(() => {});
   const now = Date.now();
@@ -57,7 +54,6 @@ const MAX_REQUESTS_PER_WINDOW = 10;
 const DAILY_SPENDING_LIMIT = 50;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
-// Persist daily spending to MongoDB so it survives restarts
 async function loadSpendingFromDb(userId: string): Promise<{ totalSpent: number; spendingResetDate: number }> {
   try {
     const { getDb } = await import('../wallet/mongo-store');
@@ -87,7 +83,6 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reaso
   let userLimit = userRateLimits.get(userId);
 
   if (!userLimit || now - userLimit.lastReset > RATE_LIMIT_WINDOW) {
-    // Load spending from DB on first request (survives restart)
     const dbSpending = await loadSpendingFromDb(userId);
     userLimit = {
       requestCount: 0,
@@ -120,7 +115,6 @@ function recordSpending(userId: string, amount: number) {
   const userLimit = userRateLimits.get(userId);
   if (userLimit) {
     userLimit.totalSpent += amount;
-    // Persist to DB so spending limit survives server restarts
     persistSpendingToDb(userId, userLimit.totalSpent, userLimit.spendingResetDate);
   }
 }
@@ -150,110 +144,102 @@ function sanitizeTelegramInput(input: string): string {
 }
 
 // ─────────────────────────────────────────────────
-// Register Inline Keyboard Handlers
+// Post-processing: Strip Markdown from AI Responses
 // ─────────────────────────────────────────────────
 
-registerHandlers(bot, walletManager, pendingOrders, recordSpending);
+function stripMarkdown(text: string): string {
+  return text
+    // Bold: **text** (greedy-safe, handles emojis inside)
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/__(.+?)__/gs, '$1')
+    // Italic: *text* or _text_ (word-boundary safe)
+    .replace(/(?<!\w)\*(.+?)\*(?!\w)/gs, '$1')
+    .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1')
+    // Strikethrough: ~~text~~
+    .replace(/~~(.+?)~~/gs, '$1')
+    // Headers: # text
+    .replace(/^#{1,6}\s+/gm, '')
+    // Code blocks: ```code```
+    .replace(/```[\s\S]*?```/g, (match) => match.replace(/```\w*\n?/g, '').trim())
+    // Inline code: `code`
+    .replace(/`([^`]+)`/g, '$1')
+    // Links: [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Bullet points: - or * at start of line
+    .replace(/^[\s]*[-*]\s+/gm, '• ')
+    // Collapse excessive newlines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 // ─────────────────────────────────────────────────
-// Middleware: Auto-create wallet on first interaction
+// Command Handlers
 // ─────────────────────────────────────────────────
 
-bot.use(async (ctx, next) => {
-  if (ctx.from) {
-    await walletManager.getOrCreateWallet(ctx.from.id.toString());
-  }
-  return next();
-});
-
-// ─────────────────────────────────────────────────
-// Bot Commands
-// ─────────────────────────────────────────────────
-
-/**
- * /start — Welcome + wallet info
- */
-bot.command('start', async (ctx) => {
-  const userId = ctx.from.id.toString();
+async function cmdStart(chatId: number, userId: string) {
   const { address } = await walletManager.getOrCreateWallet(userId);
-
-  const tokenSymbol = TOKEN_SYMBOL;
   const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
-  await ctx.reply(
-    `Welcome to Toppa!\n\n` +
-    `Your Celo wallet:\n\`${address}\`\n\n` +
-    `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n` +
-    `Token: ${tokenSymbol}\n\n` +
-    `Deposit ${tokenSymbol} on Celo to get started.\n` +
-    `Other tokens sent here won't show in-app, but you can recover them via /settings.\n\n` +
-    `Just tell me what you need in plain English!`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '📱 Send Airtime', callback_data: 'quick_airtime' },
-            { text: '📶 Send Data', callback_data: 'quick_data' },
-          ],
-          [
-            { text: '💡 Pay Bill', callback_data: 'quick_bill' },
-            { text: '🎁 Gift Card', callback_data: 'quick_giftcard' },
-          ],
-          [
-            { text: '💰 My Wallet', callback_data: `balance_${userId}` },
-            { text: '🔍 Celoscan', url: explorerUrl },
-          ],
-        ]
-      }
-    }
-  );
-});
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text:
+      `Welcome to Toppa!\n\n` +
+      `Your Celo wallet:\n\`${address}\`\n\n` +
+      `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n` +
+      `Token: ${TOKEN_SYMBOL}\n\n` +
+      `Deposit ${TOKEN_SYMBOL} on Celo to get started.\n` +
+      `Other tokens sent here won't show in-app, but you can recover them via /settings.\n\n` +
+      `Just tell me what you need in plain English!`,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [
+      [
+        { text: '📱 Send Airtime', callback_data: 'quick_airtime' },
+        { text: '📶 Send Data', callback_data: 'quick_data' },
+      ],
+      [
+        { text: '💡 Pay Bill', callback_data: 'quick_bill' },
+        { text: '🎁 Gift Card', callback_data: 'quick_giftcard' },
+      ],
+      [
+        { text: '💰 My Wallet', callback_data: `balance_${userId}` },
+        { text: '🔍 Celoscan', url: explorerUrl },
+      ],
+    ]},
+  });
+}
 
-/**
- * /wallet — Show balance and address
- */
-bot.command('wallet', async (ctx) => {
-  const userId = ctx.from.id.toString();
-
+async function cmdWallet(chatId: number, userId: string) {
   try {
     const { balance, address } = await walletManager.getBalance(userId);
-    const tokenSymbol = TOKEN_SYMBOL;
     const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
-    await ctx.reply(
-      `💰 Your Toppa Wallet\n\n` +
-      `Address:\n\`${address}\`\n\n` +
-      `Balance: ${balance} ${tokenSymbol}\n` +
-      `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\n` +
-      `Tap address above to copy, then deposit ${tokenSymbol} to fund your wallet.`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔍 View on Celoscan', url: explorerUrl }],
-            [{ text: '🔄 Refresh Balance', callback_data: `balance_${userId}` }],
-          ]
-        }
-      }
-    );
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text:
+        `💰 Your Toppa Wallet\n\n` +
+        `Address:\n\`${address}\`\n\n` +
+        `Balance: ${balance} ${TOKEN_SYMBOL}\n` +
+        `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\n` +
+        `Tap address above to copy, then deposit ${TOKEN_SYMBOL} to fund your wallet.`,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [
+        [{ text: '🔍 View on Celoscan', url: explorerUrl }],
+        [{ text: '🔄 Refresh Balance', callback_data: `balance_${userId}` }],
+      ]},
+    });
   } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
+    await tg('sendMessage', { chat_id: chatId, text: `❌ Error: ${error.message}` });
   }
-});
+}
 
-/**
- * /withdraw — Withdraw cUSD to external address
- */
-bot.command('withdraw', async (ctx) => {
-  const userId = ctx.from.id.toString();
-  const parts = ctx.message.text.split(' ');
+async function cmdWithdraw(chatId: number, userId: string, text: string) {
+  const parts = text.split(' ');
 
   if (parts.length < 3) {
-    await ctx.reply(
-      `Usage: /withdraw <celo_address> <amount>\n` +
-      `Example: /withdraw 0x1234...abcd 10.00`,
-    );
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: `Usage: /withdraw <celo_address> <amount>\nExample: /withdraw 0x1234...abcd 10.00`,
+    });
     return;
   }
 
@@ -261,195 +247,167 @@ bot.command('withdraw', async (ctx) => {
   const amount = parseFloat(parts[2]);
 
   if (!toAddress.startsWith('0x') || toAddress.length !== 42 || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) {
-    await ctx.reply(
-      `❌ Invalid Address\n\n` +
-      `Celo addresses must:\n` +
-      `• Start with 0x\n` +
-      `• Be exactly 42 characters\n` +
-      `• Contain only 0-9 and a-f\n\n` +
-      `Example:\n\`0x1234567890abcdef1234567890abcdef12345678\``,
-      { parse_mode: 'Markdown' }
-    );
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text:
+        `❌ Invalid Address\n\n` +
+        `Celo addresses must:\n` +
+        `• Start with 0x\n` +
+        `• Be exactly 42 characters\n` +
+        `• Contain only 0-9 and a-f\n\n` +
+        `Example:\n\`0x1234567890abcdef1234567890abcdef12345678\``,
+      parse_mode: 'Markdown',
+    });
     return;
   }
   if (isNaN(amount) || !isFinite(amount) || amount <= 0 || amount > 10000) {
-    await ctx.reply(
-      `❌ Invalid Amount\n\n` +
-      `Amount must be a positive number.\n` +
-      `Example: /withdraw ${toAddress.slice(0, 10)}... 10.5`
-    );
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: `❌ Invalid Amount\n\nAmount must be a positive number.\nExample: /withdraw ${toAddress.slice(0, 10)}... 10.5`,
+    });
     return;
   }
 
-  await ctx.reply(
-    `Withdraw ${amount} cUSD to\n${toAddress}?`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback('Confirm Withdrawal', `withdraw_confirm_${userId}_${amount}_${toAddress}`)],
-      [Markup.button.callback('Cancel', `withdraw_cancel_${userId}`)],
-    ]),
-  );
-});
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: `Withdraw ${amount} ${TOKEN_SYMBOL} to\n${toAddress}?`,
+    reply_markup: { inline_keyboard: [
+      [{ text: 'Confirm Withdrawal', callback_data: `withdraw_confirm_${userId}_${amount}_${toAddress}` }],
+      [{ text: 'Cancel', callback_data: `withdraw_cancel_${userId}` }],
+    ]},
+  });
+}
 
-/**
- * /help — Show available commands and examples
- */
-bot.command('help', async (ctx) => {
-  await ctx.reply(
-    `Toppa Commands\n\n` +
-    `/start - Create your wallet & get started\n` +
-    `/wallet - Check balance & deposit address\n` +
-    `/withdraw <address> <amount> - Withdraw cUSD\n` +
-    `/rate <country> - Check FX rate (e.g. /rate NG)\n` +
-    `/settings - Wallet settings & export key\n` +
-    `/status - Your profile, instructions & tasks\n` +
-    `/silent - Toggle proactive messages on/off\n` +
-    `/clear - Clear conversation memory\n` +
-    `/cancel - Cancel pending order\n` +
-    `/help - Show this help message\n\n` +
-    `Just tell me what you need:\n` +
-    `• "Send $5 airtime to +234... in Nigeria"\n` +
-    `• "Buy a $25 Steam gift card"\n` +
-    `• "Pay my DStv bill for 1234567"\n` +
-    `• "Send airtime to my brother at 5pm"\n` +
-    `• "Remember my sister's number is +234..."\n\n` +
-    `I support 170+ countries, 800+ operators, and 300+ gift card brands!`,
-  );
-});
+async function cmdHelp(chatId: number) {
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text:
+      `Toppa Commands\n\n` +
+      `/start - Create your wallet & get started\n` +
+      `/wallet - Check balance & deposit address\n` +
+      `/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n` +
+      `/rate <country> - Check FX rate (e.g. /rate NG)\n` +
+      `/settings - Wallet settings & export key\n` +
+      `/status - Your profile, instructions & tasks\n` +
+      `/silent - Toggle proactive messages on/off\n` +
+      `/clear - Clear conversation memory\n` +
+      `/cancel - Cancel pending order\n` +
+      `/help - Show this help message\n\n` +
+      `Just tell me what you need:\n` +
+      `• "Send $5 airtime to +234... in Nigeria"\n` +
+      `• "Buy a $25 Steam gift card"\n` +
+      `• "Pay my DStv bill for 1234567"\n` +
+      `• "Send airtime to my brother at 5pm"\n` +
+      `• "Remember my sister's number is +234..."\n\n` +
+      `I support 170+ countries, 800+ operators, and 300+ gift card brands!`,
+  });
+}
 
-/**
- * /rate — Check FX rate for a country
- */
-bot.command('rate', async (ctx) => {
-  const parts = ctx.message.text.split(' ');
+async function cmdRate(chatId: number, text: string) {
+  const parts = text.split(' ');
   const countryCode = parts[1]?.toUpperCase();
 
   if (!countryCode || countryCode.length < 2 || countryCode.length > 3) {
-    await ctx.reply(
-      `Usage: /rate <country_code>\n\n` +
-      `Examples:\n` +
-      `/rate NG - Nigeria (NGN)\n` +
-      `/rate KE - Kenya (KES)\n` +
-      `/rate GH - Ghana (GHS)\n` +
-      `/rate ZA - South Africa (ZAR)`,
-    );
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text:
+        `Usage: /rate <country_code>\n\nExamples:\n` +
+        `/rate NG - Nigeria (NGN)\n` +
+        `/rate KE - Kenya (KES)\n` +
+        `/rate GH - Ghana (GHS)\n` +
+        `/rate ZA - South Africa (ZAR)`,
+    });
     return;
   }
 
   try {
     const fxData = await getFxRate(countryCode);
     if (!fxData) {
-      await ctx.reply(`No rate available for ${countryCode}. Check the country code and try again.`);
+      await tg('sendMessage', { chat_id: chatId, text: `No rate available for ${countryCode}. Check the country code and try again.` });
       return;
     }
 
     const { rate, currencyCode } = fxData;
     const examples = [1, 5, 10, 25].map(usd => {
       const local = Math.round(usd * rate);
-      return `${usd} cUSD = ${local.toLocaleString()} ${currencyCode}`;
+      return `${usd} ${TOKEN_SYMBOL} = ${local.toLocaleString()} ${currencyCode}`;
     }).join('\n');
 
-    await ctx.reply(
-      `Rate for ${countryCode} (${currencyCode})\n\n` +
-      `1 cUSD = ${rate.toLocaleString()} ${currencyCode}\n\n` +
-      `${examples}\n\n` +
-      `This is the Reloadly delivery rate for airtime/data.`,
-    );
-  } catch (error: any) {
-    await ctx.reply(`Could not fetch rate for ${countryCode}. Try again later.`);
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text:
+        `Rate for ${countryCode} (${currencyCode})\n\n` +
+        `1 ${TOKEN_SYMBOL} = ${rate.toLocaleString()} ${currencyCode}\n\n` +
+        `${examples}\n\n` +
+        `This is the Reloadly delivery rate for airtime/data.`,
+    });
+  } catch {
+    await tg('sendMessage', { chat_id: chatId, text: `Could not fetch rate for ${countryCode}. Try again later.` });
   }
-});
+}
 
-/**
- * /settings — Wallet settings menu
- */
-bot.command('settings', async (ctx) => {
-  const userId = ctx.from.id.toString();
-
-  if (ctx.chat.type !== 'private') {
-    await ctx.reply('For security, use this command in a private chat with me.');
+async function cmdSettings(chatId: number, userId: string, chatType: string) {
+  if (chatType !== 'private') {
+    await tg('sendMessage', { chat_id: chatId, text: 'For security, use this command in a private chat with me.' });
     return;
   }
 
   const settings = await userSettingsStore.get(userId);
   const autoReviewStatus = settings.autoReviewEnabled ? 'ON ✅' : 'OFF ❌';
 
-  await ctx.reply(
-    `⚙️ Wallet Settings\n\n` +
-    `Choose an option:`,
-    Markup.inlineKeyboard([
-      [Markup.button.callback(`⭐ Auto-Review: ${autoReviewStatus}`, `toggle_autoreview_${userId}`)],
-      [Markup.button.callback('🔑 Export Private Key', `export_confirm_${userId}`)],
-      [Markup.button.callback('📊 Transaction History', `history_${userId}`)],
-      [Markup.button.callback('💰 Check Balance', `balance_${userId}`)],
-      [Markup.button.callback('❌ Close', `settings_close_${userId}`)],
-    ]),
-  );
-});
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: `⚙️ Wallet Settings\n\nChoose an option:`,
+    reply_markup: { inline_keyboard: [
+      [{ text: `⭐ Auto-Review: ${autoReviewStatus}`, callback_data: `toggle_autoreview_${userId}` }],
+      [{ text: '🔑 Export Private Key', callback_data: `export_warning_${userId}` }],
+      [{ text: '📊 Transaction History', callback_data: `history_${userId}` }],
+      [{ text: '💰 Check Balance', callback_data: `balance_${userId}` }],
+      [{ text: '❌ Close', callback_data: `settings_close_${userId}` }],
+    ]},
+  });
+}
 
-/**
- * /history — Show transaction history (placeholder)
- */
-bot.command('history', async (ctx) => {
-  await ctx.reply(
-    `📊 Transaction History\n\n` +
-    `Coming soon: View your recent airtime, data, bills, and gift card purchases.\n\n` +
-    `For now, check your wallet address on Celoscan:\n` +
-    `https://celoscan.io`,
-  );
-});
+async function cmdHistory(chatId: number) {
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text:
+      `📊 Transaction History\n\nComing soon: View your recent airtime, data, bills, and gift card purchases.\n\n` +
+      `For now, check your wallet address on Celoscan:\n${EXPLORER_BASE}`,
+  });
+}
 
-/**
- * /cancel — Cancel pending order
- */
-bot.command('cancel', async (ctx) => {
-  const userId = ctx.from.id.toString();
+async function cmdCancel(chatId: number, userId: string) {
   const order = await pendingOrders.getByUser(userId);
-
   if (!order) {
-    await ctx.reply('You have no pending orders.');
+    await tg('sendMessage', { chat_id: chatId, text: 'You have no pending orders.' });
     return;
   }
 
   await pendingOrders.updateStatus(order.orderId, 'cancelled');
   await pendingOrders.remove(order.orderId);
+  await tg('sendMessage', { chat_id: chatId, text: `❌ Order cancelled\n\n${order.description}` });
+}
 
-  await ctx.reply(
-    `❌ Order cancelled\n\n` +
-    `${order.description}`,
-  );
-});
-
-/**
- * /clear — Clear conversation memory
- */
-bot.command('clear', async (ctx) => {
-  const userId = ctx.from.id.toString();
+async function cmdClear(chatId: number, userId: string) {
   await clearConversationHistory(userId);
-  await ctx.reply('Conversation memory cleared. I won\'t remember our previous chats.');
-});
+  await tg('sendMessage', { chat_id: chatId, text: 'Conversation memory cleared. I won\'t remember our previous chats.' });
+}
 
-/**
- * /silent — Toggle proactive messages on/off
- */
-bot.command('silent', async (ctx) => {
-  const userId = ctx.from.id.toString();
+async function cmdSilent(chatId: number, userId: string) {
   const activity = await getUserActivity(userId);
   const currentlyEnabled = activity?.proactiveEnabled ?? true;
   const newState = !currentlyEnabled;
   await setProactiveEnabled(userId, newState);
-  await ctx.reply(
-    newState
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: newState
       ? 'Proactive messages enabled. I\'ll reach out when I have something useful for you.'
       : 'Proactive messages disabled. I\'ll only respond when you message me.',
-  );
-});
+  });
+}
 
-/**
- * /status — Show user's saved instructions, scheduled tasks, and settings
- */
-bot.command('status', async (ctx) => {
-  const userId = ctx.from.id.toString();
-
+async function cmdStatus(chatId: number, userId: string) {
   const [goals, tasks, activity] = await Promise.all([
     getUserGoals(userId),
     getUserScheduledTasks(userId),
@@ -459,9 +417,7 @@ bot.command('status', async (ctx) => {
   const proactiveStatus = (activity?.proactiveEnabled ?? true) ? 'ON' : 'OFF';
   const country = activity?.country || 'Not detected yet';
 
-  let msg = `Your Toppa Profile\n\n`;
-  msg += `Proactive messages: ${proactiveStatus} (toggle with /silent)\n`;
-  msg += `Detected country: ${country}\n\n`;
+  let msg = `Your Toppa Profile\n\nProactive messages: ${proactiveStatus} (toggle with /silent)\nDetected country: ${country}\n\n`;
 
   if (goals.length > 0) {
     msg += `Saved Instructions (${goals.length}):\n`;
@@ -483,62 +439,68 @@ bot.command('status', async (ctx) => {
     msg += 'No scheduled tasks.';
   }
 
-  await ctx.reply(msg);
-});
+  await tg('sendMessage', { chat_id: chatId, text: msg });
+}
 
-/**
- * /export — Export private key (now redirects to /settings)
- */
-bot.command('export', async (ctx) => {
-  await ctx.reply(
-    `To export your private key, use /settings\n\n` +
-    `This must be done in a private chat for security.`,
-  );
-});
+async function cmdExport(chatId: number) {
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: `To export your private key, use /settings\n\nThis must be done in a private chat for security.`,
+  });
+}
 
 // ─────────────────────────────────────────────────
 // Text Message Handler (AI Agent + Order Detection)
 // ─────────────────────────────────────────────────
 
-bot.on('text', async (ctx) => {
-  const userMessage = ctx.message.text;
-  const userId = ctx.from.id.toString();
-
-  // Track user activity for heartbeat (non-blocking)
-  trackActivity(userId, ctx.chat.id).catch(() => {});
+async function handleTextMessage(chatId: number, userId: string, userMessage: string) {
+  trackActivity(userId, chatId).catch(() => {});
 
   try {
-    // Rate limiting
     const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
-      await ctx.reply(rateLimitCheck.reason!);
+      await tg('sendMessage', { chat_id: chatId, text: rateLimitCheck.reason! });
       return;
     }
 
-    // Sanitize input
     const sanitizedMessage = sanitizeTelegramInput(userMessage);
-    await ctx.sendChatAction('typing');
+    tgSilent('sendChatAction', { chat_id: chatId, action: 'typing' });
 
-    // Get wallet context
     const { balance, address } = await walletManager.getBalance(userId);
 
-    // Run AI agent with wallet context + chatId for scheduling
-    const { response } = await runToppaAgent(sanitizedMessage, {
-      userAddress: userId,
-      source: 'telegram',
-      rateLimited: true,
-      walletAddress: address,
-      walletBalance: balance,
-      chatId: ctx.chat.id,
-    } as any);
+    // Streaming: accumulate LLM text chunks and push native drafts to Telegram
+    const draftId = Math.floor(Math.random() * 2147483647) + 1;
+    let streamedText = '';
+    let lastDraftText = '';
 
-    const responseText = response as string;
+    const draftInterval = setInterval(() => {
+      if (streamedText.length > 0 && streamedText !== lastDraftText) {
+        lastDraftText = streamedText;
+        tgSilent('sendMessageDraft', { chat_id: chatId, draft_id: draftId, text: stripMarkdown(streamedText) });
+      }
+    }, 300);
+
+    const onStream = (chunk: string) => { streamedText += chunk; };
+
+    let response: string;
+    try {
+      const result = await runToppaAgent(sanitizedMessage, {
+        userAddress: userId,
+        source: 'telegram',
+        rateLimited: true,
+        walletAddress: address,
+        walletBalance: balance,
+        chatId,
+      } as any, { onStream });
+      response = result.response;
+    } finally {
+      clearInterval(draftInterval);
+    }
 
     // Check if agent returned an order confirmation JSON
-    // Matches both raw JSON and ```json code blocks (LLM may use either format)
-    const orderMatch = responseText.match(
+    const orderMatch = response.match(
       /```json\s*(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})\s*```/,
-    ) || responseText.match(
+    ) || response.match(
       /(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})/,
     );
 
@@ -551,7 +513,7 @@ bot.on('text', async (ctx) => {
         const order: PendingOrder = {
           orderId,
           telegramId: userId,
-          chatId: ctx.chat.id,
+          chatId,
           action: orderData.action,
           description: orderData.description,
           productAmount: orderData.productAmount,
@@ -566,112 +528,164 @@ bot.on('text', async (ctx) => {
 
         await pendingOrders.create(order);
 
-        const tokenSymbol = TOKEN_SYMBOL;
-
-        await ctx.reply(
-          `📋 Order Summary\n\n` +
-          `${orderData.description}\n\n` +
-          `Amount: ${orderData.productAmount.toFixed(2)} cUSD\n` +
-          `Service Fee (1.5%): ${serviceFee.toFixed(2)} cUSD\n` +
-          `Total: ${total.toFixed(2)} cUSD\n\n` +
-          `Your Balance: ${balance} ${tokenSymbol}\n\n` +
-          `Expires in 10 minutes`,
-          Markup.inlineKeyboard([
-            [Markup.button.callback('✅ Confirm Order', `order_confirm_${orderId}`)],
-            [Markup.button.callback('❌ Cancel', `order_cancel_${orderId}`)],
-          ]),
-        );
-      } catch (parseError) {
-        // JSON parsing failed — send the raw response
-        await ctx.reply(responseText);
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text:
+            `📋 Order Summary\n\n` +
+            `${orderData.description}\n\n` +
+            `Amount: ${orderData.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+            `Service Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+            `Total: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+            `Your Balance: ${balance} ${TOKEN_SYMBOL}\n\n` +
+            `Expires in 10 minutes`,
+          reply_markup: { inline_keyboard: [
+            [{ text: '✅ Confirm Order', callback_data: `order_confirm_${orderId}` }],
+            [{ text: '❌ Cancel', callback_data: `order_cancel_${orderId}` }],
+          ]},
+        });
+      } catch {
+        await tg('sendMessage', { chat_id: chatId, text: stripMarkdown(response) });
       }
     } else {
-      // Regular text response from agent
-      await ctx.reply(responseText);
+      await tg('sendMessage', { chat_id: chatId, text: stripMarkdown(response) });
     }
   } catch (error: any) {
-    console.error('[Telegram Bot Error]', {
-      userId,
-      error: error.message,
-      type: error.name,
-    });
+    console.error('[Telegram Bot Error]', { userId, error: error.message, type: error.name });
 
     if (error.message.includes('malicious') || error.message.includes('too long')) {
-      await ctx.reply(error.message);
+      await tg('sendMessage', { chat_id: chatId, text: error.message });
     } else if (error.message.includes('INSUFFICIENT_BALANCE') || error.message.includes('balance')) {
-      await ctx.reply('Unable to complete request. Please try again later or contact support.');
+      await tg('sendMessage', { chat_id: chatId, text: 'Unable to complete request. Please try again later or contact support.' });
     } else {
-      await ctx.reply('An error occurred processing your request. Please try again.');
+      await tg('sendMessage', { chat_id: chatId, text: 'An error occurred processing your request. Please try again.' });
     }
   }
-});
+}
 
 // ─────────────────────────────────────────────────
-// Error Handler
+// Update Router
 // ─────────────────────────────────────────────────
 
-bot.catch((err, ctx) => {
-  console.error('Bot error:', err);
-  ctx.reply('Something went wrong. Please try again.');
-});
+async function handleUpdate(update: TgUpdate): Promise<void> {
+  try {
+    // Auto-create wallet for every user interaction
+    const fromId = update.message?.from?.id || update.callback_query?.from?.id;
+    if (fromId) await walletManager.getOrCreateWallet(fromId.toString());
+
+    // Callback query (inline button press)
+    if (update.callback_query) {
+      await handleCallback(update.callback_query, walletManager, pendingOrders, recordSpending);
+      return;
+    }
+
+    // Text message
+    const text = update.message?.text;
+    if (update.message && text) {
+      const chatId = update.message.chat.id;
+      if (!update.message.from?.id) return; // No user ID (channel posts, etc.)
+      const userId = update.message.from.id.toString();
+
+      if (text.startsWith('/')) {
+        const cmd = text.split(' ')[0].replace('/', '').split('@')[0];
+
+        switch (cmd) {
+          case 'start': return cmdStart(chatId, userId);
+          case 'wallet': return cmdWallet(chatId, userId);
+          case 'withdraw': return cmdWithdraw(chatId, userId, text);
+          case 'help': return cmdHelp(chatId);
+          case 'rate': return cmdRate(chatId, text);
+          case 'settings': return cmdSettings(chatId, userId, update.message.chat.type);
+          case 'history': return cmdHistory(chatId);
+          case 'cancel': return cmdCancel(chatId, userId);
+          case 'clear': return cmdClear(chatId, userId);
+          case 'silent': return cmdSilent(chatId, userId);
+          case 'status': return cmdStatus(chatId, userId);
+          case 'export': return cmdExport(chatId);
+          default: return handleTextMessage(chatId, userId, text);
+        }
+      }
+
+      return handleTextMessage(chatId, userId, text);
+    }
+  } catch (err: any) {
+    const uid = update.message?.from?.id || update.callback_query?.from?.id;
+    console.error('[Bot Update Error]', { update_id: update.update_id, userId: uid, error: err.message });
+  }
+}
+
+// ─────────────────────────────────────────────────
+// Long-Polling (dev mode)
+// ─────────────────────────────────────────────────
+
+let pollingActive = false;
+
+async function startPolling() {
+  pollingActive = true;
+  let offset = 0;
+
+  while (pollingActive) {
+    try {
+      const updates = await tg<TgUpdate[]>('getUpdates', { offset, timeout: 30 });
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        handleUpdate(update).catch(err => console.error('[Polling Update Error]', err.message));
+      }
+    } catch (err: any) {
+      console.error('[Polling Error]', err.message);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+}
+
+function stopPolling() { pollingActive = false; }
 
 // ─────────────────────────────────────────────────
 // Start Bot
 // ─────────────────────────────────────────────────
 
-/**
- * Start the Telegram bot.
- *
- * In production with API_URL set: uses webhook mode mounted on the Express app.
- *   - More efficient: Telegram pushes updates instead of bot polling
- *   - No open long-poll connection consuming resources
- *   - Faster response times (no polling interval delay)
- *
- * In dev / no API_URL: falls back to long-polling (works without public URL).
- */
 export async function startTelegramBot(expressApp?: import('express').Express) {
   const apiUrl = process.env.API_URL;
   const webhookPath = `/bot/webhook/${process.env.TELEGRAM_BOT_TOKEN}`;
 
-  // Register command menu so users see commands when they tap /
-  await bot.telegram.setMyCommands([
-    { command: 'start', description: 'Create wallet & get started' },
-    { command: 'wallet', description: 'Check balance & deposit address' },
-    { command: 'withdraw', description: 'Withdraw cUSD to external wallet' },
-    { command: 'rate', description: 'Check FX rate (e.g. /rate NG)' },
-    { command: 'status', description: 'Your profile, instructions & tasks' },
-    { command: 'settings', description: 'Wallet settings & export key' },
-    { command: 'cancel', description: 'Cancel pending order' },
-    { command: 'silent', description: 'Toggle proactive messages' },
-    { command: 'clear', description: 'Clear conversation memory' },
-    { command: 'help', description: 'Show help & examples' },
-  ]);
+  await tg('setMyCommands', {
+    commands: [
+      { command: 'start', description: 'Create wallet & get started' },
+      { command: 'wallet', description: 'Check balance & deposit address' },
+      { command: 'withdraw', description: 'Withdraw cUSD to external wallet' },
+      { command: 'rate', description: 'Check FX rate (e.g. /rate NG)' },
+      { command: 'status', description: 'Your profile, instructions & tasks' },
+      { command: 'settings', description: 'Wallet settings & export key' },
+      { command: 'cancel', description: 'Cancel pending order' },
+      { command: 'silent', description: 'Toggle proactive messages' },
+      { command: 'clear', description: 'Clear conversation memory' },
+      { command: 'help', description: 'Show help & examples' },
+    ],
+  });
 
   if (apiUrl && expressApp) {
-    // Webhook mode: mount on existing Express server
     const webhookUrl = `${apiUrl}${webhookPath}`;
+    await tg('setWebhook', { url: webhookUrl, drop_pending_updates: true });
 
-    // Set the webhook with Telegram
-    await bot.telegram.setWebhook(webhookUrl, {
-      drop_pending_updates: true, // Don't process messages queued while offline
+    expressApp.post(webhookPath, (req: any, res: any) => {
+      // Respond 200 immediately — Telegram retries on timeout (25s) and that
+      // causes duplicate processing. Agent calls can take 10-30s easily.
+      res.sendStatus(200);
+      handleUpdate(req.body).catch(err =>
+        console.error('[Webhook Error]', err.message),
+      );
     });
-
-    // Mount the webhook handler on Express
-    expressApp.use(bot.webhookCallback(webhookPath));
 
     console.log(`Toppa Telegram bot running (webhook: ${apiUrl}/bot/webhook/***)`);
   } else {
-    // Long-polling fallback for dev
-    // First delete any existing webhook to avoid conflicts
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    bot.launch();
+    await tg('deleteWebhook', { drop_pending_updates: true });
+    startPolling();
     console.log('Toppa Telegram bot running (long-polling mode)');
 
-    process.once('SIGINT', () => { bot.stop('SIGINT'); stopScheduler(); stopHeartbeat(); });
-    process.once('SIGTERM', () => { bot.stop('SIGTERM'); stopScheduler(); stopHeartbeat(); });
+    process.once('SIGINT', () => { stopPolling(); stopScheduler(); stopHeartbeat(); });
+    process.once('SIGTERM', () => { stopPolling(); stopScheduler(); stopHeartbeat(); });
   }
 
-  // Start the task scheduler — executes due tasks and notifies users
+  // Start scheduler
   startScheduler(async (task: ScheduledTask) => {
     try {
       const { total, serviceFee } = calculateTotalPayment(task.productAmount);
@@ -689,29 +703,25 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
         toolArgs: task.toolArgs,
         status: 'pending_confirmation',
         createdAt: Date.now(),
-        expiresAt: Date.now() + 30 * 60 * 1000, // 30 min for scheduled tasks
+        expiresAt: Date.now() + 30 * 60 * 1000,
       };
 
       await pendingOrders.create(order);
 
-      // Notify the user their scheduled task is ready
-      await bot.telegram.sendMessage(
-        task.chatId,
-        `⏰ Scheduled Task Ready\n\n` +
-        `${task.description}\n\n` +
-        `Amount: ${task.productAmount.toFixed(2)} cUSD\n` +
-        `Service Fee (1.5%): ${serviceFee.toFixed(2)} cUSD\n` +
-        `Total: ${total.toFixed(2)} cUSD\n\n` +
-        `This was scheduled earlier. Confirm to proceed.`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '✅ Confirm & Pay', callback_data: `order_confirm_${orderId}` }],
-              [{ text: '❌ Skip', callback_data: `order_cancel_${orderId}` }],
-            ],
-          },
-        },
-      );
+      await tg('sendMessage', {
+        chat_id: task.chatId,
+        text:
+          `⏰ Scheduled Task Ready\n\n` +
+          `${task.description}\n\n` +
+          `Amount: ${task.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+          `Service Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+          `Total: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+          `This was scheduled earlier. Confirm to proceed.`,
+        reply_markup: { inline_keyboard: [
+          [{ text: '✅ Confirm & Pay', callback_data: `order_confirm_${orderId}` }],
+          [{ text: '❌ Skip', callback_data: `order_cancel_${orderId}` }],
+        ]},
+      });
 
       await markTaskCompleted(task._id!, 'Notification sent — awaiting user confirmation');
     } catch (err: any) {
@@ -720,8 +730,8 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
     }
   });
 
-  // Start the heartbeat engine — proactively checks on users every 15 min
+  // Start heartbeat
   startHeartbeat(async (chatId: number, text: string) => {
-    await bot.telegram.sendMessage(chatId, text);
+    await tg('sendMessage', { chat_id: chatId, text: stripMarkdown(text) });
   });
 }

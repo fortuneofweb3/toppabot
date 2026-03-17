@@ -5,7 +5,12 @@
  * Production: Pre-funded USD business wallet.
  *
  * Covers 170+ countries, 800+ operators, 300+ gift card brands (14,000+ products).
+ *
+ * Discovery results are globally cached (see api-cache.ts) so repeated requests
+ * across users are instant. Only transactions and balance are always fresh.
  */
+
+import { apiCache, CACHE_TTL } from '../shared/api-cache';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -151,7 +156,7 @@ async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: an
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (response.status === 401) {
@@ -183,7 +188,7 @@ async function utilitiesRequest<T>(method: 'GET' | 'POST', path: string, body?: 
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (response.status === 401) {
@@ -216,7 +221,7 @@ async function giftcardsRequest<T>(method: 'GET' | 'POST', path: string, body?: 
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (response.status === 401) {
@@ -348,20 +353,28 @@ export interface ReloadlyBillPaymentResponse {
  * Get mobile operators for a country
  */
 export async function getOperators(countryCode: string) {
-  return airtimeRequest<ReloadlyOperator[]>(
-    'GET',
-    `/operators/countries/${countryCode.toUpperCase()}`
-  );
+  const cc = countryCode.toUpperCase();
+  const cacheKey = `operators:${cc}`;
+  const cached = apiCache.get<ReloadlyOperator[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await airtimeRequest<ReloadlyOperator[]>('GET', `/operators/countries/${cc}`);
+  apiCache.set(cacheKey, result, CACHE_TTL.OPERATORS);
+  return result;
 }
 
 /**
  * Auto-detect operator from phone number
  */
 export async function detectOperator(phone: string, countryCode: string) {
-  return airtimeRequest<ReloadlyOperator>(
-    'GET',
-    `/operators/auto-detect/phone/${phone}/countries/${countryCode.toUpperCase()}`
-  );
+  const cc = countryCode.toUpperCase();
+  const cacheKey = `detect:${phone}:${cc}`;
+  const cached = apiCache.get<ReloadlyOperator>(cacheKey);
+  if (cached) return cached;
+
+  const result = await airtimeRequest<ReloadlyOperator>('GET', `/operators/auto-detect/phone/${phone}/countries/${cc}`);
+  apiCache.set(cacheKey, result, CACHE_TTL.DETECT_OPERATOR);
+  return result;
 }
 
 /**
@@ -436,8 +449,13 @@ export async function getBillers(params: {
   countryCode: string;
   type?: 'ELECTRICITY_BILL_PAYMENT' | 'WATER_BILL_PAYMENT' | 'TV_BILL_PAYMENT' | 'INTERNET_BILL_PAYMENT';
 }) {
+  const cc = params.countryCode.toUpperCase();
+  const cacheKey = `billers:${cc}:${params.type || 'ALL'}`;
+  const cached = apiCache.get<ReloadlyBiller[]>(cacheKey);
+  if (cached) return cached;
+
   const query = new URLSearchParams({
-    countryISOCode: params.countryCode.toUpperCase(),
+    countryISOCode: cc,
     page: '0',
     size: '200',
   });
@@ -452,9 +470,9 @@ export async function getBillers(params: {
   );
 
   // Handle both paginated and array responses
-  if (Array.isArray(response)) return response;
-  if (response && 'content' in response) return response.content;
-  return [];
+  const result = Array.isArray(response) ? response : (response && 'content' in response ? response.content : []);
+  apiCache.set(cacheKey, result, CACHE_TTL.BILLERS);
+  return result;
 }
 
 /**
@@ -543,10 +561,14 @@ export interface ReloadlyGiftCardRedeemCode {
  * Get gift card products for a country
  */
 export async function getGiftCardProducts(countryCode: string) {
-  return giftcardsRequest<ReloadlyGiftCardProduct[]>(
-    'GET',
-    `/countries/${countryCode.toUpperCase()}/products`
-  );
+  const cc = countryCode.toUpperCase();
+  const cacheKey = `giftcards:${cc}`;
+  const cached = apiCache.get<ReloadlyGiftCardProduct[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await giftcardsRequest<ReloadlyGiftCardProduct[]>('GET', `/countries/${cc}/products`);
+  apiCache.set(cacheKey, result, CACHE_TTL.GIFT_CARDS);
+  return result;
 }
 
 /**
@@ -556,14 +578,22 @@ export async function searchGiftCards(query: string, countryCode?: string) {
   let products: ReloadlyGiftCardProduct[];
 
   if (countryCode) {
+    // getGiftCardProducts is already cached
     products = await getGiftCardProducts(countryCode);
   } else {
-    // Global search — API may return paginated {content: [...]} or direct array
-    const response = await giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
-      'GET',
-      '/products?size=200'
-    );
-    products = Array.isArray(response) ? response : (response?.content || []);
+    // Global product list — cache it separately
+    const globalKey = 'giftcards:GLOBAL';
+    const cached = apiCache.get<ReloadlyGiftCardProduct[]>(globalKey);
+    if (cached) {
+      products = cached;
+    } else {
+      const response = await giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
+        'GET',
+        '/products?size=200'
+      );
+      products = Array.isArray(response) ? response : (response?.content || []);
+      apiCache.set(globalKey, products, CACHE_TTL.SEARCH);
+    }
   }
 
   const lowerQuery = query.toLowerCase();
@@ -643,16 +673,21 @@ export async function getAccountBalance() {
  * Get promotions (active operator deals/bonuses)
  */
 export async function getPromotions(countryCode?: string) {
+  const cc = countryCode?.toUpperCase() || 'GLOBAL';
+  const cacheKey = `promotions:${cc}`;
+  const cached = apiCache.get<any[]>(cacheKey);
+  if (cached) return cached;
+
   const path = countryCode
-    ? `/promotions/country-codes/${countryCode.toUpperCase()}`
+    ? `/promotions/country-codes/${cc}`
     : '/promotions?page=0&size=50';
 
   const response = await airtimeRequest<any>('GET', path);
 
   // Handle paginated or array response
-  if (Array.isArray(response)) return response;
-  if (response?.content) return response.content;
-  return [];
+  const result = Array.isArray(response) ? response : (response?.content || []);
+  apiCache.set(cacheKey, result, CACHE_TTL.PROMOTIONS);
+  return result;
 }
 
 /**
@@ -741,3 +776,22 @@ export async function getFxRate(countryCode: string): Promise<{ rate: number; cu
     return null;
   }
 }
+
+// ─── Startup Pre-warming ───
+
+/**
+ * Pre-warm auth tokens on startup so first user request doesn't wait for auth.
+ * Called once when the module loads — non-blocking, fire-and-forget.
+ */
+function prewarmTokens() {
+  Promise.all([
+    getToken('airtime').catch(() => {}),
+    getToken('utilities').catch(() => {}),
+    getToken('giftcards').catch(() => {}),
+  ]).then(() => {
+    console.log('[Reloadly] Auth tokens pre-warmed');
+  });
+}
+
+// Pre-warm on module load
+prewarmTokens();

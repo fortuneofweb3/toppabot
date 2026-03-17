@@ -1,5 +1,4 @@
-import { Markup } from 'telegraf';
-import type { Context } from 'telegraf';
+import { tg, TgCallbackQuery } from './tg-client';
 import { WalletManager } from '../wallet/manager';
 import { PendingOrderStore } from './pending-orders';
 import { verifyX402Payment, calculateTotalPayment } from '../blockchain/x402';
@@ -32,7 +31,6 @@ async function executeServiceTool(
       return payReloadlyBill(toolArgs as any);
     case 'buy_gift_card': {
       const result = await buyGiftCard(toolArgs as any);
-      // Auto-fetch redeem codes for gift cards
       try {
         const codes = await getGiftCardRedeemCode(result.transactionId);
         return { ...result, redeemCodes: codes };
@@ -80,7 +78,17 @@ function formatServiceResult(toolName: string, result: any): string {
         `Transaction ID: ${result.transactionId}`
       );
       if (result.redeemCodes) {
-        text += `\n\nRedeem Code(s): ${JSON.stringify(result.redeemCodes)}`;
+        if (Array.isArray(result.redeemCodes)) {
+          const codes = result.redeemCodes.map((c: any) => {
+            const parts = [];
+            if (c.cardNumber) parts.push(`Card: ${c.cardNumber}`);
+            if (c.pinCode) parts.push(`PIN: ${c.pinCode}`);
+            return parts.length > 0 ? parts.join('\n') : JSON.stringify(c);
+          }).join('\n---\n');
+          text += `\n\nRedeem Code(s):\n${codes}`;
+        } else {
+          text += `\n\nRedeem Code: ${result.redeemCodes}`;
+        }
       }
       return text;
     }
@@ -92,610 +100,495 @@ function formatServiceResult(toolName: string, result: any): string {
 // Track in-progress withdrawals to prevent double-click race conditions
 const withdrawalsInProgress = new Set<string>();
 
+// Quick action button prompts
+const quickActions: Record<string, string> = {
+  quick_airtime: 'What country and phone number should I send airtime to?',
+  quick_data: 'What country and phone number should I send data to?',
+  quick_bill: 'What country and bill type do you want to pay?',
+  quick_giftcard: 'What brand and amount for the gift card?',
+};
+
 /**
- * Register all inline keyboard callback handlers on the bot
+ * Route a callback query to the correct handler.
+ * Direct pattern matching — no framework.
  */
-export function registerHandlers(
-  bot: any,
+export async function handleCallback(
+  query: TgCallbackQuery,
   walletManager: WalletManager,
   pendingOrders: PendingOrderStore,
   recordSpending: (userId: string, amount: number) => void,
-) {
-  // ─── Order Confirmation ───────────────────────────
+): Promise<void> {
+  const data = query.data || '';
+  const userId = query.from.id.toString();
+  const chatId = query.message?.chat.id;
+  const messageId = query.message?.message_id;
+  let match: RegExpMatchArray | null;
 
-  bot.action(/^order_confirm_(.+)$/, async (ctx: Context) => {
-    try {
-      const orderId = (ctx as any).match[1];
-      const userId = ctx.from?.id.toString();
+  // Helpers — shorthand for common operations on the callback's message
+  const editMsg = (text: string, opts?: { parse_mode?: string; reply_markup?: any }) =>
+    chatId && messageId
+      ? tg('editMessageText', { chat_id: chatId, message_id: messageId, text, ...opts })
+      : Promise.resolve();
 
-      if (!userId) {
-        await ctx.answerCbQuery('Error');
-        return;
-      }
+  const answer = (text?: string, showAlert = false) =>
+    tg('answerCallbackQuery', { callback_query_id: query.id, text, show_alert: showAlert });
 
-      // Atomic: only transition if status is still pending_confirmation (prevents double-click)
+  const sendMsg = (text: string, opts?: { parse_mode?: string; reply_markup?: any }) =>
+    chatId ? tg('sendMessage', { chat_id: chatId, text, ...opts }) : Promise.resolve();
+
+  try {
+    // ─── Quick Actions ───────────────────────────
+    if (quickActions[data]) {
+      await answer();
+      await sendMsg(quickActions[data]);
+      return;
+    }
+
+    // ─── Order Confirmation ──────────────────────
+    if ((match = data.match(/^order_confirm_(.+)$/))) {
+      const orderId = match[1];
+
+      if (!userId) { await answer('Error'); return; }
+
       const order = await pendingOrders.atomicTransition(orderId, 'pending_confirmation', 'pending_payment');
+      if (!order) { await answer('Order expired or already confirmed.'); return; }
 
-      if (!order) {
-        // Either expired, not found, or already confirmed by another click
-        await ctx.answerCbQuery('Order expired or already confirmed.');
-        return;
-      }
-
-      // Server-side ownership check — never trust callback data alone
       if (order.telegramId !== userId) {
-        // Revert the transition since this isn't the order owner
         await pendingOrders.updateStatus(orderId, 'pending_confirmation');
-        await ctx.answerCbQuery('Unauthorized.');
+        await answer('Unauthorized.');
         return;
       }
 
-      // Check balance
       const { balance } = await walletManager.getBalance(order.telegramId);
       const balanceNum = parseFloat(balance);
 
       if (balanceNum < order.totalAmount) {
-        // Revert to pending_confirmation so user can try again after depositing
         await pendingOrders.updateStatus(orderId, 'pending_confirmation');
         const address = await walletManager.getAddress(order.telegramId);
         const shortage = order.totalAmount - balanceNum;
-        await ctx.editMessageText(
+        await editMsg(
           `❌ Insufficient Balance\n\n` +
-          `Required: ${order.totalAmount.toFixed(2)} cUSD\n` +
-          `Available: ${balance} cUSD\n` +
-          `Short by: ${shortage.toFixed(2)} cUSD\n\n` +
-          `Deposit cUSD to:\n\`${address}\``,
-          { parse_mode: 'Markdown' }
+          `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+          `Available: ${balance} ${TOKEN_SYMBOL}\n` +
+          `Short by: ${shortage.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+          `Deposit ${TOKEN_SYMBOL} to:\n\`${address}\``,
+          { parse_mode: 'Markdown' },
         );
-        await ctx.answerCbQuery('Insufficient balance');
+        await answer('Insufficient balance');
         return;
       }
 
-      // Show payment acceptance screen (status already transitioned atomically above)
       const remaining = (balanceNum - order.totalAmount).toFixed(2);
-
-      await ctx.editMessageText(
+      await editMsg(
         `Payment Request\n\n` +
-        `${order.totalAmount.toFixed(2)} cUSD from your wallet\n` +
+        `${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} from your wallet\n` +
         `(+ ~$0.001 gas fee)\n\n` +
-        `Balance: ${balance} cUSD\n` +
-        `Remaining: ~${remaining} cUSD`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback('Accept Payment', `pay_accept_${orderId}`)],
-          [Markup.button.callback('Decline', `pay_decline_${orderId}`)],
-        ]),
-      );
-      await ctx.answerCbQuery();
-    } catch (error: any) {
-      console.error('[Order Confirm Error]', error.message);
-      await ctx.answerCbQuery('An error occurred.');
-    }
-  });
-
-  // ─── Order Cancel ─────────────────────────────────
-
-  bot.action(/^order_cancel_(.+)$/, async (ctx: Context) => {
-    try {
-      const orderId = (ctx as any).match[1];
-      const userId = ctx.from?.id.toString();
-
-      // Atomic cancel — only from pre-payment states (can't cancel mid-processing)
-      const order = await pendingOrders.atomicTransition(
-        orderId,
-        ['pending_confirmation', 'pending_payment'],
-        'cancelled',
-      );
-
-      if (order && userId && order.telegramId !== userId) {
-        // Revert — not the owner
-        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
-        await ctx.answerCbQuery('Unauthorized.');
-        return;
-      }
-
-      await ctx.editMessageText('Order cancelled.');
-      await ctx.answerCbQuery();
-    } catch (error: any) {
-      console.error('[Order Cancel Error]', error.message);
-      await ctx.answerCbQuery('Error cancelling order.');
-    }
-  });
-
-  // ─── Payment Accept (Core Execution Path) ────────
-
-  bot.action(/^pay_accept_(.+)$/, async (ctx: Context) => {
-    const orderId = (ctx as any).match[1];
-    const userId = ctx.from?.id.toString();
-
-    if (!userId) {
-      await ctx.answerCbQuery('Error');
-      return;
-    }
-
-    // Atomic: only transition if status is still pending_payment (prevents double-click double-payment)
-    const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'processing');
-
-    if (!order) {
-      // Either expired, not found, or already processing from another click
-      await ctx.answerCbQuery('Order expired or already processing.');
-      return;
-    }
-
-    // Server-side ownership check — never trust callback data alone
-    if (order.telegramId !== userId) {
-      await pendingOrders.updateStatus(orderId, 'pending_payment');
-      await ctx.answerCbQuery('Unauthorized.');
-      return;
-    }
-
-    await ctx.editMessageText('⏳ Processing payment... (1/4)');
-    await ctx.answerCbQuery();
-
-    let receiptId = '';
-    try {
-      // Re-check balance before transfer (user could have moved funds since confirmation)
-      const { balance: currentBalance } = await walletManager.getBalance(order.telegramId);
-      if (parseFloat(currentBalance) < order.totalAmount) {
-        await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
-        const address = await walletManager.getAddress(order.telegramId);
-        await ctx.editMessageText(
-          `Insufficient balance. Your balance dropped to ${currentBalance} cUSD since confirmation.\n\n` +
-          `Required: ${order.totalAmount.toFixed(2)} cUSD\nDeposit to: ${address}`,
-        );
-        return;
-      }
-
-      // Step 1: Transfer cUSD from user wallet → agent wallet
-      await ctx.editMessageText('⏳ Transferring cUSD... (2/4)');
-      const { txHash } = await walletManager.transferToAgent(
-        order.telegramId,
-        order.totalAmount,
-      );
-
-      // Step 2: Reserve payment hash to prevent cross-channel replay attacks
-      await ctx.editMessageText('⏳ Verifying on-chain... (3/4)');
-      const isReserved = await reservePaymentHash(txHash, 'telegram');
-      if (!isReserved) {
-        throw new Error('Payment hash already used. This should not happen — contact support.');
-      }
-
-      const verification = await verifyX402Payment(txHash, order.totalAmount);
-      if (!verification.verified) {
-        throw new Error(`Payment verification failed: ${verification.error}`);
-      }
-
-      // Create receipt after payment is verified (tracks payment → service binding)
-      const serviceType = order.action === 'airtime' ? 'airtime' :
-                          order.action === 'data' ? 'data' :
-                          order.action === 'bill' ? 'bill_payment' :
-                          'gift_card' as const;
-      receiptId = await createReceipt({
-        paymentTxHash: txHash,
-        payer: order.telegramId,
-        paymentAmount: order.totalAmount.toString(),
-        paymentToken: PAYMENT_TOKEN_SYMBOL,
-        paymentNetwork: CELO_CAIP2,
-        serviceType,
-        source: 'telegram',
-        serviceArgs: { toolName: order.toolName, ...order.toolArgs },
-      });
-
-      // Step 3: Execute the Reloadly service
-      const actionLabel = order.action === 'airtime' ? 'Sending airtime' :
-                          order.action === 'data' ? 'Activating data plan' :
-                          order.action === 'bill' ? 'Paying bill' :
-                          'Purchasing gift card';
-      await ctx.editMessageText(`⏳ ${actionLabel}... (4/4)`);
-      const result = await executeServiceTool(order.toolName, order.toolArgs);
-
-      // Update receipt with success
-      await updateReceipt(receiptId, {
-        status: 'success',
-        reloadlyTransactionId: result.transactionId,
-        reloadlyStatus: result.status,
-        serviceResult: { toolName: order.toolName },
-      });
-
-      // Step 4: Record spending for rate limiting
-      recordSpending(order.telegramId, order.productAmount);
-
-      // Step 5: Record on ERC-8004 reputation
-      await recordTransaction({
-        type: `${order.action}_telegram`,
-        amount: order.productAmount,
-        status: 'success',
-        metadata: {
-          telegramId: order.telegramId,
-          toolName: order.toolName,
-          paymentTx: txHash,
-          source: 'telegram',
+        `Balance: ${balance} ${TOKEN_SYMBOL}\n` +
+        `Remaining: ~${remaining} ${TOKEN_SYMBOL}`,
+        {
+          reply_markup: { inline_keyboard: [
+            [{ text: 'Accept Payment', callback_data: `pay_accept_${orderId}` }],
+            [{ text: 'Decline', callback_data: `pay_decline_${orderId}` }],
+          ]},
         },
-      }).catch((err: any) => console.error('[ERC-8004 Record Error]', err.message));
-
-      // Step 6: Handle reputation review (auto or manual)
-      const userSettings = await userSettingsStore.get(order.telegramId);
-
-      if (userSettings.autoReviewEnabled) {
-        // Auto-review: submit 5 stars immediately
-        try {
-          const userPrivateKey = await walletManager.exportPrivateKey(order.telegramId);
-          const serviceType = order.action === 'airtime' ? 'airtime' :
-                             order.action === 'data' ? 'data' :
-                             order.action === 'bill' ? 'bill_payment' :
-                             'gift_card';
-
-          await submitAutoReputation({
-            rating: 100, // 5 stars = 100/100
-            serviceType,
-            success: true,
-            userPrivateKey,
-          });
-          console.log(`[Auto-Review] User ${order.telegramId} auto-rated 100/100 (5★) for ${serviceType}`);
-        } catch (error: any) {
-          console.error('[Auto-Review Error]', error.message);
-          // Non-critical - don't fail the transaction
-        }
-      }
-
-      // Step 7: Show result
-      await pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
-      const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
-
-      const tokenSymbol = TOKEN_SYMBOL;
-      const explorerUrl = `${EXPLORER_BASE}/tx/${txHash}`;
-
-      // Show completion message
-      const completionText =
-        `✅ ${order.action.charAt(0).toUpperCase() + order.action.slice(1)} Complete!\n\n` +
-        `${formatServiceResult(order.toolName, result)}\n\n` +
-        `Balance: ${newBalance} ${tokenSymbol}`;
-
-      if (userSettings.autoReviewEnabled) {
-        // Auto-review enabled: just show result
-        await ctx.editMessageText(completionText, {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '🔍 View Payment on Celoscan', url: explorerUrl }
-            ]]
-          }
-        });
-      } else {
-        // Manual review: prompt for rating
-        await ctx.editMessageText(completionText + `\n\n⭐ How was your experience?`);
-        await ctx.reply(
-          'Rate this service:',
-          Markup.inlineKeyboard([
-            [
-              Markup.button.callback('⭐', `rate_${orderId}_1`),
-              Markup.button.callback('⭐⭐', `rate_${orderId}_2`),
-              Markup.button.callback('⭐⭐⭐', `rate_${orderId}_3`),
-            ],
-            [
-              Markup.button.callback('⭐⭐⭐⭐', `rate_${orderId}_4`),
-              Markup.button.callback('⭐⭐⭐⭐⭐', `rate_${orderId}_5`),
-            ],
-            [
-              Markup.button.callback('Skip', `rate_${orderId}_skip`),
-            ]
-          ])
-        );
-      }
-    } catch (error: any) {
-      console.error('[Payment Execute Error]', {
-        orderId,
-        userId: order.telegramId,
-        error: error.message,
-      });
-
-      // Track failed service execution in receipt (payment was taken, service failed)
-      if (receiptId) {
-        await updateReceipt(receiptId, { status: 'failed', error: error.message });
-      }
-
-      await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
-
-      let errorMsg = error.message;
-      if (errorMsg.includes('Insufficient balance')) {
-        // Balance error — show deposit address
-        const address = await walletManager.getAddress(order.telegramId);
-        errorMsg = `Insufficient cUSD balance. Deposit to:\n${address}`;
-      } else if (!errorMsg.includes('verification') && !errorMsg.includes('INVALID')) {
-        // Don't leak internal details
-        errorMsg = 'Transaction failed. Please try again.';
-      }
-
-      await ctx.editMessageText(`Transaction Failed\n\n${errorMsg}`);
+      );
+      await answer();
+      return;
     }
-  });
 
-  // ─── Payment Decline ──────────────────────────────
+    // ─── Order Cancel ────────────────────────────
+    if ((match = data.match(/^order_cancel_(.+)$/))) {
+      const orderId = match[1];
 
-  bot.action(/^pay_decline_(.+)$/, async (ctx: Context) => {
-    try {
-      const orderId = (ctx as any).match[1];
-      const userId = ctx.from?.id.toString();
+      const order = await pendingOrders.atomicTransition(
+        orderId, ['pending_confirmation', 'pending_payment'], 'cancelled',
+      );
+      if (!order) { await answer('Order already cancelled or expired.'); return; }
 
-      // Atomic cancel — only from pending_payment state
+      if (userId && order.telegramId !== userId) {
+        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
+        await answer('Unauthorized.');
+        return;
+      }
+
+      await editMsg('Order cancelled.');
+      await answer();
+      return;
+    }
+
+    // ─── Payment Accept (Core Execution Path) ────
+    if ((match = data.match(/^pay_accept_(.+)$/))) {
+      const orderId = match[1];
+
+      if (!userId) { await answer('Error'); return; }
+
+      const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'processing');
+      if (!order) { await answer('Order expired or already processing.'); return; }
+
+      if (order.telegramId !== userId) {
+        await pendingOrders.updateStatus(orderId, 'pending_payment');
+        await answer('Unauthorized.');
+        return;
+      }
+
+      await editMsg('⏳ Processing payment... (1/4)');
+      await answer();
+
+      let receiptId = '';
+      try {
+        const { balance: currentBalance } = await walletManager.getBalance(order.telegramId);
+        if (parseFloat(currentBalance) < order.totalAmount) {
+          await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
+          const address = await walletManager.getAddress(order.telegramId);
+          await editMsg(
+            `❌ Insufficient Balance\n\n` +
+            `Your balance dropped to ${currentBalance} ${TOKEN_SYMBOL} since confirmation.\n` +
+            `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+            `Deposit ${TOKEN_SYMBOL} to:\n${address}`,
+          );
+          return;
+        }
+
+        await editMsg('⏳ Transferring cUSD... (2/4)');
+        const { txHash } = await walletManager.transferToAgent(order.telegramId, order.totalAmount);
+
+        await editMsg('⏳ Verifying on-chain... (3/4)');
+        const isReserved = await reservePaymentHash(txHash, 'telegram');
+        if (!isReserved) throw new Error('Payment hash already used. This should not happen — contact support.');
+
+        const verification = await verifyX402Payment(txHash, order.totalAmount);
+        if (!verification.verified) throw new Error(`Payment verification failed: ${verification.error}`);
+
+        const serviceType = order.action === 'airtime' ? 'airtime' :
+                            order.action === 'data' ? 'data' :
+                            order.action === 'bill' ? 'bill_payment' :
+                            'gift_card' as const;
+        receiptId = await createReceipt({
+          paymentTxHash: txHash,
+          payer: order.telegramId,
+          paymentAmount: order.totalAmount.toString(),
+          paymentToken: PAYMENT_TOKEN_SYMBOL,
+          paymentNetwork: CELO_CAIP2,
+          serviceType,
+          source: 'telegram',
+          serviceArgs: { toolName: order.toolName, ...order.toolArgs },
+        });
+
+        const actionLabel = order.action === 'airtime' ? 'Sending airtime' :
+                            order.action === 'data' ? 'Activating data plan' :
+                            order.action === 'bill' ? 'Paying bill' :
+                            'Purchasing gift card';
+        await editMsg(`⏳ ${actionLabel}... (4/4)`);
+        const result = await executeServiceTool(order.toolName, order.toolArgs);
+
+        await updateReceipt(receiptId, {
+          status: 'success',
+          reloadlyTransactionId: result.transactionId,
+          reloadlyStatus: result.status,
+          serviceResult: { toolName: order.toolName },
+        });
+
+        recordSpending(order.telegramId, order.productAmount);
+
+        await recordTransaction({
+          type: `${order.action}_telegram`,
+          amount: order.productAmount,
+          status: 'success',
+          metadata: {
+            telegramId: order.telegramId,
+            toolName: order.toolName,
+            paymentTx: txHash,
+            source: 'telegram',
+          },
+        }).catch((err: any) => console.error('[ERC-8004 Record Error]', err.message));
+
+        const userSettings = await userSettingsStore.get(order.telegramId);
+
+        if (userSettings.autoReviewEnabled) {
+          try {
+            const userPrivateKey = await walletManager.exportPrivateKey(order.telegramId);
+            const svcType = order.action === 'airtime' ? 'airtime' :
+                            order.action === 'data' ? 'data' :
+                            order.action === 'bill' ? 'bill_payment' : 'gift_card';
+            await submitAutoReputation({ rating: 100, serviceType: svcType, success: true, userPrivateKey });
+            console.log(`[Auto-Review] User ${order.telegramId} auto-rated 100/100 (5★) for ${svcType}`);
+          } catch (error: any) {
+            console.error('[Auto-Review Error]', error.message);
+          }
+        }
+
+        await pendingOrders.updateStatus(orderId, 'completed', { txHash, result });
+        const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
+        const explorerUrl = `${EXPLORER_BASE}/tx/${txHash}`;
+
+        const completionText =
+          `✅ ${order.action.charAt(0).toUpperCase() + order.action.slice(1)} Complete!\n\n` +
+          `${formatServiceResult(order.toolName, result)}\n\n` +
+          `Balance: ${newBalance} ${TOKEN_SYMBOL}`;
+
+        if (userSettings.autoReviewEnabled) {
+          await editMsg(completionText, {
+            reply_markup: { inline_keyboard: [
+              [{ text: '🔍 View Payment on Celoscan', url: explorerUrl }],
+            ]},
+          });
+        } else {
+          await editMsg(completionText + `\n\n⭐ How was your experience?`);
+          await sendMsg('Rate this service:', {
+            reply_markup: { inline_keyboard: [
+              [
+                { text: '⭐', callback_data: `rate_${orderId}_1` },
+                { text: '⭐⭐', callback_data: `rate_${orderId}_2` },
+                { text: '⭐⭐⭐', callback_data: `rate_${orderId}_3` },
+              ],
+              [
+                { text: '⭐⭐⭐⭐', callback_data: `rate_${orderId}_4` },
+                { text: '⭐⭐⭐⭐⭐', callback_data: `rate_${orderId}_5` },
+              ],
+              [{ text: 'Skip', callback_data: `rate_${orderId}_skip` }],
+            ]},
+          });
+        }
+      } catch (error: any) {
+        console.error('[Payment Execute Error]', { orderId, userId: order.telegramId, error: error.message });
+
+        if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
+        await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
+
+        let errorMsg = error.message;
+        if (errorMsg.includes('Insufficient balance')) {
+          const address = await walletManager.getAddress(order.telegramId);
+          errorMsg = `Insufficient ${TOKEN_SYMBOL} balance. Deposit to:\n${address}`;
+        } else if (!errorMsg.includes('verification') && !errorMsg.includes('INVALID')) {
+          errorMsg = 'Transaction failed. Please try again.';
+        }
+
+        await editMsg(`❌ Transaction Failed\n\n${errorMsg}`);
+      }
+      return;
+    }
+
+    // ─── Payment Decline ─────────────────────────
+    if ((match = data.match(/^pay_decline_(.+)$/))) {
+      const orderId = match[1];
       const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'cancelled');
 
       if (order && userId && order.telegramId !== userId) {
         await pendingOrders.updateStatus(orderId, 'pending_payment');
-        await ctx.answerCbQuery('Unauthorized.');
+        await answer('Unauthorized.');
         return;
       }
 
-      await ctx.editMessageText('Payment declined. Order cancelled.');
-      await ctx.answerCbQuery();
-    } catch (error: any) {
-      await ctx.answerCbQuery('Error');
+      await editMsg('Payment declined. Order cancelled.');
+      await answer();
+      return;
     }
-  });
 
-  // ─── Private Key Export ───────────────────────────
-
-  bot.action(/^export_confirm_(.+)$/, async (ctx: Context) => {
-    try {
-      const userId = (ctx as any).match[1];
-      if (ctx.from?.id.toString() !== userId) {
-        await ctx.answerCbQuery('Unauthorized');
+    // ─── Export Warning (2-step key export) ───────
+    if ((match = data.match(/^export_warning_(.+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
+      if (query.message?.chat.type !== 'private') {
+        await answer('Use this in a private chat for security.', true);
         return;
       }
 
-      const privateKey = await walletManager.exportPrivateKey(userId);
-      await ctx.editMessageText(
-        `Your Private Key (save it securely, then delete this message):\n\n` +
-        `${privateKey}\n\n` +
-        `WARNING: Anyone with this key controls your wallet. Never share it.`,
+      await editMsg(
+        `⚠️ Export Private Key\n\n` +
+        `This will reveal your wallet's private key.\n` +
+        `Anyone with this key has full control of your wallet.\n\n` +
+        `Only continue if you understand the risks.`,
+        {
+          reply_markup: { inline_keyboard: [
+            [{ text: 'Yes, show my key', callback_data: `export_confirm_${userId}` }],
+            [{ text: 'Cancel', callback_data: `export_cancel_${userId}` }],
+          ]},
+        },
       );
-      await ctx.answerCbQuery();
-    } catch (error: any) {
-      await ctx.editMessageText(`Error: ${error.message}`);
-      await ctx.answerCbQuery('Error');
+      await answer();
+      return;
     }
-  });
 
-  bot.action(/^export_cancel_(.+)$/, async (ctx: Context) => {
-    await ctx.editMessageText('Private key export cancelled.');
-    await ctx.answerCbQuery();
-  });
+    // ─── Export Confirm ──────────────────────────
+    if ((match = data.match(/^export_confirm_(.+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
+      try {
+        const privateKey = await walletManager.exportPrivateKey(userId);
+        await editMsg(
+          `Your Private Key (save it securely, then delete this message):\n\n` +
+          `${privateKey}\n\n` +
+          `WARNING: Anyone with this key controls your wallet. Never share it.`,
+        );
+      } catch (error: any) {
+        await editMsg(`Error: ${error.message}`);
+      }
+      await answer();
+      return;
+    }
 
-  // ─── Withdrawal ───────────────────────────────────
+    // ─── Export Cancel ───────────────────────────
+    if ((match = data.match(/^export_cancel_(.+)$/))) {
+      await editMsg('Private key export cancelled.');
+      await answer();
+      return;
+    }
 
-  bot.action(/^withdraw_confirm_(.+)$/, async (ctx: Context) => {
-    try {
-      const data = (ctx as any).match[1];
-      const parts = data.split('_');
-      // Format: userId_amount_address
-      const userId = parts[0];
+    // ─── Withdraw Confirm ────────────────────────
+    if ((match = data.match(/^withdraw_confirm_(.+)$/))) {
+      const parts = match[1].split('_');
+      const targetUserId = parts[0];
       const amount = parseFloat(parts[1]);
       const toAddress = parts.slice(2).join('_');
 
-      if (ctx.from?.id.toString() !== userId) {
-        await ctx.answerCbQuery('Unauthorized');
-        return;
-      }
+      if (userId !== targetUserId) { await answer('Unauthorized'); return; }
+      if (!amount || !isFinite(amount) || amount <= 0) { await answer('Invalid withdrawal amount.'); return; }
+      if (!toAddress || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) { await answer('Invalid withdrawal address.'); return; }
 
-      // Validate parsed callback data (defense-in-depth)
-      if (!amount || !isFinite(amount) || amount <= 0) {
-        await ctx.answerCbQuery('Invalid withdrawal amount.');
-        return;
-      }
-      if (!toAddress || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) {
-        await ctx.answerCbQuery('Invalid withdrawal address.');
-        return;
-      }
-
-      // Guard: prevent double-click — check synchronously before any await
       const withdrawKey = `${userId}_${amount}_${toAddress}`;
-      if (withdrawalsInProgress.has(withdrawKey)) {
-        await ctx.answerCbQuery('Withdrawal already processing.');
-        return;
-      }
+      if (withdrawalsInProgress.has(withdrawKey)) { await answer('Withdrawal already processing.'); return; }
       withdrawalsInProgress.add(withdrawKey);
 
       try {
-        await ctx.editMessageText('⏳ Processing withdrawal...');
-        await ctx.answerCbQuery();
+        await editMsg('⏳ Processing withdrawal...');
+        await answer();
 
         const result = await walletManager.withdraw(userId, toAddress, amount);
         const { balance: newBalance } = await walletManager.getBalance(userId);
-
-        const tokenSymbol = TOKEN_SYMBOL;
         const explorerUrl = `${EXPLORER_BASE}/tx/${result.txHash}`;
 
-        await ctx.editMessageText(
+        await editMsg(
           `✅ Withdrawal Complete!\n\n` +
-          `Sent: ${result.amount} ${tokenSymbol}\n` +
+          `Sent: ${result.amount} ${TOKEN_SYMBOL}\n` +
           `To: \`${result.to}\`\n\n` +
-          `Balance: ${newBalance} ${tokenSymbol}`,
+          `Balance: ${newBalance} ${TOKEN_SYMBOL}`,
           {
             parse_mode: 'Markdown',
-            reply_markup: {
-              inline_keyboard: [[
-                { text: '🔍 View on Celoscan', url: explorerUrl }
-              ]]
-            }
-          }
+            reply_markup: { inline_keyboard: [
+              [{ text: '🔍 View on Celoscan', url: explorerUrl }],
+            ]},
+          },
         );
+      } catch (error: any) {
+        console.error('[Withdraw Error]', error.message);
+        await editMsg(`❌ Withdrawal failed: ${error.message}`);
       } finally {
         withdrawalsInProgress.delete(withdrawKey);
       }
-    } catch (error: any) {
-      console.error('[Withdraw Error]', error.message);
-      await ctx.editMessageText(`Withdrawal failed: ${error.message}`);
-    }
-  });
-
-  bot.action(/^withdraw_cancel_(.+)$/, async (ctx: Context) => {
-    await ctx.editMessageText('Withdrawal cancelled.');
-    await ctx.answerCbQuery();
-  });
-
-  // ─── Settings Menu Handlers ───────────────────────
-
-  bot.action(/^history_(.+)$/, async (ctx: Context) => {
-    const userId = (ctx as any).match[1];
-
-    if (ctx.from?.id.toString() !== userId) {
-      await ctx.answerCbQuery('Unauthorized');
       return;
     }
 
-    await ctx.editMessageText(
-      `📊 Transaction History\n\n` +
-      `Coming soon: View your recent airtime, data, bills, and gift card purchases.\n\n` +
-      `For now, check your wallet address on Celoscan.`,
-    );
-    await ctx.answerCbQuery();
-  });
-
-  bot.action(/^balance_(.+)$/, async (ctx: Context) => {
-    const userId = (ctx as any).match[1];
-
-    if (ctx.from?.id.toString() !== userId) {
-      await ctx.answerCbQuery('Unauthorized');
+    // ─── Withdraw Cancel ─────────────────────────
+    if ((match = data.match(/^withdraw_cancel_(.+)$/))) {
+      await editMsg('Withdrawal cancelled.');
+      await answer();
       return;
     }
 
-    try {
-      const { balance, address } = await walletManager.getBalance(userId);
-      const tokenSymbol = TOKEN_SYMBOL;
+    // ─── Balance ─────────────────────────────────
+    if ((match = data.match(/^balance_(.+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
 
-      await ctx.editMessageText(
-        `💰 Your Wallet\n\n` +
-        `Balance: ${balance} ${tokenSymbol}\n\n` +
-        `Address:\n\`${address}\``,
-        { parse_mode: 'Markdown' }
-      );
-      await ctx.answerCbQuery();
-    } catch (error: any) {
-      await ctx.editMessageText(`❌ Error: ${error.message}`);
-      await ctx.answerCbQuery('Error');
-    }
-  });
+      try {
+        const { balance, address } = await walletManager.getBalance(userId);
+        const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
-  bot.action(/^settings_close_(.+)$/, async (ctx: Context) => {
-    await ctx.deleteMessage();
-    await ctx.answerCbQuery('Closed');
-  });
-
-  bot.action(/^toggle_autoreview_(.+)$/, async (ctx: Context) => {
-    try {
-      const userId = (ctx as any).match[1];
-
-      if (ctx.from?.id.toString() !== userId) {
-        await ctx.answerCbQuery('Unauthorized');
-        return;
+        await editMsg(
+          `💰 Your Wallet\n\nBalance: ${balance} ${TOKEN_SYMBOL}\n\nAddress:\n\`${address}\``,
+          {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [
+              [{ text: '🔍 View on Celoscan', url: explorerUrl }],
+              [{ text: '🔄 Refresh Balance', callback_data: `balance_${userId}` }],
+            ]},
+          },
+        );
+      } catch (error: any) {
+        await editMsg(`❌ Error: ${error.message}`);
       }
+      await answer();
+      return;
+    }
+
+    // ─── History ─────────────────────────────────
+    if ((match = data.match(/^history_(.+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
+      await editMsg(
+        `📊 Transaction History\n\n` +
+        `Coming soon: View your recent airtime, data, bills, and gift card purchases.\n\n` +
+        `For now, check your wallet address on Celoscan.`,
+      );
+      await answer();
+      return;
+    }
+
+    // ─── Settings Close ──────────────────────────
+    if ((match = data.match(/^settings_close_(.+)$/))) {
+      if (chatId && messageId) await tg('deleteMessage', { chat_id: chatId, message_id: messageId }).catch(() => {});
+      await answer('Closed');
+      return;
+    }
+
+    // ─── Toggle Auto-Review ──────────────────────
+    if ((match = data.match(/^toggle_autoreview_(.+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
 
       const newStatus = await userSettingsStore.toggleAutoReview(userId);
       const statusText = newStatus ? 'ON ✅' : 'OFF ❌';
 
-      await ctx.editMessageText(
-        `⚙️ Wallet Settings\n\n` +
-        `Choose an option:`,
-        Markup.inlineKeyboard([
-          [Markup.button.callback(`⭐ Auto-Review: ${statusText}`, `toggle_autoreview_${userId}`)],
-          [Markup.button.callback('🔑 Export Private Key', `export_confirm_${userId}`)],
-          [Markup.button.callback('📊 Transaction History', `history_${userId}`)],
-          [Markup.button.callback('💰 Check Balance', `balance_${userId}`)],
-          [Markup.button.callback('❌ Close', `settings_close_${userId}`)],
-        ]),
+      await editMsg(
+        `⚙️ Wallet Settings\n\nChoose an option:`,
+        {
+          reply_markup: { inline_keyboard: [
+            [{ text: `⭐ Auto-Review: ${statusText}`, callback_data: `toggle_autoreview_${userId}` }],
+            [{ text: '🔑 Export Private Key', callback_data: `export_warning_${userId}` }],
+            [{ text: '📊 Transaction History', callback_data: `history_${userId}` }],
+            [{ text: '💰 Check Balance', callback_data: `balance_${userId}` }],
+            [{ text: '❌ Close', callback_data: `settings_close_${userId}` }],
+          ]},
+        },
       );
-
-      await ctx.answerCbQuery(
+      await answer(
         newStatus
           ? '⭐ Auto-review enabled: You\'ll automatically give 5★ after each service'
           : '⭐ Auto-review disabled: You\'ll be asked to rate after each service',
-        { show_alert: true }
+        true,
       );
-    } catch (error: any) {
-      console.error('[Toggle AutoReview Error]', error.message);
-      await ctx.answerCbQuery('Error');
+      return;
     }
-  });
 
-  // ─── Star Rating Handler ──────────────────────────
-
-  bot.action(/^rate_(.+)_(\d+|skip)$/, async (ctx: Context) => {
-    try {
-      const orderId = (ctx as any).match[1];
-      const ratingStr = (ctx as any).match[2];
-      const userId = ctx.from?.id.toString();
-
-      if (!userId) {
-        await ctx.answerCbQuery('Error');
-        return;
-      }
+    // ─── Star Rating ─────────────────────────────
+    if ((match = data.match(/^rate_(.+)_(\d+|skip)$/))) {
+      const orderId = match[1];
+      const ratingStr = match[2];
 
       const order = await pendingOrders.get(orderId);
-      if (!order || order.telegramId !== userId) {
-        await ctx.answerCbQuery('Order expired or not found.');
-        return;
-      }
+      if (!order || order.telegramId !== userId) { await answer('Order expired or not found.'); return; }
+      if (order.status !== 'completed') { await answer('Order not completed yet.'); return; }
 
-      // Only allow rating completed orders
-      if (order.status !== 'completed') {
-        await ctx.answerCbQuery('Order not completed yet.');
-        return;
-      }
+      if (chatId && messageId) await tg('deleteMessage', { chat_id: chatId, message_id: messageId }).catch(() => {});
 
-      // Delete rating prompt
-      await ctx.deleteMessage().catch(() => {});
-
-      if (ratingStr === 'skip') {
-        await ctx.answerCbQuery('Skipped rating');
-        return;
-      }
+      if (ratingStr === 'skip') { await answer('Skipped rating'); return; }
 
       const stars = parseInt(ratingStr);
-      if (stars < 1 || stars > 5) {
-        await ctx.answerCbQuery('Invalid rating');
-        return;
-      }
-      const rating = stars * 20; // 1★=20, 2★=40, 3★=60, 4★=80, 5★=100
+      if (stars < 1 || stars > 5) { await answer('Invalid rating'); return; }
 
-      await ctx.answerCbQuery(`${stars} star${stars > 1 ? 's' : ''}`);
-      await ctx.reply(`Thanks for rating ${stars}⭐!`);
+      await answer(`${stars} star${stars > 1 ? 's' : ''}`);
+      await sendMsg(`Thanks for rating ${stars}⭐!`);
 
-      // Submit rating on-chain
       try {
         const userPrivateKey = await walletManager.exportPrivateKey(userId);
         const serviceType = order.action === 'airtime' ? 'airtime' :
                            order.action === 'data' ? 'data' :
-                           order.action === 'bill' ? 'bill_payment' :
-                           'gift_card';
-
-        await submitAutoReputation({
-          rating,
-          serviceType,
-          success: true,
-          userPrivateKey,
-        });
-        console.log(`[Manual-Review] User ${userId} rated ${rating}/100 (${stars}★) for ${serviceType}`);
+                           order.action === 'bill' ? 'bill_payment' : 'gift_card';
+        await submitAutoReputation({ rating: stars * 20, serviceType, success: true, userPrivateKey });
+        console.log(`[Manual-Review] User ${userId} rated ${stars * 20}/100 (${stars}★) for ${serviceType}`);
       } catch (error: any) {
         console.error('[Manual-Review Error]', error.message);
-        // Non-critical - user already saw confirmation
       }
-    } catch (error: any) {
-      console.error('[Rating Handler Error]', error.message);
-      await ctx.answerCbQuery('Error');
+      return;
     }
-  });
 
-  // ─── Quick Action Buttons (from /start) ───────────
-
-  const quickActions: Record<string, string> = {
-    quick_airtime: 'I want to send airtime. What country and phone number?',
-    quick_data: 'I want to send a data bundle. What country and phone number?',
-    quick_bill: 'I want to pay a utility bill. What country and bill type?',
-    quick_giftcard: 'I want to buy a gift card. What brand and amount?',
-  };
-
-  for (const [action, prompt] of Object.entries(quickActions)) {
-    bot.action(action, async (ctx: Context) => {
-      await ctx.answerCbQuery();
-      await ctx.reply(prompt);
-    });
+  } catch (error: any) {
+    console.error('[Callback Handler Error]', { data, error: error.message });
+    tg('answerCallbackQuery', { callback_query_id: query.id, text: 'An error occurred.' }).catch(() => {});
   }
 }

@@ -6,7 +6,7 @@ import { getConversationHistory, saveConversation } from './memory';
 import { formatUserContext } from './goals';
 
 /**
- * Toppa Agent — Direct OpenAI SDK with tool-calling loop
+ * Toppa Agent — LLM tool-calling loop (DeepSeek via OpenAI-compatible SDK)
  *
  * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
  * they return payment_required responses instead of executing Reloadly directly.
@@ -17,13 +17,13 @@ import { formatUserContext } from './goals';
  * - Telegram bot: wallet transfer + on-chain verification (bot/handlers.ts)
  */
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
+const llm = new OpenAI({
+  apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
 });
 
-// Convert tool Zod schemas to OpenAI function definitions (done once at module load)
-const openaiTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
+// Convert tool Zod schemas to LLM function definitions (done once at module load)
+const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
   type: 'function',
   function: {
     name: tool.name,
@@ -37,6 +37,9 @@ const toolMap = new Map(tools.map(t => [t.name, t]));
 
 // Max tool-calling iterations to prevent infinite loops
 const MAX_ITERATIONS = 10;
+
+// Max characters per tool result to keep context small and LLM fast
+const MAX_TOOL_RESULT_LENGTH = 3000;
 
 /**
  * System prompt — defines agent behavior
@@ -86,6 +89,9 @@ For scheduled tasks, use schedule_task tool directly.
 For discovery (checking operators, promos, etc.), call tools normally.
 Handle ONE order_confirmation at a time.
 
+EFFICIENCY:
+Call multiple tools in ONE turn when possible. For example, if you need to detect an operator AND check promotions, call both tools at once instead of one at a time. Fewer turns = faster response for the user.
+
 RULES:
 All payments in cUSD on Celo blockchain.
 Always confirm amount and recipient before executing.
@@ -117,14 +123,96 @@ async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
 }
 
 /**
- * Run the Toppa agent — simple tool-calling loop using OpenAI SDK directly.
+ * Execute tool calls in parallel and return results.
+ * Shared between streaming and non-streaming paths.
+ */
+async function executeToolCalls(
+  toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
+): Promise<Array<{ role: 'tool'; tool_call_id: string; content: string }>> {
+  return Promise.all(
+    toolCalls.map(async (toolCall) => {
+      const tool = toolMap.get(toolCall.function.name);
+      let result: string;
+
+      if (!tool) {
+        result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
+      } else {
+        try {
+          result = await tool.func(JSON.parse(toolCall.function.arguments));
+        } catch (err: any) {
+          result = JSON.stringify({ error: err.message });
+        }
+      }
+
+      // Truncate large tool results to keep context small and LLM fast
+      if (result.length > MAX_TOOL_RESULT_LENGTH) {
+        result = result.slice(0, MAX_TOOL_RESULT_LENGTH) + '...(truncated)';
+      }
+
+      return { role: 'tool' as const, tool_call_id: toolCall.id, content: result };
+    }),
+  );
+}
+
+/**
+ * Check tool results for payment_required short-circuit.
+ * Returns order_confirmation JSON string if found, null otherwise.
+ */
+function checkPaymentShortCircuit(
+  toolResults: Array<{ content: string }>,
+): string | null {
+  for (const tr of toolResults) {
+    try {
+      const parsed = JSON.parse(tr.content);
+      if (parsed.status === 'payment_required' && parsed.service && parsed.details) {
+        const action = parsed.service
+          .replace('send_', '')
+          .replace('pay_', '')
+          .replace('buy_', '');
+
+        const d = parsed.details;
+        let description = '';
+        if (parsed.service === 'send_airtime') {
+          description = `Send ${parsed.productAmount} cUSD airtime to ${d.phone} in ${d.countryCode}`;
+        } else if (parsed.service === 'send_data') {
+          description = `Send ${parsed.productAmount} cUSD data to ${d.phone} in ${d.countryCode}`;
+        } else if (parsed.service === 'pay_bill') {
+          description = `Pay ${parsed.productAmount} cUSD bill for account ${d.accountNumber}`;
+        } else if (parsed.service === 'buy_gift_card') {
+          description = `Buy ${parsed.productAmount} cUSD gift card`;
+        } else {
+          description = parsed.message?.split('.')[0] || `${action} service`;
+        }
+
+        return JSON.stringify({
+          type: 'order_confirmation',
+          action,
+          description,
+          productAmount: parsed.productAmount,
+          toolName: parsed.service,
+          toolArgs: parsed.details,
+        });
+      }
+    } catch {
+      // Not JSON or not payment_required — continue
+    }
+  }
+  return null;
+}
+
+/**
+ * Run the Toppa agent with LLM streaming support.
  *
  * Each call gets its own messages array — fully isolated between concurrent users.
  * Loads conversation history from MongoDB for context continuity.
+ *
+ * When onStream is provided, text chunks are emitted as the LLM generates them,
+ * enabling real-time progressive display (e.g. Telegram's sendMessageDraft).
  */
 export async function runToppaAgent(
   userMessage: string,
   state: Partial<AgentState> = {},
+  options?: { onStream?: (chunk: string) => void },
 ): Promise<{ response: string }> {
   // Set scheduling context so schedule_task/my_tasks/cancel_task tools can access userId/chatId
   if (state.userAddress && state.source === 'telegram') {
@@ -147,57 +235,84 @@ export async function runToppaAgent(
   // Add the current user message
   messages.push({ role: 'user', content: userMessage });
 
+  const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
   let finalResponse = '';
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const completion = await openai.chat.completions.create({
+    // Stream the LLM response — accumulate text + tool calls from chunks
+    const stream = await llm.chat.completions.create({
       model: process.env.LLM_MODEL || 'gpt-4-turbo-preview',
       temperature: 0.7,
+      max_tokens: 1024,
       messages,
-      tools: openaiTools,
+      tools: llmTools,
+      stream: true,
     });
 
-    const choice = completion.choices[0];
-    if (!choice) {
-      finalResponse = 'No response from AI model.';
-      break;
+    let textContent = '';
+    const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (!delta) continue;
+
+      // Text content — emit to stream callback
+      if (delta.content) {
+        textContent += delta.content;
+        options?.onStream?.(delta.content);
+      }
+
+      // Tool calls — accumulate silently (args arrive in fragments)
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
+          if (tc.id) existing.id = tc.id;
+          if (tc.function?.name) existing.name = tc.function.name;
+          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          pendingToolCalls.set(tc.index, existing);
+        }
+      }
     }
 
-    // Add assistant message to history
-    messages.push(choice.message);
+    // Build assistant message for history
+    const toolCallsArray = [...pendingToolCalls.values()];
+    const assistantMessage: OpenAI.ChatCompletionMessageParam = {
+      role: 'assistant',
+      content: textContent || null,
+      ...(toolCallsArray.length > 0 && {
+        tool_calls: toolCallsArray.map(tc => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
+      }),
+    };
+    messages.push(assistantMessage);
 
-    // If no tool calls, we have the final text response
-    if (!choice.message.tool_calls?.length) {
-      finalResponse = choice.message.content || '';
+    // No tool calls → final text response
+    if (toolCallsArray.length === 0) {
+      finalResponse = textContent;
       break;
     }
 
     // Execute all tool calls in parallel
-    // Safe: paid tools return payment_required responses (never call Reloadly directly)
-    const toolResults = await Promise.all(
-      choice.message.tool_calls.map(async (toolCall) => {
-        const tool = toolMap.get(toolCall.function.name);
-        let result: string;
-
-        if (!tool) {
-          result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
-        } else {
-          try {
-            result = await tool.func(JSON.parse(toolCall.function.arguments));
-          } catch (err: any) {
-            result = JSON.stringify({ error: err.message });
-          }
-        }
-
-        return {
-          role: 'tool' as const,
-          tool_call_id: toolCall.id,
-          content: result,
-        };
-      }),
+    const toolResults = await executeToolCalls(
+      toolCallsArray.map(tc => ({
+        id: tc.id,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
     );
 
-    // Add all tool results to messages
+    // Short-circuit: payment_required → order_confirmation (saves LLM round trip)
+    if (useShortCircuit) {
+      const orderJson = checkPaymentShortCircuit(toolResults);
+      if (orderJson) {
+        finalResponse = orderJson;
+        break;
+      }
+    }
+
+    // Add tool results to messages for next iteration
     messages.push(...toolResults);
   }
 

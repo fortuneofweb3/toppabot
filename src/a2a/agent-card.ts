@@ -13,20 +13,12 @@ export function generateAgentCard() {
   return {
     name: 'Toppa',
     description: 'AI agent for digital goods and utility payments (airtime, data, bills, gift cards) across 170+ countries, powered by Celo blockchain.',
+    url: `${apiUrl}/a2a`,
     provider: {
       organization: 'Toppa',
       url: apiUrl,
     },
     version: '2.0.0',
-
-    // Per spec: supportedInterfaces lists where clients can reach this agent
-    supportedInterfaces: [
-      {
-        url: `${apiUrl}/a2a`,
-        protocolBinding: 'JSONRPC',
-        protocolVersion: '1.0',
-      },
-    ],
 
     capabilities: {
       streaming: false,

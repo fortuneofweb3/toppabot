@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { getUserGoals, UserGoal } from './goals';
 import { getConversationSummary } from './memory';
 import { getActiveUsers, canSendProactive, updateLastProactive } from './user-activity';
+import { hasRecentTaskExecution } from './scheduler';
 import { getPromotions } from '../apis/reloadly';
 
 /**
@@ -18,9 +19,9 @@ import { getPromotions } from '../apis/reloadly';
  * - Users can opt out via /silent command
  */
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.openai.com/v1',
+const llm = new OpenAI({
+  apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
 });
 
 // Heartbeat interval: 15 minutes
@@ -84,6 +85,9 @@ export async function runHeartbeatForUser(
     const canSend = await canSendProactive(userId, PROACTIVE_COOLDOWN_HOURS);
     if (!canSend) return;
 
+    // Skip if the scheduler already notified this user recently (prevents duplicate reminders)
+    if (await hasRecentTaskExecution(userId, 30)) return;
+
     // No goals = nothing to be proactive about
     if (goals.length === 0) return;
 
@@ -129,7 +133,7 @@ export async function runHeartbeatForUser(
     // Use HEARTBEAT_MODEL if set, otherwise fall back to the main LLM_MODEL
     const heartbeatModel = process.env.HEARTBEAT_MODEL || process.env.LLM_MODEL || 'gpt-4o-mini';
 
-    const completion = await openai.chat.completions.create({
+    const completion = await llm.chat.completions.create({
       model: heartbeatModel,
       temperature: 0.3, // Lower temp for more conservative decisions
       max_tokens: 300,

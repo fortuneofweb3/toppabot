@@ -19,7 +19,7 @@ async function main() {
 
   // Validate core environment variables
   const isProduction = process.env.NODE_ENV === 'production';
-  const required = ['OPENAI_API_KEY', 'CELO_RPC_URL', 'CELO_PRIVATE_KEY', 'AGENT_WALLET_ADDRESS', 'WALLET_ENCRYPTION_KEY'];
+  const required = ['LLM_API_KEY', 'CELO_RPC_URL', 'CELO_PRIVATE_KEY', 'AGENT_WALLET_ADDRESS', 'WALLET_ENCRYPTION_KEY'];
   const missing = required.filter(env => !process.env[env] || process.env[env]?.startsWith('your_'));
 
   if (missing.length > 0) {
