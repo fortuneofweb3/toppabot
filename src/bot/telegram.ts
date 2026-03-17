@@ -555,15 +555,37 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     }
 
     // Check if agent returned an order confirmation JSON
-    const orderMatch = response.match(
-      /```json\s*(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})\s*```/,
-    ) || response.match(
-      /(\{[\s\S]*?"type"\s*:\s*"order_confirmation"[\s\S]*?\})/,
-    );
+    // Try direct parse first (short-circuit returns pure JSON), then extract from text
+    let orderData: any = null;
+    try {
+      const parsed = JSON.parse(response);
+      if (parsed?.type === 'order_confirmation') orderData = parsed;
+    } catch {
+      // Not pure JSON — try to extract embedded JSON with brace matching
+      const idx = response.indexOf('"order_confirmation"');
+      if (idx !== -1) {
+        // Find the opening { before "order_confirmation"
+        let start = response.lastIndexOf('{', idx);
+        if (start !== -1) {
+          // Match braces to find the correct closing }
+          let depth = 0;
+          for (let j = start; j < response.length; j++) {
+            if (response[j] === '{') depth++;
+            else if (response[j] === '}') depth--;
+            if (depth === 0) {
+              try {
+                const extracted = JSON.parse(response.slice(start, j + 1));
+                if (extracted?.type === 'order_confirmation') orderData = extracted;
+              } catch { /* invalid JSON segment */ }
+              break;
+            }
+          }
+        }
+      }
+    }
 
-    if (orderMatch) {
+    if (orderData) {
       try {
-        const orderData = JSON.parse(orderMatch[1]);
         const { total, serviceFee } = calculateTotalPayment(orderData.productAmount);
 
         const orderId = generateOrderId();
