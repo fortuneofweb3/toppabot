@@ -248,16 +248,18 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
     await saveTask(task);
     res.json({ jsonrpc: '2.0', id: rpcId, result: { task } });
   } catch (err: any) {
+    console.error('[A2A Task Error]', err.message);
+    const safeMsg = 'The agent encountered an error processing your request.';
     task.status = {
       state: 'TASK_STATE_FAILED',
-      message: { role: 'ROLE_AGENT', parts: [{ text: `Error: ${err.message}` }] },
+      message: { role: 'ROLE_AGENT', parts: [{ text: safeMsg }] },
       timestamp: new Date().toISOString(),
     };
 
     task.history.push({
       messageId: crypto.randomUUID(),
       role: 'ROLE_AGENT',
-      parts: [{ text: `Error: ${err.message}` }],
+      parts: [{ text: safeMsg }],
     });
 
     await saveTask(task);

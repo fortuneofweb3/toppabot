@@ -95,7 +95,6 @@ export async function runHeartbeatForUser(
     const history = await getConversationSummary(userId);
 
     // Check for promotions if user has a known country
-    const alertGoals = goals.filter(g => g.category === 'alert' || g.category === 'preference');
     let promotions = 'None available.';
 
     // Extract country from goals (look for country codes or country names)

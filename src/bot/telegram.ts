@@ -247,7 +247,8 @@ async function cmdWallet(chatId: number, userId: string) {
       ]},
     });
   } catch (error: any) {
-    await tg('sendMessage', { chat_id: chatId, text: `❌ Error: ${error.message}` });
+    console.error('[Wallet Error]', error.message);
+    await tg('sendMessage', { chat_id: chatId, text: '❌ Could not fetch wallet info. Please try again.' });
   }
 }
 

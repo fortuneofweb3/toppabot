@@ -47,17 +47,14 @@ app.use(helmet({
 // Request logging (production uses combined format, dev uses dev format)
 app.use(morgan(isProduction ? 'combined' : 'dev'));
 
-// CORS configuration
-const corsOptions: cors.CorsOptions = {
-  origin: isProduction
-    ? (process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || ['https://toppa.cc'])
-    : ['http://localhost:3000', 'http://localhost:5173'],
-  credentials: true,
+// CORS: Public API routes (MCP, A2A, x402 paid endpoints) must be accessible from any origin.
+// Browser-only routes (if any future admin UI) can be restricted via ALLOWED_ORIGINS.
+app.use(cors({
+  origin: true, // Reflect request origin (equivalent to '*' but works with credentials)
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-PAYMENT', 'PAYMENT-SIGNATURE', 'X-402-PAYMENT', 'Mcp-Session-Id'],
+  allowedHeaders: ['Content-Type', 'Accept', 'X-PAYMENT', 'PAYMENT-SIGNATURE', 'X-402-PAYMENT', 'Mcp-Session-Id', 'X-Admin-Key'],
   exposedHeaders: ['PAYMENT-RESPONSE', 'X-Payment-Required'],
-};
-app.use(cors(corsOptions));
+}));
 
 // Rate limiting (prevent DDoS and brute force)
 const limiter = rateLimit({
@@ -414,9 +411,9 @@ async function x402Middleware(req: X402Request, res: Response, next: NextFunctio
   } catch (error: any) {
     // Release on unexpected error so hash isn't permanently blocked
     await releasePaymentHash(paymentHeader).catch(() => {});
+    console.error('[x402 Middleware Error]', error.message);
     res.status(402).json({
-      error: 'Payment verification error',
-      message: error.message,
+      error: 'Payment verification failed. Please check your payment and try again.',
     });
   }
 }
@@ -884,8 +881,9 @@ app.post('/mcp', paymentLimiter, (req: Request, res: Response, next: NextFunctio
   try {
     await handleMcpRequest(req, res);
   } catch (error: any) {
+    console.error('[MCP Error]', error.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'MCP request failed', message: error.message });
+      res.status(500).json({ error: 'MCP request failed' });
     }
   }
 });
@@ -910,14 +908,12 @@ app.get('/mcp', (_req: Request, res: Response) => {
 
 // A2A Agent Card discovery (Google Agent-to-Agent protocol)
 app.get('/.well-known/agent.json', (_req: Request, res: Response) => {
-  res.set('Access-Control-Allow-Origin', '*');
   res.set('Cache-Control', 'public, max-age=3600');
   res.json(generateAgentCard());
 });
 
 // A2A discovery for GET requests — return full Agent Card so scanners/testers find skills
 app.get('/a2a', (_req: Request, res: Response) => {
-  res.set('Access-Control-Allow-Origin', '*');
   res.set('Cache-Control', 'public, max-age=3600');
   res.json(generateAgentCard());
 });
@@ -927,10 +923,11 @@ app.post('/a2a', async (req: Request, res: Response) => {
   try {
     await handleA2ARequest(req, res);
   } catch (error: any) {
+    console.error('[A2A Error]', error.message);
     if (!res.headersSent) {
       res.status(500).json({
         jsonrpc: '2.0',
-        error: { code: -32603, message: error.message },
+        error: { code: -32603, message: 'Internal error' },
       });
     }
   }

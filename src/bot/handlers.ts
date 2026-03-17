@@ -149,7 +149,7 @@ export async function handleCallback(
     if ((match = data.match(/^order_confirm_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
 
-      if (!userId) { await answer('Error'); return; }
+      if (!userId) { await answer('Session error. Please try again.'); return; }
 
       const order = await pendingOrders.atomicTransition(orderId, 'pending_confirmation', 'pending_payment');
       if (!order) { await answer('Order expired or already confirmed.'); return; }
@@ -221,7 +221,7 @@ export async function handleCallback(
     if ((match = data.match(/^pay_accept_(order_\d{13}_[a-z0-9]{6})$/))) {
       const orderId = match[1];
 
-      if (!userId) { await answer('Error'); return; }
+      if (!userId) { await answer('Session error. Please try again.'); return; }
 
       const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'processing');
       if (!order) { await answer('Order expired or already processing.'); return; }
@@ -356,15 +356,19 @@ export async function handleCallback(
         if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
         await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
 
-        let errorMsg = error.message;
-        if (errorMsg.includes('Insufficient balance')) {
-          const address = await walletManager.getAddress(order.telegramId);
-          errorMsg = `Insufficient ${TOKEN_SYMBOL} balance. Deposit to:\n${address}`;
-        } else if (!errorMsg.includes('verification') && !errorMsg.includes('INVALID')) {
-          errorMsg = 'Transaction failed. Please try again.';
+        // Categorize errors — never expose raw error.message to users
+        let userMsg: string;
+        if (error.message.includes('Insufficient balance') || error.message.includes('balance')) {
+          userMsg = `Insufficient ${TOKEN_SYMBOL} balance. Deposit more via /wallet.`;
+        } else if (error.message.includes('verification') || error.message.includes('INVALID')) {
+          userMsg = 'Payment verification failed. Please try again.';
+        } else if (error.message.includes('operator') || error.message.includes('OPERATOR')) {
+          userMsg = 'Service provider error. Please check your details and try again.';
+        } else {
+          userMsg = 'Transaction failed. Please try again or contact support.';
         }
 
-        await editMsg(`❌ Transaction Failed\n\n${errorMsg}`);
+        await editMsg(`❌ Transaction Failed\n\n${userMsg}`);
       }
       return;
     }
@@ -420,7 +424,8 @@ export async function handleCallback(
           `WARNING: Anyone with this key controls your wallet. Never share it.`,
         );
       } catch (error: any) {
-        await editMsg(`Error: ${error.message}`);
+        console.error('[Export Error]', error.message);
+        await editMsg('❌ Failed to export private key. Please try again.');
       }
       await answer();
       return;
@@ -470,7 +475,8 @@ export async function handleCallback(
         );
       } catch (error: any) {
         console.error('[Withdraw Error]', error.message);
-        await editMsg(`❌ Withdrawal failed: ${error.message}`);
+        const msg = error.message.includes('Insufficient') ? 'Insufficient balance for withdrawal.' : 'Withdrawal failed. Please try again.';
+        await editMsg(`❌ ${msg}`);
       } finally {
         withdrawalsInProgress.delete(withdrawKey);
       }
@@ -503,7 +509,8 @@ export async function handleCallback(
           },
         );
       } catch (error: any) {
-        await editMsg(`❌ Error: ${error.message}`);
+        console.error('[Balance Error]', error.message);
+        await editMsg('❌ Could not fetch balance. Please try again.');
       }
       await answer();
       return;

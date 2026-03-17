@@ -144,23 +144,38 @@ function invalidateToken(product: 'airtime' | 'utilities' | 'giftcards') {
   else giftcardsToken = null;
 }
 
-async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  return withRetry(async () => {
-    const token = await getToken('airtime');
+// Product-specific config for the unified request function
+const PRODUCT_CONFIG = {
+  airtime: { baseUrl: AIRTIME_BASE_URL, accept: 'application/com.reloadly.topups-v1+json' },
+  utilities: { baseUrl: UTILITIES_BASE_URL, accept: undefined },
+  giftcards: { baseUrl: GIFTCARDS_BASE_URL, accept: 'application/com.reloadly.giftcards-v1+json' },
+} as const;
 
-    const response = await fetch(`${AIRTIME_BASE_URL}${path}`, {
+async function reloadlyRequest<T>(
+  product: 'airtime' | 'utilities' | 'giftcards',
+  method: 'GET' | 'POST',
+  path: string,
+  body?: any,
+): Promise<T> {
+  const { baseUrl, accept } = PRODUCT_CONFIG[product];
+
+  return withRetry(async () => {
+    const token = await getToken(product);
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (accept) headers['Accept'] = accept;
+
+    const response = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/com.reloadly.topups-v1+json',
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15000),
     });
 
     if (response.status === 401) {
-      invalidateToken('airtime');
+      invalidateToken(product);
     }
 
     if (!response.ok) {
@@ -177,70 +192,13 @@ async function airtimeRequest<T>(method: 'GET' | 'POST', path: string, body?: an
   });
 }
 
-async function utilitiesRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  return withRetry(async () => {
-    const token = await getToken('utilities');
-
-    const response = await fetch(`${UTILITIES_BASE_URL}${path}`, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (response.status === 401) {
-      invalidateToken('utilities');
-    }
-
-    if (!response.ok) {
-      try {
-        const err = await response.json();
-        throw parseReloadlyError(response.status, err);
-      } catch (e) {
-        if (e instanceof ReloadlyError) throw e;
-        throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
-      }
-    }
-
-    return response.json() as Promise<T>;
-  });
-}
-
-async function giftcardsRequest<T>(method: 'GET' | 'POST', path: string, body?: any): Promise<T> {
-  return withRetry(async () => {
-    const token = await getToken('giftcards');
-
-    const response = await fetch(`${GIFTCARDS_BASE_URL}${path}`, {
-      method,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/com.reloadly.giftcards-v1+json',
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (response.status === 401) {
-      invalidateToken('giftcards');
-    }
-
-    if (!response.ok) {
-      try {
-        const err = await response.json();
-        throw parseReloadlyError(response.status, err);
-      } catch (e) {
-        if (e instanceof ReloadlyError) throw e;
-        throw new ReloadlyError(`Request failed: ${response.status}`, 'UNKNOWN_ERROR', response.status);
-      }
-    }
-
-    return response.json() as Promise<T>;
-  });
-}
+// Convenience aliases
+const airtimeRequest = <T>(method: 'GET' | 'POST', path: string, body?: any) =>
+  reloadlyRequest<T>('airtime', method, path, body);
+const utilitiesRequest = <T>(method: 'GET' | 'POST', path: string, body?: any) =>
+  reloadlyRequest<T>('utilities', method, path, body);
+const giftcardsRequest = <T>(method: 'GET' | 'POST', path: string, body?: any) =>
+  reloadlyRequest<T>('giftcards', method, path, body);
 
 // ─── Types ───
 

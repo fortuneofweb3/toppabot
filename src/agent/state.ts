@@ -10,9 +10,6 @@ export interface AgentState {
   recipientDetails?: Record<string, string>;
   billType?: 'electricity' | 'water' | 'tv' | 'internet';
   provider?: string;
-  selfClawVerified?: boolean;
-  transactionHash?: string;
-  error?: string;
 
   // Security & Differentiation
   source?: 'telegram' | 'x402_api' | 'a2a';
