@@ -38,11 +38,11 @@ class UserSettingsStore {
       if (existing) return existing;
 
       // Default settings — insert and return.
-      // autoReview is OFF by default: it uses the user's private key to sign
-      // on-chain reputation transactions, so users must explicitly opt in.
+      // autoReview is ON by default: automatically submits 5★ on-chain reputation
+      // after each successful service. Users can toggle off via /settings.
       const defaults: UserSettings = {
         telegramId,
-        autoReviewEnabled: false,
+        autoReviewEnabled: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -50,10 +50,10 @@ class UserSettingsStore {
       return defaults;
     } catch (err: any) {
       console.error('[UserSettings] Failed to get settings:', err.message);
-      // Return safe defaults on error — never auto-enable private key usage
+      // Return defaults on error — auto-review on by default
       return {
         telegramId,
-        autoReviewEnabled: false,
+        autoReviewEnabled: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
