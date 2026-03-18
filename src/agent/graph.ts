@@ -508,8 +508,13 @@ export async function runToppaAgent(
   }
 
   // Save conversation to memory (non-blocking — don't slow down the response)
-  // Don't save raw order_confirmation JSON — it pollutes history and confuses the LLM on next turn
-  if (state.userAddress) {
+  // Skip error/fallback responses — they poison history and teach the LLM to repeat errors
+  // instead of calling tools. Also skip raw order_confirmation JSON.
+  const isErrorResponse = !finalResponse
+    || finalResponse.startsWith('I ran into a processing limit')
+    || finalResponse.startsWith("I'm having trouble");
+
+  if (state.userAddress && !isErrorResponse) {
     let memoryResponse = finalResponse;
     try {
       const parsed = JSON.parse(finalResponse);
