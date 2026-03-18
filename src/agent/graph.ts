@@ -141,7 +141,7 @@ const TOOL_GROUPS: Record<string, { tools: string[]; keywords: RegExp }> = {
   },
   gifts: {
     tools: ['buy_gift_card', 'search_gift_cards', 'get_gift_cards', 'get_gift_card_code'],
-    keywords: /gift.?card|voucher|steam|netflix|amazon|spotify|itunes|google.?play|playstation|xbox|uber/i,
+    keywords: /gift.?card|voucher|steam|netflix|amazon|spotify|itunes|google.?play|playstation|xbox|uber|binance|crypto|razer|pubg|free.?fire|riot|mastercard|jawaker|swype/i,
   },
   scheduling: {
     tools: ['schedule_task', 'my_tasks', 'cancel_task'],
@@ -174,7 +174,7 @@ const DIRECT_PRESENT_TOOLS: Record<string, { intro: string; suffix: string }> = 
   get_operators: { intro: 'Here are the mobile operators:', suffix: '\n\nWhich operator would you like to top up?' },
   get_billers: { intro: 'Here are the available billers:', suffix: '\n\nWhich one do you need? Just share the name and your account number.' },
   get_gift_cards: { intro: '', suffix: '\n\nInterested in any? Tell me the brand and I\'ll show you the options!' },
-  search_gift_cards: { intro: 'Here\'s what I found:', suffix: '\n\nWant to buy one? Just let me know which one and the amount!' },
+  // search_gift_cards intentionally excluded — LLM needs results to extract productId for buy_gift_card
   get_promotions: { intro: 'Here are the active promotions:', suffix: '' },
   check_country: { intro: '', suffix: '' },
 };
@@ -461,40 +461,65 @@ export async function runToppaAgent(
     const toolChoice = (i === 0 && toolGroupsMatched) ? 'required' as const : 'auto' as const;
 
     // Stream the LLM response — accumulate text + tool calls from chunks
-    const stream = await llm.chat.completions.create({
-      model: process.env.LLM_MODEL || 'deepseek-chat',
-      temperature: 0,
-      max_tokens: 800,
-      messages,
-      tools: activeTools,
-      tool_choice: toolChoice,
-      stream: true,
-    });
+    // 30s timeout prevents DeepSeek hangs from leaving the user with no reply
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), 30_000);
+
+    let stream;
+    try {
+      stream = await llm.chat.completions.create({
+        model: process.env.LLM_MODEL || 'deepseek-chat',
+        temperature: 0,
+        max_tokens: 800,
+        messages,
+        tools: activeTools,
+        tool_choice: toolChoice,
+        stream: true,
+      }, { signal: abortController.signal });
+    } catch (err: any) {
+      clearTimeout(timeout);
+      console.error(`[Agent] LLM call failed iter=${i}: ${err.message}`);
+      finalResponse = "I'm having trouble right now. Please try again in a moment.";
+      break;
+    }
 
     let textContent = '';
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (!delta) continue;
+    try {
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
 
-      // Text content — emit to stream callback
-      if (delta.content) {
-        textContent += delta.content;
-        options?.onStream?.(delta.content);
-      }
+        // Text content — emit to stream callback
+        if (delta.content) {
+          textContent += delta.content;
+          options?.onStream?.(delta.content);
+        }
 
-      // Tool calls — accumulate silently (args arrive in fragments)
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
-          if (tc.id) existing.id = tc.id;
-          if (tc.function?.name) existing.name = tc.function.name;
-          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-          pendingToolCalls.set(tc.index, existing);
+        // Tool calls — accumulate silently (args arrive in fragments)
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name = tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+            pendingToolCalls.set(tc.index, existing);
+          }
         }
       }
+    } catch (err: any) {
+      clearTimeout(timeout);
+      // If we got partial text before the timeout, use it
+      if (textContent.length > 10) {
+        console.warn(`[Agent] LLM stream interrupted iter=${i}, using partial text (${textContent.length} chars)`);
+      } else {
+        console.error(`[Agent] LLM stream failed iter=${i}: ${err.message}`);
+        finalResponse = "I'm having trouble right now. Please try again in a moment.";
+        break;
+      }
     }
+    clearTimeout(timeout);
 
     // Build assistant message for history
     const toolCallsArray = [...pendingToolCalls.values()];
