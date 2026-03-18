@@ -377,6 +377,7 @@ export async function runToppaAgent(
   let allDetectResults: Array<{ content: string; toolName?: string }> = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const iterStart = Date.now();
     // Dynamic tool_choice: force tool calling on first turn when message
     // contains phone numbers or action keywords (prevents DeepSeek skipping tools)
     const lastMsg = messages[messages.length - 1];
@@ -429,6 +430,11 @@ export async function runToppaAgent(
 
     // Build assistant message for history
     const toolCallsArray = [...pendingToolCalls.values()];
+    const llmMs = Date.now() - iterStart;
+    const toolNames = toolCallsArray.map(tc => tc.name).join(', ') || 'none';
+    const textLen = textContent.length;
+    console.log(`[Agent] iter=${i} llm=${llmMs}ms tools=[${toolNames}] text=${textLen}chars choice=${toolChoice}`);
+
     const assistantMessage: OpenAI.ChatCompletionMessageParam = {
       role: 'assistant',
       content: textContent || null,
@@ -446,6 +452,21 @@ export async function runToppaAgent(
     if (toolCallsArray.length === 0) {
       finalResponse = textContent;
       break;
+    }
+
+    // If LLM generated order_confirmation as text alongside tool calls, extract it
+    // instead of continuing the loop. DeepSeek sometimes generates both simultaneously.
+    if (useShortCircuit && textContent) {
+      try {
+        const parsed = JSON.parse(textContent.trim());
+        if (parsed?.type === 'order_confirmation') {
+          console.log(`[Agent] Short-circuit: extracted order_confirmation from text content`);
+          finalResponse = textContent.trim();
+          break;
+        }
+      } catch {
+        // Not pure JSON — continue with tool execution
+      }
     }
 
     // Execute all tool calls in parallel
