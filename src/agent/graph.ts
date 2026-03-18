@@ -55,11 +55,6 @@ const toolMap = new Map(tools.map(t => [t.name, t]));
 // Max tool-calling iterations to prevent infinite loops
 const MAX_ITERATIONS = 10;
 
-// Tool result truncation — prevent context window overflow from large API responses
-// 5000 chars allows full data plan listings (multiple operators per country) to pass through
-// without cutting off operators that appear later in the response
-const MAX_TOOL_RESULT_LENGTH = 5000;
-
 /**
  * System prompt — defines agent behavior
  */
@@ -196,38 +191,6 @@ async function executeToolCalls(
 
       // Log result length only — result may contain redeem codes, PII
       console.log(`[Tool Result] ${toolCall.function.name} → ${result.length} chars`);
-
-      // Truncate oversized results to prevent context window overflow
-      if (result.length > MAX_TOOL_RESULT_LENGTH) {
-        // Try to truncate JSON arrays intelligently (keep first N items)
-        try {
-          const parsed = JSON.parse(result);
-          if (Array.isArray(parsed)) {
-            // Reduce array items until under limit
-            let truncated = parsed;
-            while (JSON.stringify(truncated).length > MAX_TOOL_RESULT_LENGTH && truncated.length > 1) {
-              truncated = truncated.slice(0, Math.ceil(truncated.length / 2));
-            }
-            result = JSON.stringify({ results: truncated, truncated: true, totalResults: parsed.length });
-          } else if (typeof parsed === 'object' && parsed !== null) {
-            // For objects with array fields (e.g. { plans: [...] })
-            for (const key of Object.keys(parsed)) {
-              if (Array.isArray(parsed[key]) && parsed[key].length > 10) {
-                const total = parsed[key].length;
-                parsed[key] = parsed[key].slice(0, 10);
-                parsed[`${key}_truncated`] = true;
-                parsed[`${key}_total`] = total;
-              }
-            }
-            result = JSON.stringify(parsed);
-          }
-        } catch {
-          // Not valid JSON — hard truncate
-        }
-        if (result.length > MAX_TOOL_RESULT_LENGTH) {
-          result = result.slice(0, MAX_TOOL_RESULT_LENGTH - 50) + '... [truncated]';
-        }
-      }
 
       return { role: 'tool' as const, tool_call_id: toolCall.id, content: result };
     }),
