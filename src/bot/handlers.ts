@@ -407,6 +407,15 @@ export async function handleCallback(
           serviceArgs: { toolName: order.toolName, ...order.toolArgs },
         });
 
+        // Pre-execution check: if the staleness guard already marked this order failed
+        // (e.g. server was slow, user sent a new message after 3 min), abort before calling
+        // Reloadly to prevent double-purchases. Payment was already sent on-chain so it will
+        // be refunded in the catch block below (paymentTxHash is set, serviceSucceeded is false).
+        const freshOrder = await pendingOrders.get(orderId);
+        if (!freshOrder || freshOrder.status !== 'processing') {
+          throw new Error('Order was cancelled or timed out before service execution');
+        }
+
         const actionLabel = order.action === 'airtime' ? 'Sending airtime' :
                             order.action === 'data' ? 'Activating data plan' :
                             order.action === 'bill' ? 'Paying bill' :
