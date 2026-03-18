@@ -184,13 +184,25 @@ export async function refundPayer(
       PAYMENT_TOKEN_DECIMALS,
     );
 
-    const hash = await walletClient.writeContract({
-      address: PAYMENT_TOKEN_ADDRESS,
-      abi: erc20Abi,
-      functionName: 'transfer',
-      args: [payerAddress as `0x${string}`, amountWei],
-      ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
-    } as any);
+    // Retry on-chain tx up to 3 times — transient RPC errors ("Block not found",
+    // network timeouts) are common on Celo and usually resolve within seconds.
+    let hash = '' as `0x${string}`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        hash = await walletClient.writeContract({
+          address: PAYMENT_TOKEN_ADDRESS,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [payerAddress as `0x${string}`, amountWei],
+          ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+        } as any);
+        break; // Success — no need to retry
+      } catch (txErr: any) {
+        console.warn(`[Refund] Attempt ${attempt + 1}/3 failed: ${txErr.message}`);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+        else throw txErr; // Final attempt failed — propagate
+      }
+    }
 
     await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
 

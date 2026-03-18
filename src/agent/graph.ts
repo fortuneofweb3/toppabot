@@ -56,7 +56,9 @@ const toolMap = new Map(tools.map(t => [t.name, t]));
 const MAX_ITERATIONS = 10;
 
 // Tool result truncation — prevent context window overflow from large API responses
-const MAX_TOOL_RESULT_LENGTH = 3000;
+// 5000 chars allows full data plan listings (multiple operators per country) to pass through
+// without cutting off operators that appear later in the response
+const MAX_TOOL_RESULT_LENGTH = 5000;
 
 /**
  * System prompt — defines agent behavior
