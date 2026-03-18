@@ -612,14 +612,26 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     if (orderData) {
       // Block new orders while another is processing (payment in-flight / service executing).
       // The wallet lock would catch this at pay_accept time anyway, but warning early is better UX.
+      // Staleness guard: if a processing order is >3 min old, the server likely crashed mid-execution.
+      // The in-memory wallet lock resets on restart, but the MongoDB order stays stuck.
+      // Mark it failed and let the user continue rather than blocking them indefinitely.
+      const STALE_PROCESSING_MS = 3 * 60 * 1000;
       const activeOrder = await pendingOrders.getByUser(userId);
       if (activeOrder?.status === 'processing') {
-        await tg('sendMessage', {
-          chat_id: chatId,
-          text: `You have an order being processed right now. Please wait for it to complete before placing a new one.`,
-        });
-        console.log(`[Timing] Total message handling: ${Date.now() - msgStart}ms`);
-        return;
+        const orderAge = Date.now() - activeOrder.createdAt;
+        if (orderAge > STALE_PROCESSING_MS) {
+          console.warn(`[StaleOrder] Order ${activeOrder.orderId} stuck in processing for ${Math.round(orderAge / 1000)}s — marking failed`);
+          await pendingOrders.updateStatus(activeOrder.orderId, 'failed', {
+            error: 'Order timed out (server may have restarted during processing)',
+          });
+        } else {
+          await tg('sendMessage', {
+            chat_id: chatId,
+            text: `You have an order being processed right now. Please wait for it to complete before placing a new one.`,
+          });
+          console.log(`[Timing] Total message handling: ${Date.now() - msgStart}ms`);
+          return;
+        }
       }
 
       try {
