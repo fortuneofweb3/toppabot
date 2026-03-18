@@ -26,29 +26,87 @@ import { formatUserContext } from './goals';
 
 const llm = new OpenAI({
   apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com',
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/beta',
 });
 
-// Strip JSON Schema bloat that LLMs don't need (saves ~10-15% of tool tokens)
-function stripSchemaBloat(schema: any): any {
+/**
+ * Prepare JSON Schema for DeepSeek strict mode (constrained decoding).
+ *
+ * Strict mode requires:
+ * - All properties in `required`, `additionalProperties: false`
+ * - Only supported constructs: object, string, number, integer, boolean, array, enum, anyOf
+ *
+ * zodToJsonSchema produces `{ not: {} }` for optional fields which strict mode
+ * doesn't support. We simplify: optional fields become `anyOf: [type, null]`.
+ */
+function simplifyOptional(prop: any): any {
+  if (!prop || typeof prop !== 'object' || !Array.isArray(prop.anyOf)) return prop;
+  // Flatten nested anyOf and collect real types (strip `not` and `$ref`)
+  const realTypes: any[] = [];
+  let hasNull = false;
+  const flatten = (items: any[]) => {
+    for (const item of items) {
+      if (item.type === 'null') { hasNull = true; continue; }
+      if (item.not !== undefined || item.$ref !== undefined) continue;
+      if (Array.isArray(item.anyOf)) { flatten(item.anyOf); continue; }
+      realTypes.push(item);
+    }
+  };
+  flatten(prop.anyOf);
+  const desc = prop.description ? { description: prop.description } : {};
+  if (realTypes.length === 1 && hasNull) return { anyOf: [realTypes[0], { type: 'null' }], ...desc };
+  if (realTypes.length === 1) return { ...realTypes[0], ...desc };
+  return { anyOf: hasNull ? [...realTypes, { type: 'null' }] : realTypes, ...desc };
+}
+
+function prepareSchema(schema: any): any {
   if (typeof schema !== 'object' || !schema) return schema;
   delete schema.$schema;
-  delete schema.additionalProperties;
+  delete schema.definitions;
+  if (schema.type === 'object') {
+    // Record types (z.record) already have additionalProperties set to a schema — preserve them.
+    // Only force additionalProperties:false on structured objects (those with explicit properties).
+    if (schema.additionalProperties === undefined || schema.additionalProperties === true) {
+      schema.additionalProperties = false;
+    }
+    if (schema.properties) {
+      schema.required = Object.keys(schema.properties);
+      for (const key of Object.keys(schema.properties)) {
+        schema.properties[key] = simplifyOptional(schema.properties[key]);
+      }
+    }
+  }
   for (const key of Object.keys(schema)) {
-    if (typeof schema[key] === 'object') schema[key] = stripSchemaBloat(schema[key]);
+    if (typeof schema[key] === 'object') schema[key] = prepareSchema(schema[key]);
   }
   return schema;
 }
 
-// Convert tool Zod schemas to LLM function definitions (done once at module load)
+/** Check if a schema is fully compatible with strict mode (no freeform objects) */
+function isStrictCompatible(schema: any): boolean {
+  if (typeof schema !== 'object' || !schema) return true;
+  if (schema.type === 'object' && schema.additionalProperties !== undefined && schema.additionalProperties !== false) {
+    return false; // freeform object (z.record) — not strict-compatible
+  }
+  for (const key of Object.keys(schema)) {
+    if (typeof schema[key] === 'object' && !isStrictCompatible(schema[key])) return false;
+  }
+  return true;
+}
+
+// Convert tool Zod schemas to LLM function definitions
+// Strict mode uses constrained decoding — faster and more reliable tool calls
+// Tools with freeform objects (z.record) fall back to non-strict mode
 const allLlmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
-  const params = stripSchemaBloat(zodToJsonSchema(tool.schema) as Record<string, unknown>);
+  const params = prepareSchema(zodToJsonSchema(tool.schema) as Record<string, unknown>);
+  const strict = isStrictCompatible(params);
   return {
     type: 'function',
     function: {
       name: tool.name,
       description: tool.description,
       parameters: params,
+      strict,
     },
   };
 });
@@ -352,6 +410,8 @@ export async function runToppaAgent(
 
   // Select only relevant tools for this message (typically 5-10 instead of all 20)
   let activeTools = selectTools(userMessage);
+  // Track whether tool groups matched (non-casual, service-related message)
+  const toolGroupsMatched = activeTools.length > CORE_TOOLS.length;
 
   // Log context size before first LLM call — helps diagnose slow responses
   const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
@@ -360,13 +420,16 @@ export async function runToppaAgent(
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = Date.now();
-    const toolChoice: 'auto' = 'auto';
+    // First iteration: use "required" when tool groups matched to force immediate tool call
+    // (DeepSeek bug: "auto" frequently returns plain text instead of tool_calls)
+    // Subsequent iterations: "auto" so the model can generate text after getting tool results
+    const toolChoice = (i === 0 && toolGroupsMatched) ? 'required' as const : 'auto' as const;
 
     // Stream the LLM response — accumulate text + tool calls from chunks
     const stream = await llm.chat.completions.create({
       model: process.env.LLM_MODEL || 'deepseek-chat',
       temperature: 0,
-      max_tokens: 1024,
+      max_tokens: 800,
       messages,
       tools: activeTools,
       tool_choice: toolChoice,
