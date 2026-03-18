@@ -41,8 +41,9 @@ app.use(express.json({ limit: '1mb' }));
 
 // Security headers (XSS, clickjacking, MIME sniffing protection)
 app.use(helmet({
-  contentSecurityPolicy: false, // Allow SVG embedding for /agent-image.svg
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow scanners to embed agent image
 }));
 
 // Request logging (production uses combined format, dev uses dev format)
