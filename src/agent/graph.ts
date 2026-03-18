@@ -384,7 +384,7 @@ export async function runToppaAgent(
     const isAfterToolResult = lastMsg.role === 'tool';
     let toolChoice: 'auto' | 'required' = 'auto';
     if (i === 0 && !isAfterToolResult) {
-      const needsTool = /(\+?\d{7,15}|0[78]\d{9})|\b(airtime|data|top.?up|recharge|send|check|detect|operator|plan|bill|gift.?card|promo|biller|convert)\b/i;
+      const needsTool = /(\+?\d{7,15}|0[78]\d{9})|\b(airtime|data|top.?up|recharge|send|buy|check|detect|operator|plan|bill|gift.?card|promo|biller|convert|c?usd|\$\d)\b/i;
       if (needsTool.test(userMessage)) {
         toolChoice = 'required';
       }
