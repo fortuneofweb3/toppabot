@@ -105,6 +105,15 @@ export function getAgentRegistrationFile(): object {
     name: 'Toppa',
     description: 'Financial services AI agent for telecommunications and digital payments. Enables mobile airtime top-ups, data bundles, utility bill payments (electricity, water, internet, TV), and gift card purchases across 170+ countries. Payment infrastructure powered by Celo blockchain stablecoins (cUSD) using the x402 micropayment protocol.',
     image: `${apiUrl}/agent-image.png`,
+    active: true,
+    version: '2.0.0',
+    updatedAt: Math.floor(Date.now() / 1000),
+    x402Support: true,
+    tags: [
+      'airtime', 'data-bundles', 'bill-payment', 'gift-cards',
+      'telecom', 'digital-payments', 'celo', 'x402', 'stablecoin',
+      'AI-agents', 'multi-country',
+    ],
     services: [
       {
         name: 'send-airtime',
@@ -229,15 +238,13 @@ export function getAgentRegistrationFile(): object {
         ],
       },
     ],
-    x402Support: true,
-    active: true,
     registrations: agentId !== null ? [
       {
         agentId,
         agentRegistry: `eip155:${chainId}:${IDENTITY_REGISTRY}`,
       },
     ] : [],
-    supportedTrust: ['reputation'],
+    supportedTrust: ['reputation', 'crypto-economic'],
   };
 }
 
