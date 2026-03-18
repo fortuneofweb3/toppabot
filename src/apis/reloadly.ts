@@ -600,7 +600,7 @@ export async function buyGiftCard(params: {
 export async function getGiftCardRedeemCode(transactionId: number) {
   return giftcardsRequest<ReloadlyGiftCardRedeemCode[]>(
     'GET',
-    `/orders/${transactionId}/cards`
+    `/orders/transactions/${transactionId}/cards`
   );
 }
 
