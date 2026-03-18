@@ -548,6 +548,14 @@ app.get('/agent-image.png', (_req: Request, res: Response) => {
   res.sendFile(path.join(process.cwd(), 'public/toppa-project-pfp.png'));
 });
 
+// ERC-8004 Agent Registration File (tokenURI points here)
+app.get('/registration.json', (_req: Request, res: Response) => {
+  res.set('Content-Type', 'application/json');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.json(getAgentRegistrationFile());
+});
+
 // Legacy SVG route
 app.get('/agent-image.svg', (_req: Request, res: Response) => {
   res.set('Content-Type', 'image/svg+xml');

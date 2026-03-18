@@ -220,8 +220,8 @@ export function getAgentRegistrationFile(): object {
 }
 
 function getAgentURI(): string {
-  const registrationFile = getAgentRegistrationFile();
-  return `data:application/json;base64,${Buffer.from(JSON.stringify(registrationFile)).toString('base64')}`;
+  const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
+  return `${apiUrl}/registration.json`;
 }
 
 /**
