@@ -385,8 +385,6 @@ export async function runToppaAgent(
     const toolChoice: 'auto' = 'auto';
 
     // Stream the LLM response — accumulate text + tool calls from chunks
-    // 30s timeout per LLM call: DeepSeek can be slow under load, and users
-    // shouldn't wait more than ~30s for any single LLM round-trip.
     const stream = await llm.chat.completions.create({
       model: process.env.LLM_MODEL || 'deepseek-chat',
       temperature: 0,
@@ -395,7 +393,7 @@ export async function runToppaAgent(
       tools: llmTools,
       tool_choice: toolChoice,
       stream: true,
-    }, { signal: AbortSignal.timeout(30_000) });
+    });
 
     let textContent = '';
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
@@ -444,24 +442,7 @@ export async function runToppaAgent(
 
     // No tool calls → final text response
     if (toolCallsArray.length === 0) {
-      // Detect LLM timeout: empty response after ~30s means the abort signal closed the stream
-      if (!textContent && llmMs >= 28000) {
-        console.warn(`[Agent] LLM timeout: empty response after ${llmMs}ms (iter ${i})`);
-        // Retry once with reduced context — drop oldest half of history to reduce tokens
-        if (i === 0 && messages.length > 4) {
-          const systemMsg = messages[0];
-          const userMsg = messages[messages.length - 1];
-          // Keep system prompt + last 4 history messages + current user message
-          const recentHistory = messages.slice(1, -1).slice(-4);
-          messages.length = 0;
-          messages.push(systemMsg, ...recentHistory, userMsg);
-          console.log(`[Agent] Retrying with reduced context: ${messages.length} messages`);
-          continue;
-        }
-        finalResponse = "I'm having trouble with my AI backend right now. Please try again in a moment.";
-      } else {
-        finalResponse = textContent;
-      }
+      finalResponse = textContent;
       break;
     }
 
