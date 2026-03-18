@@ -80,16 +80,16 @@ async function executeServiceTool(
       const result = await buyGiftCard(args as any);
       // Retry fetching redeem codes — Reloadly may need a few seconds to generate them.
       // This is a read-only GET call (no duplicate purchase risk).
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 5; attempt++) {
         try {
           const codes = await getGiftCardRedeemCode(result.transactionId);
           if (codes && (Array.isArray(codes) ? codes.length > 0 : true)) {
             return { ...result, redeemCodes: codes };
           }
-        } catch {
-          // Codes not ready yet — wait and retry
+        } catch (err: any) {
+          console.warn(`[GiftCard] Code fetch attempt ${attempt + 1}/5 failed:`, err.message);
         }
-        if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
+        if (attempt < 4) await new Promise(r => setTimeout(r, 3000));
       }
       // Codes still not ready after retries — return without them.
       // User can ask the agent later: "get code for transaction <id>"
@@ -467,8 +467,9 @@ export async function handleCallback(
         const explorerUrl = `${EXPLORER_BASE}/tx/${txHash}`;
 
         const balanceRounded = parseFloat(newBalance).toFixed(2);
+        const actionTitle = order.action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         const completionText =
-          `✅ ${order.action.charAt(0).toUpperCase() + order.action.slice(1)} Complete!\n\n` +
+          `✅ ${actionTitle} Complete!\n\n` +
           `${formatServiceResult(order.toolName, result, order)}\n\n` +
           `Balance: ${balanceRounded} ${TOKEN_SYMBOL}`;
 
@@ -606,9 +607,11 @@ export async function handleCallback(
           }).join('\n---\n');
           await sendMsg(`🎁 Redeem Code(s):\n\n${formatted}`);
         } else {
+          console.warn(`[GiftCard] No codes returned for txn ${transactionId} — codes:`, JSON.stringify(codes));
           await sendMsg('Codes are still being generated. Try again in a minute.');
         }
-      } catch {
+      } catch (err: any) {
+        console.error(`[GiftCard] Code fetch failed for txn ${transactionId}:`, err.message);
         await sendMsg('Could not fetch codes yet. Try again in a minute.');
       }
       return;
