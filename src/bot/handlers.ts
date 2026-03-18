@@ -3,7 +3,6 @@ import { tg, TgCallbackQuery } from './tg-client';
 import { WalletManager } from '../wallet/manager';
 import { PendingOrderStore } from './pending-orders';
 import { verifyX402Payment, calculateTotalPayment } from '../blockchain/x402';
-import { recordTransaction } from '../blockchain/erc8004';
 import { submitAutoReputation } from '../blockchain/reputation';
 import { userSettingsStore } from './user-settings';
 import {
@@ -435,18 +434,6 @@ export async function handleCallback(
         recordSpending(order.telegramId, order.totalAmount);
         invalidateReloadlyBalanceCache();
 
-        await recordTransaction({
-          type: `${order.action}_telegram`,
-          amount: order.productAmount,
-          status: 'success',
-          metadata: {
-            telegramId: order.telegramId,
-            toolName: order.toolName,
-            paymentTx: txHash,
-            source: 'telegram',
-          },
-        }).catch((err: any) => console.error('[ERC-8004 Record Error]', err.message));
-
         const userSettings = await userSettingsStore.get(order.telegramId);
 
         if (userSettings.autoReviewEnabled) {
@@ -514,7 +501,7 @@ export async function handleCallback(
         await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
 
         // Auto-refund ONLY if the Reloadly service call itself failed.
-        // If service succeeded but bookkeeping (updateReceipt/recordTransaction) threw, do NOT refund.
+        // If service succeeded but bookkeeping (updateReceipt) threw, do NOT refund.
         let refunded = false;
         if (paymentTxHash && !serviceSucceeded) {
           try {
