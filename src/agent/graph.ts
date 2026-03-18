@@ -376,19 +376,13 @@ export async function runToppaAgent(
   // lost the detect_operator result before the fidelity check ran.
   let allDetectResults: Array<{ content: string; toolName?: string }> = [];
 
+  // Log context size before first LLM call — helps diagnose slow responses
+  const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
+  console.log(`[Agent] Context: ${messages.length} messages, ~${totalChars} chars, ${llmTools.length} tools`);
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = Date.now();
-    // Dynamic tool_choice: force tool calling on first turn when message
-    // contains phone numbers or action keywords (prevents DeepSeek skipping tools)
-    const lastMsg = messages[messages.length - 1];
-    const isAfterToolResult = lastMsg.role === 'tool';
-    let toolChoice: 'auto' | 'required' = 'auto';
-    if (i === 0 && !isAfterToolResult) {
-      const needsTool = /(\+?\d{7,15}|0[78]\d{9})|\b(airtime|data|top.?up|recharge|send|buy|check|detect|operator|plan|bill|gift.?card|promo|biller|convert|c?usd|\$\d)\b/i;
-      if (needsTool.test(userMessage)) {
-        toolChoice = 'required';
-      }
-    }
+    const toolChoice: 'auto' = 'auto';
 
     // Stream the LLM response — accumulate text + tool calls from chunks
     // 30s timeout per LLM call: DeepSeek can be slow under load, and users
