@@ -192,6 +192,19 @@ export function getAgentRegistrationFile(): object {
         protocol: 'A2A',
       },
       {
+        name: 'web',
+        description: 'Web interface for Toppa agent',
+        endpoint: 'https://toppa.cc',
+        method: 'GET',
+        protocol: 'Web',
+      },
+      {
+        name: 'telegram',
+        description: 'Telegram bot for airtime, data, bills, and gift cards',
+        endpoint: 'https://t.me/toppa402Bot',
+        protocol: 'Telegram',
+      },
+      {
         name: 'OASF',
         endpoint: 'https://github.com/agntcy/oasf/',
         version: '1.0.0',
