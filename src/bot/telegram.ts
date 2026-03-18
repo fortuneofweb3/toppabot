@@ -397,7 +397,7 @@ async function cmdRate(chatId: number, text: string) {
         `Rate for ${countryCode} (${currencyCode})\n\n` +
         `1 ${TOKEN_SYMBOL} = ${rate.toLocaleString('en-US')} ${currencyCode}\n\n` +
         `${examples}\n\n` +
-        `This is the Reloadly delivery rate for airtime/data.`,
+        `This is the Toppa delivery rate for airtime/data.`,
     });
   } catch {
     await tg('sendMessage', { chat_id: chatId, text: `Could not fetch rate for ${countryCode}. Try again later.` });
@@ -525,6 +525,7 @@ async function cmdExport(chatId: number) {
 // ─────────────────────────────────────────────────
 
 async function handleTextMessage(chatId: number, userId: string, userMessage: string) {
+  const msgStart = Date.now();
   trackActivity(userId, chatId).catch(() => {});
 
   try {
@@ -542,7 +543,9 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
       tgSilent('sendChatAction', { chat_id: chatId, action: 'typing' });
     }, 4000);
 
+    const balanceStart = Date.now();
     const { balance, address } = await walletManager.getBalance(userId);
+    console.log(`[Timing] Balance fetch: ${Date.now() - balanceStart}ms`);
 
     // Streaming: accumulate LLM text chunks and push native drafts to Telegram
     const draftId = Math.floor(Math.random() * 2147483647) + 1;
@@ -650,6 +653,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     } else {
       await sendLongMessage(chatId, stripMarkdown(response));
     }
+    console.log(`[Timing] Total message handling: ${Date.now() - msgStart}ms`);
   } catch (error: any) {
     console.error('[Telegram Bot Error]', { userId, error: error.message, type: error.name });
 
@@ -669,9 +673,11 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
 
 async function handleUpdate(update: TgUpdate): Promise<void> {
   try {
-    // Auto-create wallet for every user interaction
+    // Auto-create wallet for every user interaction (fire-and-forget — don't block message handling).
+    // Wallets are created on /start; this is defense-in-depth for edge cases.
+    // handleTextMessage fetches balance anyway, which verifies wallet existence.
     const fromId = update.message?.from?.id || update.callback_query?.from?.id;
-    if (fromId) await walletManager.getOrCreateWallet(fromId.toString());
+    if (fromId) walletManager.getOrCreateWallet(fromId.toString()).catch(() => {});
 
     // Callback query (inline button press)
     if (update.callback_query) {

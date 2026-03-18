@@ -572,7 +572,7 @@ app.get('/gift-cards', (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /gift-cards/:country', description: 'List gift card brands for a country', example: '/gift-cards/US', alternateEndpoint: 'GET /gift-cards/search?q=Steam' });
 });
 app.get('/transaction', (_req: Request, res: Response) => {
-  res.json({ endpoint: 'GET /transaction/:type/:id', description: 'Check transaction status', example: '/transaction/airtime/12345', params: { type: 'airtime | data | bill', id: 'Transaction ID from Reloadly' } });
+  res.json({ endpoint: 'GET /transaction/:type/:id', description: 'Check transaction status', example: '/transaction/airtime/12345', params: { type: 'airtime | data | bill', id: 'Transaction ID from the service provider' } });
 });
 
 // Get mobile operators for a country (for airtime)

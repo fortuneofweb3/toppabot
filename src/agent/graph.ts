@@ -120,9 +120,13 @@ Tool results have a "plans" array with cUSD and localAmount already calculated �
 NEVER put local currency amounts in productAmount or toolArgs.amount — always USD.
 
 EXECUTING PAID SERVICES:
-When source is 'telegram' or 'a2a', return order_confirmation JSON for paid actions:
-{"type":"order_confirmation","action":"airtime|data|bill|gift_card","description":"Short human-readable description","productAmount":5.00,"toolName":"send_airtime","toolArgs":{"phone":"+...","countryCode":"XX","amount":5.00}}
-productAmount and toolArgs.amount are ALWAYS in USD (cUSD). NEVER use local currency amounts.
+For paid actions, ALWAYS call the tool (send_airtime, send_data, pay_bill, buy_gift_card) — the system will handle the payment flow automatically.
+If you need to generate an order_confirmation directly, use the EXACT field names each tool expects:
+  Airtime/Data: {"type":"order_confirmation","action":"airtime","description":"...","productAmount":5.00,"toolName":"send_airtime","toolArgs":{"phone":"+...","countryCode":"XX","amount":5.00}}
+  Gift card: {"type":"order_confirmation","action":"gift_card","description":"...","productAmount":10.00,"toolName":"buy_gift_card","toolArgs":{"productId":123,"unitPrice":10.00,"recipientEmail":"user@example.com","quantity":1}}
+  Bill: {"type":"order_confirmation","action":"bill","description":"...","productAmount":20.00,"toolName":"pay_bill","toolArgs":{"billerId":456,"accountNumber":"...","amount":20.00}}
+CRITICAL: Gift card toolArgs use "unitPrice" NOT "amount". Always include productId and recipientEmail.
+productAmount and toolArgs amounts are ALWAYS in USD (cUSD). NEVER use local currency amounts.
 The bot handles payment confirmation and wallet deduction.
 For scheduled tasks, use schedule_task tool directly.
 For discovery (checking operators, promos, etc.), call tools normally.
@@ -352,19 +356,17 @@ export async function runToppaAgent(
     ? { userId: state.userAddress, chatId: (state as any).chatId || 0, walletAddress: state.walletAddress }
     : null;
 
-  // Build messages with system prompt
+  // Build system prompt and load conversation history in parallel (independent I/O)
+  const [systemPrompt, history] = await Promise.all([
+    buildSystemPrompt(state),
+    state.userAddress ? getConversationHistory(state.userAddress) : Promise.resolve([]),
+  ]);
+
   const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: await buildSystemPrompt(state) },
+    { role: 'system', content: systemPrompt },
+    ...history,
+    { role: 'user', content: userMessage },
   ];
-
-  // Load conversation history (provides memory across sessions)
-  if (state.userAddress) {
-    const history = await getConversationHistory(state.userAddress);
-    messages.push(...history);
-  }
-
-  // Add the current user message
-  messages.push({ role: 'user', content: userMessage });
 
   const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
   let finalResponse = '';
@@ -388,6 +390,8 @@ export async function runToppaAgent(
     }
 
     // Stream the LLM response — accumulate text + tool calls from chunks
+    // 30s timeout per LLM call: DeepSeek can be slow under load, and users
+    // shouldn't wait more than ~30s for any single LLM round-trip.
     const stream = await llm.chat.completions.create({
       model: process.env.LLM_MODEL || 'deepseek-chat',
       temperature: 0,
@@ -396,7 +400,7 @@ export async function runToppaAgent(
       tools: llmTools,
       tool_choice: toolChoice,
       stream: true,
-    });
+    }, { signal: AbortSignal.timeout(30_000) });
 
     let textContent = '';
     const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();

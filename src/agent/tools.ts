@@ -34,7 +34,7 @@ export interface Tool {
  */
 export const sendAirtimeTool: Tool = {
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 170+ countries via Reloadly. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsCUSD values from get_operators). This is a PAID service — payment is required before execution.",
+  description: "Send mobile airtime top-up to any phone number across 170+ countries. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsCUSD values from get_operators). This is a PAID service — payment is required before execution.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
@@ -175,7 +175,7 @@ export const sendDataTool: Tool = {
  */
 export const payBillTool: Tool = {
   name: "pay_bill",
-  description: "Pay a utility bill (electricity, water, TV, internet) via Reloadly. First use get_billers to find the billerId. Amount MUST be in USD. Use the FX rate from get_billers to convert local currency amounts. This is a PAID service — payment is required before execution.",
+  description: "Pay a utility bill (electricity, water, TV, internet). First use get_billers to find the billerId. Amount MUST be in USD. Use the FX rate from get_billers to convert local currency amounts. This is a PAID service — payment is required before execution.",
   schema: z.object({
     billerId: z.number().describe("Biller ID from get_billers"),
     accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),

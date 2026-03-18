@@ -66,7 +66,15 @@ async function getCollection(): Promise<Collection<ServiceReceipt>> {
   if (!_indexesCreated) {
     // Index on payment tx hash — unique to prevent receipt duplication/replay.
     // A given on-chain tx hash should only map to ONE service execution.
-    await _collection.createIndex({ paymentTxHash: 1 }, { unique: true });
+    try {
+      await _collection.createIndex({ paymentTxHash: 1 }, { unique: true });
+    } catch (err: any) {
+      // Handle existing non-unique index with same name — drop and recreate
+      if (err.code === 85 || err.codeName === 'IndexOptionsConflict') {
+        await _collection.dropIndex('paymentTxHash_1').catch(() => {});
+        await _collection.createIndex({ paymentTxHash: 1 }, { unique: true });
+      }
+    }
     // Index on source + createdAt for channel-specific queries
     await _collection.createIndex({ source: 1, createdAt: -1 });
     // Index on payer for user history

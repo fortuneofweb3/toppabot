@@ -60,6 +60,15 @@ async function executeServiceTool(
   toolArgs: Record<string, any>,
 ): Promise<any> {
   const args = sanitizeToolArgs(toolName, toolArgs);
+
+  // Normalize gift card args: LLM sometimes generates toolArgs with `amount` instead
+  // of `unitPrice` when it creates order_confirmation directly (bypassing tool short-circuit).
+  // Reloadly requires `unitPrice`.
+  if (toolName === 'buy_gift_card' && args.unitPrice == null && args.amount != null) {
+    args.unitPrice = args.amount;
+    delete args.amount;
+  }
+
   switch (toolName) {
     case 'send_airtime':
       return sendAirtime(args as any);
