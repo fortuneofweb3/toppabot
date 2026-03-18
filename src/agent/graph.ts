@@ -166,17 +166,23 @@ const CASUAL_MSG = /^(hey|hi|hello|yo|sup|what'?s up|gm|good morning|good evenin
 /**
  * Tools whose results can be presented directly without LLM interpretation.
  * When these are the sole tool call in iter 0, skip iter 1 entirely — saves ~10-20s.
- * Value is the intro text prepended to the result (empty = result is self-contained).
+ * intro: text before result (empty = result has its own header)
+ * suffix: follow-up prompt after result (empty = none)
  */
-const DIRECT_PRESENT_TOOLS: Record<string, string> = {
-  get_data_plans: 'Here are the available data plans:',
-  get_operators: 'Here are the mobile operators:',
-  get_billers: 'Here are the available billers:',
-  get_gift_cards: '',  // already has "Gift cards in XX (N products):" header
-  search_gift_cards: "Here's what I found:",
-  get_promotions: 'Here are the active promotions:',
-  check_country: '',   // already has "Services in XX:" header
+const DIRECT_PRESENT_TOOLS: Record<string, { intro: string; suffix: string }> = {
+  get_data_plans: { intro: 'Here are the available data plans:', suffix: '\n\nJust tell me which plan you\'d like and the phone number!' },
+  get_operators: { intro: 'Here are the mobile operators:', suffix: '\n\nWhich operator would you like to top up?' },
+  get_billers: { intro: 'Here are the available billers:', suffix: '\n\nWhich one do you need? Just share the name and your account number.' },
+  get_gift_cards: { intro: '', suffix: '\n\nInterested in any? Tell me the brand and I\'ll show you the options!' },
+  search_gift_cards: { intro: 'Here\'s what I found:', suffix: '\n\nWant to buy one? Just let me know which one and the amount!' },
+  get_promotions: { intro: 'Here are the active promotions:', suffix: '' },
+  check_country: { intro: '', suffix: '' },
 };
+
+/** Strip internal IDs from direct-present output — users don't need [id:123] etc. */
+function cleanForUser(text: string): string {
+  return text.replace(/\s*\[(?:id|productId|operatorId):\d+\]\s*/g, ' ').replace(/  +/g, ' ');
+}
 
 function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
   const selected = new Set<string>(CORE_TOOLS);
@@ -196,10 +202,24 @@ function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
   // Safety fallback: if no groups matched and this isn't a casual greeting,
   // include ALL tools. Better to send a few extra tools than miss the right one.
   if (selected.size <= CORE_TOOLS.length && !CASUAL_MSG.test(userMessage.trim())) {
-    return [...allLlmTools];
+    return normalizeStrictMode([...allLlmTools]);
   }
 
-  return [...selected].map(name => llmToolMap.get(name)!).filter(Boolean);
+  const tools = [...selected].map(name => llmToolMap.get(name)!).filter(Boolean);
+  return normalizeStrictMode(tools);
+}
+
+/**
+ * DeepSeek requires ALL tools in a request to have the same strict mode.
+ * If any tool is non-strict (e.g. schedule_task), set all to non-strict.
+ */
+function normalizeStrictMode(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
+  const hasNonStrict = tools.some(t => (t.function as any).strict === false);
+  if (!hasNonStrict) return tools;
+  return tools.map(t => ({
+    ...t,
+    function: { ...t.function, strict: false },
+  }));
 }
 
 /**
@@ -551,9 +571,11 @@ export async function runToppaAgent(
     if (toolCallsArray.length === 1) {
       const tcName = toolCallsArray[0].name;
       const result = toolResults[0].content;
-      const intro = DIRECT_PRESENT_TOOLS[tcName];
-      if (intro !== undefined && !result.startsWith('{"error"')) {
-        finalResponse = intro ? `${intro}\n\n${result}` : result;
+      const dp = DIRECT_PRESENT_TOOLS[tcName];
+      if (dp !== undefined && !result.startsWith('{"error"')) {
+        const clean = cleanForUser(result);
+        const parts = [dp.intro, clean, dp.suffix].filter(Boolean);
+        finalResponse = parts.join('\n\n');
         console.log(`[Agent] Direct-present: ${tcName} (skipped LLM iter ${i + 1})`);
         break;
       }

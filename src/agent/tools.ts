@@ -244,7 +244,7 @@ export const searchGiftCardsTool: Tool = {
           text += '\n  ' + pairs.join(' | ');
         } else if (p.denominationType === 'RANGE') {
           const max = p.maxSenderDenomination ? Math.min(p.maxSenderDenomination, balance) : balance;
-          text += ` | Range: ${p.minSenderDenomination}-${max} cUSD`;
+          text += ` | Range: ${(p.minSenderDenomination || 0).toFixed(2)}-${max.toFixed(2)} cUSD`;
         }
         if (p.redeemInstruction?.concise) text += `\n  Redeem: ${p.redeemInstruction.concise}`;
         return text;
@@ -284,7 +284,7 @@ export const getGiftCardsTool: Tool = {
       }
       let text = `Gift cards in ${countryCode.toUpperCase()} (${products.length} products):\n`;
       text += Array.from(brands.entries()).slice(0, 20).map(([name, b]) => {
-        return `${name} | ${b.minPrice}-${b.maxPrice} cUSD${b.category ? ' | ' + b.category : ''}`;
+        return `${name} | ${b.minPrice.toFixed(2)}-${b.maxPrice.toFixed(2)} cUSD${b.category ? ' | ' + b.category : ''}`;
       }).join('\n');
       return text;
     } catch (error: any) {
