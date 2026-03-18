@@ -1,6 +1,8 @@
 import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
 import { celo, celoSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 /**
  * ERC-8004: Trustless Agents — On-chain identity and reputation on Celo
@@ -94,6 +96,22 @@ let cachedAgentId: bigint | null = null;
  *
  * Fields: type, name, description, image, services, x402Support, active, registrations, supportedTrust
  */
+
+// Pre-load agent image as base64 data URI (cached at module load)
+// Inline data URI avoids external fetch issues with scanner image proxies
+let _agentImageDataUri: string | null = null;
+function getAgentImageDataUri(): string {
+  if (!_agentImageDataUri) {
+    try {
+      const pngBuffer = readFileSync(join(process.cwd(), 'public/toppa-project-pfp.png'));
+      _agentImageDataUri = `data:image/png;base64,${pngBuffer.toString('base64')}`;
+    } catch {
+      _agentImageDataUri = `${process.env.API_URL || 'https://api.toppa.cc'}/agent-image.png`;
+    }
+  }
+  return _agentImageDataUri;
+}
+
 export function getAgentRegistrationFile(): object {
   const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
   const agentId = process.env.AGENT_ID ? parseInt(process.env.AGENT_ID) : null;
@@ -103,7 +121,7 @@ export function getAgentRegistrationFile(): object {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
     name: 'Toppa',
     description: 'Financial services AI agent for telecommunications and digital payments. Enables mobile airtime top-ups, data bundles, utility bill payments (electricity, water, internet, TV), and gift card purchases across 170+ countries. Payment infrastructure powered by Celo blockchain stablecoins (cUSD) using the x402 micropayment protocol.',
-    image: `${apiUrl}/agent-image.png`,
+    image: getAgentImageDataUri(),
     services: [
       {
         name: 'send-airtime',
