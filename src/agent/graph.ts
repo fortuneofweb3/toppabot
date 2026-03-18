@@ -112,7 +112,10 @@ ALWAYS show cUSD FIRST. Only add local equivalent in parentheses if you know the
   Bad: "1,500 NGN" (missing cUSD = WRONG)
 
 When listing plans: each line starts with cUSD price, then local equivalent, then description.
-When a user says a local amount, convert it: "5000 NGN at rate 1650 = 3.03 cUSD"
+When a user says a local amount, convert with 4 decimal places to avoid rounding errors:
+  "200 NGN at rate 1206 = 0.1658 cUSD" (NOT 0.17 — that sends 205 NGN instead of 200)
+  "5000 NGN at rate 1650 = 3.0303 cUSD" (NOT 3.03)
+Use EXACT division: localAmount / fxRate, keep 4 decimals. Rounding causes wrong amounts.
 Tool results have a "plans" array with cUSD and localAmount already calculated — use those directly.
 NEVER put local currency amounts in productAmount or toolArgs.amount — always USD.
 
