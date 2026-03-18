@@ -8,12 +8,15 @@ import { formatUserContext } from './goals';
 /**
  * Toppa Agent — LLM tool-calling loop (DeepSeek via OpenAI-compatible SDK)
  *
- * DeepSeek reliability hardening:
- * - Beta endpoint with strict mode (schema-enforced tool args)
- * - Dynamic tool_choice: "required" for operational queries, "auto" after tool results
- * - Temperature 0 for deterministic tool calling
+ * The LLM receives ALL tools and decides what to call. No keyword routing —
+ * the model is smart enough to pick the right tools from context.
+ *
+ * Performance wins (kept):
+ * - Strict mode schemas for constrained decoding (faster tool args)
+ * - Pre-formatted text tool results (less tokens for the LLM)
+ * - 30s timeout prevents silent hangs
+ * - Payment short-circuit skips a round trip for paid tool calls
  * - Post-response fidelity check catches operator name mismatches
- * - Tool call logging for debugging
  *
  * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
  * they return payment_required responses instead of executing Reloadly directly.
@@ -111,116 +114,27 @@ const allLlmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
   };
 });
 
-// Fast lookup: tool name → LLM definition, tool name → tool function
-const llmToolMap = new Map(allLlmTools.map(t => [t.function.name, t]));
+// Fast lookup: tool name → tool function
 const toolMap = new Map(tools.map(t => [t.name, t]));
 
 // Max tool-calling iterations — most queries complete in 2-3, cap at 5 to prevent runaway
 const MAX_ITERATIONS = 5;
 
 /**
- * Dynamic tool selection — only send relevant tools per request.
- *
- * Instead of sending all 20 tools on every message (64% of payload),
- * we group tools by category and select based on the user message.
- * Core tools (detect_operator, save_instruction, convert_currency) are always included.
- * This reduces active tools from 20 to ~6-10 per request.
- */
-const TOOL_GROUPS: Record<string, { tools: string[]; keywords: RegExp }> = {
-  airtime: {
-    tools: ['send_airtime', 'get_operators'],
-    keywords: /airtime|recharge|top.?up|credit|units|\bsend\b.*\d|operators?|network/i,
-  },
-  data: {
-    tools: ['send_data', 'get_data_plans'],
-    keywords: /\bdata\b|bundle|internet|mb\b|gb\b|plans?\b/i,
-  },
-  bills: {
-    tools: ['pay_bill', 'get_billers'],
-    keywords: /bill|electric|water|tv\b|dstv|gotv|startimes|utility|meter|smartcard/i,
-  },
-  gifts: {
-    tools: ['buy_gift_card', 'search_gift_cards', 'get_gift_cards', 'get_gift_card_code'],
-    keywords: /gift.?card|voucher|steam|netflix|amazon|spotify|itunes|google.?play|playstation|xbox|uber|binance|crypto|razer|pubg|free.?fire|riot|mastercard|jawaker|swype/i,
-  },
-  scheduling: {
-    tools: ['schedule_task', 'my_tasks', 'cancel_task'],
-    keywords: /schedul|remind|later|tomorrow|tonight|weekly|monthly|recurring|\bat\s+\d/i,
-  },
-  discovery: {
-    tools: ['check_country', 'get_promotions'],
-    keywords: /country|available|services|promo|bonus|deal|offer/i,
-  },
-  memory: {
-    tools: ['get_instructions', 'remove_instruction'],
-    keywords: /remember|forget|saved|instructions|preferences|what do you know/i,
-  },
-};
-
-// Always included — essential for most interactions
-const CORE_TOOLS = ['detect_operator', 'save_instruction', 'convert_currency'];
-
-// Short casual messages that don't need extra tools
-const CASUAL_MSG = /^(hey|hi|hello|yo|sup|what'?s up|gm|good morning|good evening|thanks|thank you|ok|okay|cool|bye|later)\b/i;
-
-/**
- * Tools whose results can be presented directly without LLM interpretation.
- * When these are the sole tool call in iter 0, skip iter 1 entirely — saves ~10-20s.
- * intro: text before result (empty = result has its own header)
- * suffix: follow-up prompt after result (empty = none)
- */
-const DIRECT_PRESENT_TOOLS: Record<string, { intro: string; suffix: string }> = {
-  get_data_plans: { intro: 'Here are the available data plans:', suffix: '\n\nJust tell me which plan you\'d like and the phone number!' },
-  get_operators: { intro: 'Here are the mobile operators:', suffix: '\n\nWhich operator would you like to top up?' },
-  get_billers: { intro: 'Here are the available billers:', suffix: '\n\nWhich one do you need? Just share the name and your account number.' },
-  get_gift_cards: { intro: '', suffix: '\n\nInterested in any? Tell me the brand and I\'ll show you the options!' },
-  // search_gift_cards intentionally excluded — LLM needs results to extract productId for buy_gift_card
-  get_promotions: { intro: 'Here are the active promotions:', suffix: '' },
-  check_country: { intro: '', suffix: '' },
-};
-
-/** Strip internal IDs from direct-present output — users don't need [id:123] etc. */
-function cleanForUser(text: string): string {
-  return text.replace(/\s*\[(?:id|productId|operatorId):\d+\]\s*/g, ' ').replace(/  +/g, ' ');
-}
-
-function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
-  const selected = new Set<string>(CORE_TOOLS);
-
-  for (const group of Object.values(TOOL_GROUPS)) {
-    if (group.keywords.test(userMessage)) {
-      for (const name of group.tools) selected.add(name);
-    }
-  }
-
-  // Phone numbers → add airtime + data tools
-  if (/(?:\+?\d[\d\s-]{7,})/.test(userMessage)) {
-    for (const name of TOOL_GROUPS.airtime.tools) selected.add(name);
-    for (const name of TOOL_GROUPS.data.tools) selected.add(name);
-  }
-
-  // Safety fallback: if no groups matched and this isn't a casual greeting,
-  // include ALL tools. Better to send a few extra tools than miss the right one.
-  if (selected.size <= CORE_TOOLS.length && !CASUAL_MSG.test(userMessage.trim())) {
-    return normalizeStrictMode([...allLlmTools]);
-  }
-
-  const tools = [...selected].map(name => llmToolMap.get(name)!).filter(Boolean);
-  return normalizeStrictMode(tools);
-}
-
-/**
  * DeepSeek requires ALL tools in a request to have the same strict mode.
- * If any tool is non-strict (e.g. schedule_task), set all to non-strict.
+ * If any tool is non-strict (e.g. schedule_task with z.record), set all to non-strict.
  */
-function normalizeStrictMode(tools: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
-  const hasNonStrict = tools.some(t => (t.function as any).strict === false);
-  if (!hasNonStrict) return tools;
-  return tools.map(t => ({
+function normalizeStrictMode(toolDefs: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
+  const hasNonStrict = toolDefs.some(t => (t.function as any).strict === false);
+  if (!hasNonStrict) return toolDefs;
+  return toolDefs.map(t => ({
     ...t,
     function: { ...t.function, strict: false },
   }));
 }
+
+// All tools sent to LLM every request — let the model decide what to call
+const llmTools = normalizeStrictMode(allLlmTools);
 
 /**
  * System prompt — defines agent behavior
@@ -443,22 +357,12 @@ export async function runToppaAgent(
   // Accumulate detect_operator results across ALL iterations for fidelity check.
   let allDetectResults: Array<{ content: string; toolName?: string }> = [];
 
-  // Select only relevant tools for this message (typically 5-10 instead of all 20)
-  let activeTools = selectTools(userMessage);
-  // Track whether tool groups matched (non-casual, service-related message)
-  const toolGroupsMatched = activeTools.length > CORE_TOOLS.length;
-
   // Log context size before first LLM call — helps diagnose slow responses
   const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
-  const toolNames = activeTools.map(t => t.function.name).join(', ');
-  console.log(`[Agent] Context: ${messages.length} msgs, ~${totalChars} chars, ${activeTools.length}/${allLlmTools.length} tools [${toolNames}]`);
+  console.log(`[Agent] Context: ${messages.length} msgs, ~${totalChars} chars, ${llmTools.length} tools`);
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = Date.now();
-    // First iteration: use "required" when tool groups matched to force immediate tool call
-    // (DeepSeek bug: "auto" frequently returns plain text instead of tool_calls)
-    // Subsequent iterations: "auto" so the model can generate text after getting tool results
-    const toolChoice = (i === 0 && toolGroupsMatched) ? 'required' as const : 'auto' as const;
 
     // Stream the LLM response — accumulate text + tool calls from chunks
     // 30s timeout prevents DeepSeek hangs from leaving the user with no reply
@@ -472,8 +376,8 @@ export async function runToppaAgent(
         temperature: 0,
         max_tokens: 800,
         messages,
-        tools: activeTools,
-        tool_choice: toolChoice,
+        tools: llmTools,
+        tool_choice: 'auto',
         stream: true,
       }, { signal: abortController.signal });
     } catch (err: any) {
@@ -526,7 +430,7 @@ export async function runToppaAgent(
     const llmMs = Date.now() - iterStart;
     const toolNames = toolCallsArray.map(tc => tc.name).join(', ') || 'none';
     const textLen = textContent.length;
-    console.log(`[Agent] iter=${i} llm=${llmMs}ms tools=[${toolNames}] text=${textLen}chars choice=${toolChoice}`);
+    console.log(`[Agent] iter=${i} llm=${llmMs}ms tools=[${toolNames}] text=${textLen}chars`);
 
     const assistantMessage: OpenAI.ChatCompletionMessageParam = {
       role: 'assistant',
@@ -587,44 +491,6 @@ export async function runToppaAgent(
       if (orderJson) {
         finalResponse = orderJson;
         break;
-      }
-    }
-
-    // Direct presentation: if we called a single list tool and it succeeded,
-    // skip iter 1 entirely and return the result with a brief intro.
-    // Saves ~10-20s of LLM processing for queries like "show data plans in Nigeria".
-    if (toolCallsArray.length === 1) {
-      const tcName = toolCallsArray[0].name;
-      const result = toolResults[0].content;
-      const dp = DIRECT_PRESENT_TOOLS[tcName];
-      if (dp !== undefined && !result.startsWith('{"error"')) {
-        const clean = cleanForUser(result);
-        const parts = [dp.intro, clean, dp.suffix].filter(Boolean);
-        finalResponse = parts.join('\n\n');
-        console.log(`[Agent] Direct-present: ${tcName} (skipped LLM iter ${i + 1})`);
-        break;
-      }
-    }
-
-    // Expand active tools if tool calls referenced tools not yet included.
-    // E.g., detect_operator in iter 1 → LLM wants send_airtime in iter 2.
-    for (const tc of toolCallsArray) {
-      // If the LLM called a tool that returned payment_required, ensure paid tools are available
-      for (const tr of toolResults) {
-        try {
-          const parsed = JSON.parse(tr.content);
-          if (parsed.status === 'payment_required' && parsed.service) {
-            const svcTool = llmToolMap.get(parsed.service);
-            if (svcTool && !activeTools.includes(svcTool)) activeTools.push(svcTool);
-          }
-        } catch { /* not JSON */ }
-      }
-      // If the LLM called detect_operator, add airtime + data tools for the next turn
-      if (tc.name === 'detect_operator') {
-        for (const name of ['send_airtime', 'get_operators', 'send_data', 'get_data_plans']) {
-          const t = llmToolMap.get(name);
-          if (t && !activeTools.includes(t)) activeTools.push(t);
-        }
       }
     }
 
