@@ -610,6 +610,18 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     }
 
     if (orderData) {
+      // Block new orders while another is processing (payment in-flight / service executing).
+      // The wallet lock would catch this at pay_accept time anyway, but warning early is better UX.
+      const activeOrder = await pendingOrders.getByUser(userId);
+      if (activeOrder?.status === 'processing') {
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: `You have an order being processed right now. Please wait for it to complete before placing a new one.`,
+        });
+        console.log(`[Timing] Total message handling: ${Date.now() - msgStart}ms`);
+        return;
+      }
+
       try {
         const { total, serviceFee } = calculateTotalPayment(orderData.productAmount);
 
