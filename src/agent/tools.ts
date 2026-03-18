@@ -34,11 +34,11 @@ export interface Tool {
  */
 export const sendAirtimeTool: Tool = {
   name: "send_airtime",
-  description: "Send mobile airtime top-up to any phone number across 170+ countries. Operator is auto-detected from the phone number. Amount MUST be in USD (use fixedAmountsCUSD values from get_operators). This is a PAID service — payment is required before execution.",
+  description: "Send airtime top-up to a phone number. Amount in cUSD.",
   schema: z.object({
-    phone: z.string().describe("Recipient phone number (e.g. 08147658721)"),
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsCUSD or within minAmountCUSD-maxAmountCUSD range."),
+    phone: z.string().describe("Recipient phone number"),
+    countryCode: z.string().describe("Country ISO code"),
+    amount: z.number().describe("Amount in cUSD"),
   }),
   func: async ({ phone, countryCode, amount }) => {
     phone = sanitizePhone(phone);
@@ -61,9 +61,9 @@ export const sendAirtimeTool: Tool = {
  */
 export const getOperatorsTool: Tool = {
   name: "get_operators",
-  description: "List available mobile operators for a country. Use this to show the user which operators are supported for airtime top-ups.",
+  description: "List mobile operators for a country with supported top-up amounts.",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }, ctx) => {
     try {
@@ -103,9 +103,9 @@ export const getOperatorsTool: Tool = {
  */
 export const getDataPlansTool: Tool = {
   name: "get_data_plans",
-  description: "List available mobile data plan operators for a country. Returns operators that offer data bundles. Use the operatorId from results to send data with send_data.",
+  description: "List data plan operators for a country with available bundles.",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }, ctx) => {
     try {
@@ -146,12 +146,12 @@ export const getDataPlansTool: Tool = {
  */
 export const sendDataTool: Tool = {
   name: "send_data",
-  description: "Send mobile data bundle to a phone number. Use get_data_plans first to find the operatorId. Amount MUST be in USD (use fixedAmountsCUSD values from get_data_plans). This is a PAID service — payment is required before execution.",
+  description: "Send a data bundle to a phone number. Amount in cUSD.",
   schema: z.object({
     phone: z.string().describe("Recipient phone number"),
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
-    amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsCUSD or within minAmountCUSD-maxAmountCUSD range."),
-    operatorId: z.number().describe("Data operator ID from get_data_plans"),
+    countryCode: z.string().describe("Country ISO code"),
+    amount: z.number().describe("Amount in cUSD"),
+    operatorId: z.number().describe("Operator ID from get_data_plans"),
   }),
   func: async ({ phone, countryCode, amount, operatorId }) => {
     phone = sanitizePhone(phone);
@@ -175,11 +175,11 @@ export const sendDataTool: Tool = {
  */
 export const payBillTool: Tool = {
   name: "pay_bill",
-  description: "Pay a utility bill (electricity, water, TV, internet). First use get_billers to find the billerId. Amount MUST be in USD. Use the FX rate from get_billers to convert local currency amounts. This is a PAID service — payment is required before execution.",
+  description: "Pay a utility bill (electricity, water, TV, internet). Amount in cUSD.",
   schema: z.object({
     billerId: z.number().describe("Biller ID from get_billers"),
-    accountNumber: z.string().describe("Customer's meter number, smartcard number, or account number"),
-    amount: z.number().describe("Amount in USD (cUSD). Convert local currency using the fxRate from get_billers."),
+    accountNumber: z.string().describe("Meter/smartcard/account number"),
+    amount: z.number().describe("Amount in cUSD"),
   }),
   func: async ({ billerId, accountNumber, amount }) => {
     const { total } = calculateTotalPayment(amount);
@@ -200,9 +200,9 @@ export const payBillTool: Tool = {
  */
 export const getBillersTool: Tool = {
   name: "get_billers",
-  description: "List available utility billers for a country. Types: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT.",
+  description: "List utility billers for a country (electricity, water, TV, internet).",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    countryCode: z.string().describe("Country ISO code"),
     type: z.string().optional().nullable().describe("Bill type filter: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT"),
   }),
   func: async ({ countryCode, type }, ctx) => {
@@ -241,10 +241,10 @@ export const getBillersTool: Tool = {
  */
 export const searchGiftCardsTool: Tool = {
   name: "search_gift_cards",
-  description: "Search for available gift cards by brand name (e.g. 'Amazon', 'Steam', 'Netflix', 'Spotify', 'PlayStation', 'Xbox', 'Uber', 'Google Play', 'Apple'). Returns product IDs needed to buy gift cards.",
+  description: "Search gift cards by brand name (e.g. Amazon, Steam, Netflix).",
   schema: z.object({
-    query: z.string().describe("Brand or product name to search for (e.g. 'Steam', 'Netflix', 'Amazon')"),
-    countryCode: z.string().optional().nullable().describe("Country ISO code to filter by (e.g. US, NG, KE)"),
+    query: z.string().describe("Brand name to search (e.g. Steam, Netflix)"),
+    countryCode: z.string().optional().nullable().describe("Country ISO code filter"),
   }),
   func: async ({ query, countryCode }) => {
     try {
@@ -276,9 +276,9 @@ export const searchGiftCardsTool: Tool = {
  */
 export const getGiftCardsTool: Tool = {
   name: "get_gift_cards",
-  description: "List all available gift card brands for a specific country. Returns brands like Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, etc.",
+  description: "List available gift card brands for a country.",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. US, NG, KE, GB)"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }) => {
     try {
@@ -315,12 +315,12 @@ export const getGiftCardsTool: Tool = {
  */
 export const buyGiftCardTool: Tool = {
   name: "buy_gift_card",
-  description: "Purchase a gift card. Use search_gift_cards first to get the productId. Amount MUST be in USD (use fixedAmountsCUSD from search_gift_cards). This is a PAID service — payment is required before execution.",
+  description: "Buy a gift card by productId. Amount in cUSD.",
   schema: z.object({
-    productId: z.number().describe("Product ID from search_gift_cards or get_gift_cards"),
-    amount: z.number().describe("Amount in USD (cUSD). Use fixedAmountsCUSD values from search_gift_cards."),
-    recipientEmail: z.string().describe("Email to deliver the gift card to"),
-    quantity: z.number().optional().nullable().describe("Number of cards to buy. Default 1."),
+    productId: z.number().describe("Product ID from search_gift_cards"),
+    amount: z.number().describe("Amount in cUSD"),
+    recipientEmail: z.string().describe("Delivery email"),
+    quantity: z.number().optional().nullable().describe("Number of cards (default 1)"),
   }),
   func: async ({ productId, amount, recipientEmail, quantity }) => {
     const { total } = calculateTotalPayment(amount);
@@ -341,7 +341,7 @@ export const buyGiftCardTool: Tool = {
  */
 export const getGiftCardCodeTool: Tool = {
   name: "get_gift_card_code",
-  description: "Get the redeem code/PIN for a purchased gift card. Call this after buy_gift_card with the transactionId.",
+  description: "Get redeem code/PIN for a purchased gift card.",
   schema: z.object({
     transactionId: z.number().describe("Transaction ID from buy_gift_card"),
   }),
@@ -374,9 +374,9 @@ export const getGiftCardCodeTool: Tool = {
  */
 export const checkCountryTool: Tool = {
   name: "check_country",
-  description: "Check what services (airtime, data, bills, gift cards) are available in a specific country. Use this FIRST when a user mentions a country to know what you can offer them.",
+  description: "Check what services are available in a country.",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, US, GB, SI)"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }) => {
     try {
@@ -394,9 +394,9 @@ export const checkCountryTool: Tool = {
  */
 export const getPromotionsTool: Tool = {
   name: "get_promotions",
-  description: "Get active operator promotions and bonus deals for a country. Useful to tell users about extra value they can get (e.g. 'buy X get 2X bonus').",
+  description: "Get active promotions and bonus deals for a country.",
   schema: z.object({
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }, ctx) => {
     try {
@@ -421,10 +421,10 @@ export const getPromotionsTool: Tool = {
  */
 export const detectOperatorTool: Tool = {
   name: "detect_operator",
-  description: "Auto-detect the mobile operator for a phone number. Use this to validate a phone number and find its operator before sending airtime or data. Returns operator details including supported amounts.",
+  description: "Detect the mobile operator for a phone number.",
   schema: z.object({
-    phone: z.string().describe("Phone number to look up (e.g. +2348147658721 or 08147658721)"),
-    countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
+    phone: z.string().describe("Phone number to look up"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ phone, countryCode }) => {
     try {
@@ -468,13 +468,13 @@ export const detectOperatorTool: Tool = {
  */
 export const scheduleTaskTool: Tool = {
   name: "schedule_task",
-  description: `Schedule a paid task (airtime, data, bill, gift card) for later execution. Use when the user says things like "send airtime at 5pm", "pay my bill tomorrow morning", "buy a gift card on Friday". The scheduledAt must be an ISO 8601 datetime string. The toolName and toolArgs must match exactly what you'd use for the corresponding paid tool.`,
+  description: "Schedule a paid task for later execution (e.g. send airtime at 5pm).",
   schema: z.object({
-    description: z.string().describe("Human-readable description of the task (e.g. 'Send 500 NGN airtime to +234...')"),
-    toolName: z.string().describe("The tool to execute: send_airtime, send_data, pay_bill, or buy_gift_card"),
-    toolArgs: z.record(z.any()).describe("Arguments for the tool (same as you'd pass to the paid tool)"),
-    productAmount: z.number().describe("Product amount in USD"),
-    scheduledAt: z.string().describe("ISO 8601 datetime for when to execute (e.g. '2025-03-15T17:00:00Z')"),
+    description: z.string().describe("Task description"),
+    toolName: z.string().describe("Tool to execute: send_airtime, send_data, pay_bill, or buy_gift_card"),
+    toolArgs: z.record(z.any()).describe("Tool arguments"),
+    productAmount: z.number().describe("Amount in cUSD"),
+    scheduledAt: z.string().describe("ISO 8601 datetime"),
   }),
   func: async ({ description, toolName, toolArgs, productAmount, scheduledAt }, ctx) => {
     if (!ctx) {
@@ -518,7 +518,7 @@ export const scheduleTaskTool: Tool = {
  */
 export const myTasksTool: Tool = {
   name: "my_tasks",
-  description: "Show the user's pending scheduled tasks. Use when user asks about their upcoming/scheduled tasks.",
+  description: "Show pending scheduled tasks.",
   schema: z.object({}),
   func: async (_args, ctx) => {
     if (!ctx) {
@@ -545,7 +545,7 @@ export const myTasksTool: Tool = {
  */
 export const cancelTaskTool: Tool = {
   name: "cancel_task",
-  description: "Cancel a pending scheduled task by ID. Use when user wants to cancel a scheduled task.",
+  description: "Cancel a scheduled task by ID.",
   schema: z.object({
     taskId: z.string().describe("Task ID to cancel (from my_tasks)"),
   }),
@@ -567,10 +567,10 @@ export const cancelTaskTool: Tool = {
  */
 export const saveInstructionTool: Tool = {
   name: "save_instruction",
-  description: `Save a standing instruction, preference, or goal for the user. Use this PROACTIVELY when the user tells you something you should remember permanently — like contact details, preferences, recurring needs, or alerts they want. Categories: "contact" (phone numbers, accounts), "preference" (default country, operator preference), "recurring" (monthly top-ups, regular bills), "alert" (notify about promos), "general" (anything else).`,
+  description: "Save a user preference, contact, or instruction to remember permanently.",
   schema: z.object({
-    instruction: z.string().describe("The instruction to remember (e.g. 'Brother\\'s number is +2348147658721, MTN Nigeria')"),
-    category: z.enum(['preference', 'recurring', 'contact', 'alert', 'general']).describe("Category of instruction"),
+    instruction: z.string().describe("What to remember"),
+    category: z.enum(['preference', 'recurring', 'contact', 'alert', 'general']).describe("Category"),
   }),
   func: async ({ instruction, category }, ctx) => {
     if (!ctx) {
@@ -586,7 +586,7 @@ export const saveInstructionTool: Tool = {
  */
 export const getInstructionsTool: Tool = {
   name: "get_instructions",
-  description: "Retrieve the user's saved instructions, preferences, and goals. Use when user asks what you remember about them.",
+  description: "Get all saved user preferences and instructions.",
   schema: z.object({}),
   func: async (_args, ctx) => {
     if (!ctx) {
@@ -609,9 +609,9 @@ export const getInstructionsTool: Tool = {
  */
 export const removeInstructionTool: Tool = {
   name: "remove_instruction",
-  description: "Remove a saved instruction by matching text. Use when user wants to forget/remove a standing instruction.",
+  description: "Remove a saved instruction by matching text.",
   schema: z.object({
-    instructionFragment: z.string().describe("Part of the instruction text to match and remove"),
+    instructionFragment: z.string().describe("Text to match and remove"),
   }),
   func: async ({ instructionFragment }, ctx) => {
     if (!ctx) {
@@ -630,11 +630,11 @@ export const removeInstructionTool: Tool = {
  */
 export const convertCurrencyTool: Tool = {
   name: "convert_currency",
-  description: "Convert between USD (cUSD) and a country's local currency using live FX rates. Provide a country code to get the rate. Useful when users ask about prices in their local currency or want to know how much local currency equals a USD amount.",
+  description: "Convert between cUSD and local currency using live FX rates.",
   schema: z.object({
     amount: z.number().describe("Amount to convert"),
-    fromCurrency: z.enum(["USD", "LOCAL"]).describe("Source currency: 'USD' to convert from USD to local, 'LOCAL' to convert from local currency to USD"),
-    countryCode: z.string().describe("Country ISO code for the local currency (e.g. NG for NGN, KE for KES, GH for GHS)"),
+    fromCurrency: z.enum(["USD", "LOCAL"]).describe("USD or LOCAL"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ amount, fromCurrency, countryCode }) => {
     try {

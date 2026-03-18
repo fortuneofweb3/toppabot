@@ -29,9 +29,20 @@ const llm = new OpenAI({
   baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com',
 });
 
+// Strip JSON Schema bloat that LLMs don't need (saves ~10-15% of tool tokens)
+function stripSchemaBloat(schema: any): any {
+  if (typeof schema !== 'object' || !schema) return schema;
+  delete schema.$schema;
+  delete schema.additionalProperties;
+  for (const key of Object.keys(schema)) {
+    if (typeof schema[key] === 'object') schema[key] = stripSchemaBloat(schema[key]);
+  }
+  return schema;
+}
+
 // Convert tool Zod schemas to LLM function definitions (done once at module load)
-const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
-  const params = zodToJsonSchema(tool.schema) as Record<string, unknown>;
+const allLlmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
+  const params = stripSchemaBloat(zodToJsonSchema(tool.schema) as Record<string, unknown>);
   return {
     type: 'function',
     function: {
@@ -42,99 +53,96 @@ const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
   };
 });
 
-// Map tool names → tool functions for fast lookup
+// Fast lookup: tool name → LLM definition, tool name → tool function
+const llmToolMap = new Map(allLlmTools.map(t => [t.function.name, t]));
 const toolMap = new Map(tools.map(t => [t.name, t]));
 
 // Max tool-calling iterations to prevent infinite loops
 const MAX_ITERATIONS = 10;
 
 /**
+ * Dynamic tool selection — only send relevant tools per request.
+ *
+ * Instead of sending all 20 tools on every message (64% of payload),
+ * we group tools by category and select based on the user message.
+ * Core tools (detect_operator, save_instruction, convert_currency) are always included.
+ * This reduces active tools from 20 to ~6-10 per request.
+ */
+const TOOL_GROUPS: Record<string, { tools: string[]; keywords: RegExp }> = {
+  airtime: {
+    tools: ['send_airtime', 'get_operators'],
+    keywords: /airtime|recharge|top.?up|credit|units/i,
+  },
+  data: {
+    tools: ['send_data', 'get_data_plans'],
+    keywords: /\bdata\b|bundle|internet|mb\b|gb\b/i,
+  },
+  bills: {
+    tools: ['pay_bill', 'get_billers'],
+    keywords: /bill|electric|water|tv\b|dstv|gotv|startimes|utility|meter|smartcard/i,
+  },
+  gifts: {
+    tools: ['buy_gift_card', 'search_gift_cards', 'get_gift_cards', 'get_gift_card_code'],
+    keywords: /gift.?card|voucher|steam|netflix|amazon|spotify|itunes|google.?play|playstation|xbox|uber/i,
+  },
+  scheduling: {
+    tools: ['schedule_task', 'my_tasks', 'cancel_task'],
+    keywords: /schedul|remind|later|tomorrow|tonight|weekly|monthly|recurring|\bat\s+\d/i,
+  },
+  discovery: {
+    tools: ['check_country', 'get_promotions'],
+    keywords: /country|available|services|promo|bonus|deal|offer/i,
+  },
+  memory: {
+    tools: ['get_instructions', 'remove_instruction'],
+    keywords: /remember|forget|saved|instructions|preferences|what do you know/i,
+  },
+};
+
+// Always included — essential for most interactions
+const CORE_TOOLS = ['detect_operator', 'save_instruction', 'convert_currency'];
+
+function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
+  const selected = new Set<string>(CORE_TOOLS);
+
+  for (const group of Object.values(TOOL_GROUPS)) {
+    if (group.keywords.test(userMessage)) {
+      for (const name of group.tools) selected.add(name);
+    }
+  }
+
+  // If no groups matched (casual message like "hey"), include only core tools
+  // If the message looks like a phone number, add airtime + data tools
+  if (/(?:\+?\d[\d\s-]{7,})/.test(userMessage)) {
+    for (const name of TOOL_GROUPS.airtime.tools) selected.add(name);
+    for (const name of TOOL_GROUPS.data.tools) selected.add(name);
+  }
+
+  return [...selected].map(name => llmToolMap.get(name)!).filter(Boolean);
+}
+
+/**
  * System prompt — defines agent behavior
  */
 const SYSTEM_PROMPT = `You are Toppa — a personal AI agent for airtime, data, bills, and gift cards across 170+ countries. Powered by Celo (cUSD).
 
-FORMATTING RULE (STRICT):
-Do NOT use any markdown. No asterisks, no bold, no italics, no bullet points, no headers, no code blocks in your replies. Write plain text only, like a text message. This is non-negotiable. If you catch yourself writing * or ** or # or - at the start of a line, stop and rewrite it as plain text.
+STYLE: Plain text only, no markdown. Be concise, talk like a helpful friend. Reply in the user's language. If someone says "hey", just say hi naturally.
 
-HOW YOU TALK:
-Be concise. Short question = short answer. Complex request = more detail.
-Talk like a helpful friend, not a customer service bot. No walls of text.
-If someone says "hey" or "yo", just say hi back naturally. Don't introduce yourself or list what you can do unless they ask.
-When you don't know something (their country, operator, preferences), just ask naturally.
-Always reply in the same language the user writes in. French = French. Yoruba = Yoruba. Swahili = Swahili.
+MEMORY: Your USER PREFERENCES section is your long-term memory — use it, don't re-ask what's saved. When a user shares ANY contact, phone, email, or preference, immediately call save_instruction.
 
-HOW YOU THINK:
-You're smart. "send my bro some credit" = check saved instructions for their brother's number.
-Your saved instructions (USER PREFERENCES section) are your long-term memory. Use them. Don't re-ask what's already saved.
-IMPORTANT: When a user tells you ANY contact, phone number, email, country, or preference — immediately call save_instruction. This is your permanent memory. Don't ask permission, just save it.
-When you spot something useful (a promo, a pattern, a due date), mention it in one line.
-Suggest scheduling for recurring needs when it makes sense, but don't push it every time.
+TOOLS: You MUST call tools before stating facts about operators, plans, or pricing. NEVER guess from training data — it's outdated. Call detect_operator before identifying any phone number. Call multiple tools in ONE turn when possible.
+Report EXACTLY what tools return. COPY-PASTE operator names, plans, prices from tool output. If a tool fails, say "I couldn't look that up, please try again."
 
-TOOL USAGE (CRITICAL — YOU MUST CALL TOOLS, NOT GUESS):
-You MUST call the appropriate tool BEFORE stating any facts about operators, plans, or pricing. NEVER generate an answer from memory — your training data is outdated and wrong for telecom info.
+CURRENCY: All amounts in cUSD. Show cUSD first, local equivalent in parentheses: "0.30 cUSD (~500 NGN)". Use "cUSD" not "$".
+Local amount conversion: use EXACT division with 4 decimals. 200 NGN / 1206 = 0.1658 cUSD (NOT 0.17). Tool results have plans with cUSD and localAmount — use those directly.
 
-Examples of CORRECT behavior:
-  User: "08021520800" → call detect_operator(phone="08021520800", countryCode="NG"), THEN tell the user what the tool returned.
-  User: "check +12409238823" → call detect_operator(phone="+12409238823", countryCode="US"), THEN respond.
-  User: "what data plans for Airtel NG?" → call get_data_plans(countryCode="NG"), THEN list the plans from the result.
-  User: "send $5 airtime to 08012345678" → call detect_operator first, THEN create order_confirmation.
-
-Examples of WRONG behavior (NEVER do this):
-  User: "08021520800" → "That's MTN Nigeria" (WRONG — you guessed without calling detect_operator)
-  User: "data plans?" → listing plans from memory (WRONG — call get_data_plans first)
-
-TOOL RESULT FIDELITY (ABSOLUTE RULE):
-When a tool returns a result, you MUST report EXACTLY what the tool returned. Do NOT substitute, rephrase, or "correct" tool results using your training data. Your training data about telecom operators is WRONG and OUTDATED.
-If detect_operator returns {"name": "MTN Nigeria"}, you MUST say "MTN Nigeria". NOT "Airtel", NOT "Glo", NOT any other name.
-If detect_operator returns {"name": "Airtel Nigeria"}, you MUST say "Airtel Nigeria". NOT "MTN", NOT any other name.
-COPY-PASTE the operator name, plan names, and prices from the tool output. NEVER generate them from memory.
-
-If a tool call fails, say "I couldn't look that up, please try again." Do NOT fall back to guessing.
-
-WHAT YOU CAN DO:
-Airtime and data top-ups (800+ operators, 170+ countries), utility bills (electricity, water, TV, internet), gift cards (300+ brands), schedule future payments, remember contacts/preferences/recurring needs.
-
-CURRENCY AND PRICING (STRICT):
-ALL tool amounts are in USD (cUSD). fxRate = local currency units per 1 USD (e.g. fxRate 1650 means 1 cUSD = 1650 NGN).
-
-ALWAYS show cUSD FIRST. Only add local equivalent in parentheses if you know their country:
-  Good: "0.30 cUSD (~500 NGN) - 1GB daily"
-  Good: "5.00 cUSD (~8,250 NGN)"
-  Bad: "N500 - 1GB daily" (local currency first = WRONG)
-  Bad: "$0.93" (use "cUSD" not "$")
-  Bad: "1,500 NGN" (missing cUSD = WRONG)
-
-When listing plans: each line starts with cUSD price, then local equivalent, then description.
-When a user says a local amount, convert with 4 decimal places to avoid rounding errors:
-  "200 NGN at rate 1206 = 0.1658 cUSD" (NOT 0.17 — that sends 205 NGN instead of 200)
-  "5000 NGN at rate 1650 = 3.0303 cUSD" (NOT 3.03)
-Use EXACT division: localAmount / fxRate, keep 4 decimals. Rounding causes wrong amounts.
-Tool results have a "plans" array with cUSD and localAmount already calculated — use those directly.
-NEVER put local currency amounts in productAmount or toolArgs.amount — always USD.
-
-EXECUTING PAID SERVICES:
-For paid actions, ALWAYS call the tool (send_airtime, send_data, pay_bill, buy_gift_card) — the system will handle the payment flow automatically.
-If you need to generate an order_confirmation directly, use the EXACT field names each tool expects:
+PAID SERVICES: Call the tool directly — the system handles payment flow. For order_confirmation JSON:
   Airtime/Data: {"type":"order_confirmation","action":"airtime","description":"...","productAmount":5.00,"toolName":"send_airtime","toolArgs":{"phone":"+...","countryCode":"XX","amount":5.00}}
-  Gift card: {"type":"order_confirmation","action":"gift_card","description":"...","productAmount":10.00,"toolName":"buy_gift_card","toolArgs":{"productId":123,"unitPrice":10.00,"recipientEmail":"user@example.com","quantity":1}}
+  Gift card: {"type":"order_confirmation","action":"gift_card","description":"...","productAmount":10.00,"toolName":"buy_gift_card","toolArgs":{"productId":123,"unitPrice":10.00,"recipientEmail":"...","quantity":1}}
   Bill: {"type":"order_confirmation","action":"bill","description":"...","productAmount":20.00,"toolName":"pay_bill","toolArgs":{"billerId":456,"accountNumber":"...","amount":20.00}}
-CRITICAL: Gift card toolArgs use "unitPrice" NOT "amount". Always include productId and recipientEmail.
-productAmount and toolArgs amounts are ALWAYS in USD (cUSD). NEVER use local currency amounts.
-The bot handles payment confirmation and wallet deduction.
-For scheduled tasks, use schedule_task tool directly.
-For discovery (checking operators, promos, etc.), call tools normally.
-Handle ONE order_confirmation at a time.
+Gift card toolArgs use "unitPrice" NOT "amount". All amounts in cUSD. One order at a time.
 
-EFFICIENCY:
-Call multiple tools in ONE turn when possible. For example, if you need to detect an operator AND check promotions, call both tools at once instead of one at a time. Fewer turns = faster response for the user.
-
-RULES:
-All payments in cUSD on Celo blockchain.
-Always confirm amount and recipient before executing.
-Show transaction details after completion.
-For gift cards, always retrieve and show redeem codes.
-Current datetime is in system context — use it for scheduling.
-
+RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes.
 `;
 
 /**
@@ -332,14 +340,15 @@ export async function runToppaAgent(
   const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
   let finalResponse = '';
   // Accumulate detect_operator results across ALL iterations for fidelity check.
-  // Previously this was overwritten each iteration, so multi-turn flows
-  // (detect_operator in iter 1 → another tool in iter 2 → response in iter 3)
-  // lost the detect_operator result before the fidelity check ran.
   let allDetectResults: Array<{ content: string; toolName?: string }> = [];
+
+  // Select only relevant tools for this message (typically 5-10 instead of all 20)
+  let activeTools = selectTools(userMessage);
 
   // Log context size before first LLM call — helps diagnose slow responses
   const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
-  console.log(`[Agent] Context: ${messages.length} messages, ~${totalChars} chars, ${llmTools.length} tools`);
+  const toolNames = activeTools.map(t => t.function.name).join(', ');
+  console.log(`[Agent] Context: ${messages.length} msgs, ~${totalChars} chars, ${activeTools.length}/${allLlmTools.length} tools [${toolNames}]`);
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = Date.now();
@@ -351,7 +360,7 @@ export async function runToppaAgent(
       temperature: 0,
       max_tokens: 1024,
       messages,
-      tools: llmTools,
+      tools: activeTools,
       tool_choice: toolChoice,
       stream: true,
     });
@@ -447,6 +456,28 @@ export async function runToppaAgent(
       if (orderJson) {
         finalResponse = orderJson;
         break;
+      }
+    }
+
+    // Expand active tools if tool calls referenced tools not yet included.
+    // E.g., detect_operator in iter 1 → LLM wants send_airtime in iter 2.
+    for (const tc of toolCallsArray) {
+      // If the LLM called a tool that returned payment_required, ensure paid tools are available
+      for (const tr of toolResults) {
+        try {
+          const parsed = JSON.parse(tr.content);
+          if (parsed.status === 'payment_required' && parsed.service) {
+            const svcTool = llmToolMap.get(parsed.service);
+            if (svcTool && !activeTools.includes(svcTool)) activeTools.push(svcTool);
+          }
+        } catch { /* not JSON */ }
+      }
+      // If the LLM called detect_operator, add airtime + data tools for the next turn
+      if (tc.name === 'detect_operator') {
+        for (const name of ['send_airtime', 'get_operators', 'send_data', 'get_data_plans']) {
+          const t = llmToolMap.get(name);
+          if (t && !activeTools.includes(t)) activeTools.push(t);
+        }
       }
     }
 
