@@ -29,7 +29,7 @@ import { formatUserContext } from './goals';
 
 const llm = new OpenAI({
   apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/beta',
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
 });
 
 /**
@@ -85,56 +85,23 @@ function prepareSchema(schema: any): any {
   return schema;
 }
 
-/** Check if a schema is fully compatible with strict mode (no freeform objects) */
-function isStrictCompatible(schema: any): boolean {
-  if (typeof schema !== 'object' || !schema) return true;
-  if (schema.type === 'object' && schema.additionalProperties !== undefined && schema.additionalProperties !== false) {
-    return false; // freeform object (z.record) — not strict-compatible
-  }
-  for (const key of Object.keys(schema)) {
-    if (typeof schema[key] === 'object' && !isStrictCompatible(schema[key])) return false;
-  }
-  return true;
-}
 
-// Convert tool Zod schemas to LLM function definitions
-// Strict mode uses constrained decoding — faster and more reliable tool calls
-// Tools with freeform objects (z.record) fall back to non-strict mode
-const allLlmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
-  const params = prepareSchema(zodToJsonSchema(tool.schema) as Record<string, unknown>);
-  const strict = isStrictCompatible(params);
-  return {
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: params,
-      strict,
-    },
-  };
-});
+// Convert tool Zod schemas to LLM function definitions (done once at module load)
+// prepareSchema cleans up zodToJsonSchema output for cleaner schemas
+const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
+  type: 'function',
+  function: {
+    name: tool.name,
+    description: tool.description,
+    parameters: prepareSchema(zodToJsonSchema(tool.schema) as Record<string, unknown>),
+  },
+}));
 
 // Fast lookup: tool name → tool function
 const toolMap = new Map(tools.map(t => [t.name, t]));
 
 // Max tool-calling iterations — most queries complete in 2-3, cap at 5 to prevent runaway
 const MAX_ITERATIONS = 5;
-
-/**
- * DeepSeek requires ALL tools in a request to have the same strict mode.
- * If any tool is non-strict (e.g. schedule_task with z.record), set all to non-strict.
- */
-function normalizeStrictMode(toolDefs: OpenAI.ChatCompletionTool[]): OpenAI.ChatCompletionTool[] {
-  const hasNonStrict = toolDefs.some(t => (t.function as any).strict === false);
-  if (!hasNonStrict) return toolDefs;
-  return toolDefs.map(t => ({
-    ...t,
-    function: { ...t.function, strict: false },
-  }));
-}
-
-// All tools sent to LLM every request — let the model decide what to call
-const llmTools = normalizeStrictMode(allLlmTools);
 
 /**
  * System prompt — defines agent behavior
