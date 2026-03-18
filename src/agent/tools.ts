@@ -99,6 +99,7 @@ export const getOperatorsTool: Tool = {
       countryCode = sanitizeCountryCode(countryCode);
       if (ctx) setUserCountry(ctx.userId, countryCode);
       const operators = await getOperators(countryCode);
+      if (operators.length === 0) return `No mobile operators found for ${countryCode.toUpperCase()}.`;
       const balance = await getCachedReloadlyBalance();
       return operators.map(op => formatOperatorText(op, balance)).join('\n\n');
     } catch (error: any) {
@@ -121,6 +122,7 @@ export const getDataPlansTool: Tool = {
       countryCode = sanitizeCountryCode(countryCode);
       if (ctx) setUserCountry(ctx.userId, countryCode);
       const operators = await getDataOperators(countryCode);
+      if (operators.length === 0) return `No data plan operators found for ${countryCode.toUpperCase()}.`;
       const balance = await getCachedReloadlyBalance();
       return operators.map(op => formatOperatorText(op, balance)).join('\n\n');
     } catch (error: any) {
@@ -199,6 +201,7 @@ export const getBillersTool: Tool = {
       countryCode = sanitizeCountryCode(countryCode);
       if (ctx) setUserCountry(ctx.userId, countryCode);
       const billers = await getBillers({ countryCode, type: type as any });
+      if (billers.length === 0) return `No billers found for ${countryCode.toUpperCase()}${type ? ' (' + type + ')' : ''}.`;
       return billers.map(b => {
         const fxRate = b.fx?.rate || 1;
         const minCUSD = b.internationalAmountSupported
@@ -230,6 +233,7 @@ export const searchGiftCardsTool: Tool = {
     try {
       if (countryCode) countryCode = sanitizeCountryCode(countryCode);
       const results = await searchGiftCards(query, countryCode);
+      if (results.length === 0) return `No gift cards found for "${query}"${countryCode ? ' in ' + countryCode.toUpperCase() : ''}.`;
       const balance = await getCachedReloadlyBalance();
       return results.slice(0, 10).map(p => {
         const amounts = (p.fixedSenderDenominations || []).filter((d: number) => d <= balance).slice(0, 10);

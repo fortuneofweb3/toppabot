@@ -115,8 +115,8 @@ const allLlmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
 const llmToolMap = new Map(allLlmTools.map(t => [t.function.name, t]));
 const toolMap = new Map(tools.map(t => [t.name, t]));
 
-// Max tool-calling iterations to prevent infinite loops
-const MAX_ITERATIONS = 10;
+// Max tool-calling iterations — most queries complete in 2-3, cap at 5 to prevent runaway
+const MAX_ITERATIONS = 5;
 
 /**
  * Dynamic tool selection — only send relevant tools per request.
@@ -197,10 +197,10 @@ STYLE: Plain text only, no markdown. Be concise, talk like a helpful friend. Rep
 MEMORY: Your USER PREFERENCES section is your long-term memory — use it, don't re-ask what's saved. When a user shares ANY contact, phone, email, or preference, immediately call save_instruction.
 
 TOOLS: You MUST call tools before stating facts about operators, plans, or pricing. NEVER guess from training data — it's outdated. Call detect_operator before identifying any phone number. Call multiple tools in ONE turn when possible.
-Report EXACTLY what tools return. COPY-PASTE operator names, plans, prices from tool output. If a tool fails, say "I couldn't look that up, please try again."
+Tool results are already formatted with names, prices, and local amounts. Present them directly — do NOT reformat or restructure. If a tool fails, say "I couldn't look that up, please try again."
 
 CURRENCY: All amounts in cUSD. Show cUSD first, local equivalent in parentheses: "0.30 cUSD (~500 NGN)". Use "cUSD" not "$".
-Local amount conversion: use EXACT division with 4 decimals. 200 NGN / 1206 = 0.1658 cUSD (NOT 0.17). Tool results have plans with cUSD and localAmount — use those directly.
+For manual conversion use EXACT division with 4 decimals: 200 NGN / 1206 = 0.1658 cUSD (NOT 0.17).
 
 PAID SERVICES: Call the tool directly — the system handles payment flow. For order_confirmation JSON:
   Airtime/Data: {"type":"order_confirmation","action":"airtime","description":"...","productAmount":5.00,"toolName":"send_airtime","toolArgs":{"phone":"+...","countryCode":"XX","amount":5.00}}
