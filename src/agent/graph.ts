@@ -469,23 +469,16 @@ export async function runToppaAgent(
   }
 
   // Save conversation to memory (non-blocking — don't slow down the response)
-  // Skip error/fallback responses — they poison history and teach the LLM to repeat errors
-  // instead of calling tools. Also skip raw order_confirmation JSON.
-  const isErrorResponse = !finalResponse
+  // Skip: errors (poison history), order confirmations (cause DeepSeek to replay old orders),
+  // and empty responses. Only save conversational messages that provide useful context.
+  const shouldSkipMemory = !finalResponse
     || finalResponse.startsWith('I ran into a processing limit')
-    || finalResponse.startsWith("I'm having trouble");
+    || finalResponse.startsWith("I'm having trouble")
+    || finalResponse.includes('"order_confirmation"')
+    || finalResponse.includes('"payment_required"');
 
-  if (state.userAddress && !isErrorResponse) {
-    let memoryResponse = finalResponse;
-    try {
-      const parsed = JSON.parse(finalResponse);
-      if (parsed?.type === 'order_confirmation') {
-        memoryResponse = `I prepared an order: ${parsed.description || parsed.action || 'service request'} for ${parsed.productAmount ?? '?'} cUSD.`;
-      }
-    } catch {
-      // Not JSON — save as-is
-    }
-    saveConversation(state.userAddress, userMessage, memoryResponse).catch((err: any) => console.error('[Memory Save Error]', err.message));
+  if (state.userAddress && !shouldSkipMemory) {
+    saveConversation(state.userAddress, userMessage, finalResponse).catch((err: any) => console.error('[Memory Save Error]', err.message));
   }
 
   return { response: finalResponse };

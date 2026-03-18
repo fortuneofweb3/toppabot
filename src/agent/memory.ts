@@ -19,9 +19,9 @@ interface StoredMessage {
   timestamp: Date;
 }
 
-const MAX_HISTORY_MESSAGES = 20; // Keep last 20 messages (10 user + 10 assistant turns)
+const MAX_HISTORY_MESSAGES = 10; // Keep last 10 messages (5 user + 5 assistant turns)
 const HISTORY_TTL_DAYS = 7; // Expire messages older than 7 days
-const MAX_MESSAGE_LENGTH = 2000; // Truncate stored messages to prevent bloat
+const MAX_MESSAGE_LENGTH = 500; // Truncate stored messages — keeps context compact for faster LLM
 
 let _collection: Collection<StoredMessage> | null = null;
 
