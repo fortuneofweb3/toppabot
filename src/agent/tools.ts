@@ -365,8 +365,17 @@ export const checkCountryTool: Tool = {
   func: async ({ countryCode }) => {
     try {
       countryCode = sanitizeCountryCode(countryCode);
-      const services = await getCountryServices(countryCode);
-      return JSON.stringify(services);
+      const s = await getCountryServices(countryCode);
+      const lines = [`Services in ${s.countryCode}:`];
+      if (s.airtime.available) lines.push(`Airtime: ${s.airtime.operators.map((o: any) => o.name).join(', ')}`);
+      else lines.push('Airtime: not available');
+      if (s.dataPlans.available) lines.push(`Data plans: ${s.dataPlans.operators.map((o: any) => o.name).join(', ')}`);
+      else lines.push('Data plans: not available');
+      if (s.bills.available) lines.push(`Bills: ${s.bills.total} billers (${Object.entries(s.bills.types).map(([t, n]) => `${n} ${t.replace(/_/g, ' ').toLowerCase()}`).join(', ')})`);
+      else lines.push('Bills: not available');
+      if (s.giftCards.available) lines.push(`Gift cards: ${s.giftCards.totalProducts} products (${s.giftCards.brands.slice(0, 10).join(', ')}${s.giftCards.brands.length > 10 ? '...' : ''})`);
+      else lines.push('Gift cards: not available');
+      return lines.join('\n');
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }
@@ -387,13 +396,13 @@ export const getPromotionsTool: Tool = {
       countryCode = sanitizeCountryCode(countryCode);
       if (ctx) setUserCountry(ctx.userId, countryCode);
       const promotions = await getPromotions(countryCode);
-      return JSON.stringify(promotions.slice(0, 10).map((p: any) => ({
-        operatorId: p.operatorId,
-        title: p.title || p.title2,
-        description: p.description?.slice(0, 200),
-        startDate: p.startDate,
-        endDate: p.endDate,
-      })));
+      if (promotions.length === 0) return `No active promotions for ${countryCode.toUpperCase()}.`;
+      return promotions.slice(0, 10).map((p: any) => {
+        const title = p.title || p.title2 || 'Promotion';
+        const desc = p.description ? p.description.slice(0, 150) : '';
+        const dates = p.startDate && p.endDate ? ` (${p.startDate} to ${p.endDate})` : '';
+        return `${title}${dates}${desc ? '\n  ' + desc : ''}`;
+      }).join('\n');
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
     }

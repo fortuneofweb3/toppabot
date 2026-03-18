@@ -163,6 +163,21 @@ const CORE_TOOLS = ['detect_operator', 'save_instruction', 'convert_currency'];
 // Short casual messages that don't need extra tools
 const CASUAL_MSG = /^(hey|hi|hello|yo|sup|what'?s up|gm|good morning|good evening|thanks|thank you|ok|okay|cool|bye|later)\b/i;
 
+/**
+ * Tools whose results can be presented directly without LLM interpretation.
+ * When these are the sole tool call in iter 0, skip iter 1 entirely — saves ~10-20s.
+ * Value is the intro text prepended to the result (empty = result is self-contained).
+ */
+const DIRECT_PRESENT_TOOLS: Record<string, string> = {
+  get_data_plans: 'Here are the available data plans:',
+  get_operators: 'Here are the mobile operators:',
+  get_billers: 'Here are the available billers:',
+  get_gift_cards: '',  // already has "Gift cards in XX (N products):" header
+  search_gift_cards: "Here's what I found:",
+  get_promotions: 'Here are the active promotions:',
+  check_country: '',   // already has "Services in XX:" header
+};
+
 function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
   const selected = new Set<string>(CORE_TOOLS);
 
@@ -526,6 +541,20 @@ export async function runToppaAgent(
       const orderJson = checkPaymentShortCircuit(toolResults);
       if (orderJson) {
         finalResponse = orderJson;
+        break;
+      }
+    }
+
+    // Direct presentation: if we called a single list tool and it succeeded,
+    // skip iter 1 entirely and return the result with a brief intro.
+    // Saves ~10-20s of LLM processing for queries like "show data plans in Nigeria".
+    if (toolCallsArray.length === 1) {
+      const tcName = toolCallsArray[0].name;
+      const result = toolResults[0].content;
+      const intro = DIRECT_PRESENT_TOOLS[tcName];
+      if (intro !== undefined && !result.startsWith('{"error"')) {
+        finalResponse = intro ? `${intro}\n\n${result}` : result;
+        console.log(`[Agent] Direct-present: ${tcName} (skipped LLM iter ${i + 1})`);
         break;
       }
     }
