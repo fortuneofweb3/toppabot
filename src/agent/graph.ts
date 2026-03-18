@@ -71,11 +71,11 @@ const MAX_ITERATIONS = 10;
 const TOOL_GROUPS: Record<string, { tools: string[]; keywords: RegExp }> = {
   airtime: {
     tools: ['send_airtime', 'get_operators'],
-    keywords: /airtime|recharge|top.?up|credit|units/i,
+    keywords: /airtime|recharge|top.?up|credit|units|\bsend\b.*\d|operators?|network/i,
   },
   data: {
     tools: ['send_data', 'get_data_plans'],
-    keywords: /\bdata\b|bundle|internet|mb\b|gb\b/i,
+    keywords: /\bdata\b|bundle|internet|mb\b|gb\b|plans?\b/i,
   },
   bills: {
     tools: ['pay_bill', 'get_billers'],
@@ -102,6 +102,9 @@ const TOOL_GROUPS: Record<string, { tools: string[]; keywords: RegExp }> = {
 // Always included — essential for most interactions
 const CORE_TOOLS = ['detect_operator', 'save_instruction', 'convert_currency'];
 
+// Short casual messages that don't need extra tools
+const CASUAL_MSG = /^(hey|hi|hello|yo|sup|what'?s up|gm|good morning|good evening|thanks|thank you|ok|okay|cool|bye|later)\b/i;
+
 function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
   const selected = new Set<string>(CORE_TOOLS);
 
@@ -111,11 +114,16 @@ function selectTools(userMessage: string): OpenAI.ChatCompletionTool[] {
     }
   }
 
-  // If no groups matched (casual message like "hey"), include only core tools
-  // If the message looks like a phone number, add airtime + data tools
+  // Phone numbers → add airtime + data tools
   if (/(?:\+?\d[\d\s-]{7,})/.test(userMessage)) {
     for (const name of TOOL_GROUPS.airtime.tools) selected.add(name);
     for (const name of TOOL_GROUPS.data.tools) selected.add(name);
+  }
+
+  // Safety fallback: if no groups matched and this isn't a casual greeting,
+  // include ALL tools. Better to send a few extra tools than miss the right one.
+  if (selected.size <= CORE_TOOLS.length && !CASUAL_MSG.test(userMessage.trim())) {
+    return [...allLlmTools];
   }
 
   return [...selected].map(name => llmToolMap.get(name)!).filter(Boolean);
