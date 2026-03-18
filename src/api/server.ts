@@ -936,8 +936,7 @@ app.get('/mcp', (_req: Request, res: Response) => {
     protocol: 'MCP',
     transport: 'Streamable HTTP',
     version: '2025-03-26',
-    tools: 13,
-    toolNames: [
+    tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
       'check_country', 'get_promotions', 'convert_currency',
