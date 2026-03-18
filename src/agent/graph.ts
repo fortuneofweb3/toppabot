@@ -26,25 +26,18 @@ import { formatUserContext } from './goals';
 
 const llm = new OpenAI({
   apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/beta',
+  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com',
 });
 
 // Convert tool Zod schemas to LLM function definitions (done once at module load)
-// strict: true ensures DeepSeek's output always matches the JSON schema
 const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => {
   const params = zodToJsonSchema(tool.schema) as Record<string, unknown>;
-  // Ensure strict mode compatibility: all properties required, no additionalProperties
-  if (params.type === 'object' && params.properties) {
-    params.required = Object.keys(params.properties as Record<string, unknown>);
-    params.additionalProperties = false;
-  }
   return {
     type: 'function',
     function: {
       name: tool.name,
       description: tool.description,
       parameters: params,
-      strict: true,
     },
   };
 });
