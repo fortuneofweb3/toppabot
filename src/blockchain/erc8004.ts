@@ -198,6 +198,7 @@ export function getAgentRegistrationFile(): object {
         endpoint: `${apiUrl}/.well-known/agent.json`,
         version: '0.3.0',
         a2aSkills: [
+          'natural_language_processing/natural_language_generation/text_generation',
           'natural_language_processing/natural_language_understanding/contextual_comprehension',
           'natural_language_processing/conversation/chatbot',
           'natural_language_processing/information_retrieval_synthesis/search',
@@ -219,15 +220,20 @@ export function getAgentRegistrationFile(): object {
         protocol: 'Telegram',
       },
       {
+        name: 'api',
+        endpoint: `${apiUrl}`,
+      },
+      {
         name: 'OASF',
         endpoint: 'https://github.com/agntcy/oasf/',
         version: 'v0.8.0',
         skills: [
-          'tool_interaction/api_schema_understanding',
-          'tool_interaction/automation/workflow_automation',
+          'natural_language_processing/natural_language_generation/text_generation',
           'natural_language_processing/natural_language_understanding/contextual_comprehension',
           'natural_language_processing/conversation/chatbot',
           'natural_language_processing/information_retrieval_synthesis/search',
+          'tool_interaction/automation/workflow_automation',
+          'tool_interaction/api_schema_understanding',
         ],
         domains: [
           'finance_and_business/banking',
@@ -244,7 +250,7 @@ export function getAgentRegistrationFile(): object {
         agentRegistry: `eip155:${chainId}:${IDENTITY_REGISTRY}`,
       },
     ] : [],
-    supportedTrust: ['reputation', 'crypto-economic'],
+    supportedTrust: ['reputation', 'crypto-economic', 'tee-attestation'],
   };
 }
 
