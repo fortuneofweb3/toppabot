@@ -450,7 +450,24 @@ export async function runToppaAgent(
 
     // No tool calls → final text response
     if (toolCallsArray.length === 0) {
-      finalResponse = textContent;
+      // Detect LLM timeout: empty response after ~30s means the abort signal closed the stream
+      if (!textContent && llmMs >= 28000) {
+        console.warn(`[Agent] LLM timeout: empty response after ${llmMs}ms (iter ${i})`);
+        // Retry once with reduced context — drop oldest half of history to reduce tokens
+        if (i === 0 && messages.length > 4) {
+          const systemMsg = messages[0];
+          const userMsg = messages[messages.length - 1];
+          // Keep system prompt + last 4 history messages + current user message
+          const recentHistory = messages.slice(1, -1).slice(-4);
+          messages.length = 0;
+          messages.push(systemMsg, ...recentHistory, userMsg);
+          console.log(`[Agent] Retrying with reduced context: ${messages.length} messages`);
+          continue;
+        }
+        finalResponse = "I'm having trouble with my AI backend right now. Please try again in a moment.";
+      } else {
+        finalResponse = textContent;
+      }
       break;
     }
 
