@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { AgentState } from './state';
-import { tools, setSchedulingContext } from './tools';
+import { tools, SchedulingContext } from './tools';
 import { getConversationHistory, saveConversation } from './memory';
 import { formatUserContext } from './goals';
 
@@ -55,7 +55,8 @@ const toolMap = new Map(tools.map(t => [t.name, t]));
 // Max tool-calling iterations to prevent infinite loops
 const MAX_ITERATIONS = 10;
 
-// No tool result truncation — DeepSeek supports 64K context, feed everything
+// Tool result truncation — prevent context window overflow from large API responses
+const MAX_TOOL_RESULT_LENGTH = 3000;
 
 /**
  * System prompt — defines agent behavior
@@ -167,25 +168,60 @@ async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
  */
 async function executeToolCalls(
   toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
+  ctx?: SchedulingContext | null,
 ): Promise<Array<{ role: 'tool'; tool_call_id: string; content: string }>> {
   return Promise.all(
     toolCalls.map(async (toolCall) => {
       const tool = toolMap.get(toolCall.function.name);
       let result: string;
 
-      console.log(`[Tool Call] ${toolCall.function.name}(${toolCall.function.arguments})`);
+      // Log tool name only — arguments may contain PII (phone, email, account numbers)
+      console.log(`[Tool Call] ${toolCall.function.name}`);
 
       if (!tool) {
         result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
       } else {
         try {
-          result = await tool.func(JSON.parse(toolCall.function.arguments));
+          result = await tool.func(JSON.parse(toolCall.function.arguments), ctx);
         } catch (err: any) {
           result = JSON.stringify({ error: err.message });
         }
       }
 
-      console.log(`[Tool Result] ${toolCall.function.name} → ${result.slice(0, 200)}`);
+      // Log result length only — result may contain redeem codes, PII
+      console.log(`[Tool Result] ${toolCall.function.name} → ${result.length} chars`);
+
+      // Truncate oversized results to prevent context window overflow
+      if (result.length > MAX_TOOL_RESULT_LENGTH) {
+        // Try to truncate JSON arrays intelligently (keep first N items)
+        try {
+          const parsed = JSON.parse(result);
+          if (Array.isArray(parsed)) {
+            // Reduce array items until under limit
+            let truncated = parsed;
+            while (JSON.stringify(truncated).length > MAX_TOOL_RESULT_LENGTH && truncated.length > 1) {
+              truncated = truncated.slice(0, Math.ceil(truncated.length / 2));
+            }
+            result = JSON.stringify({ results: truncated, truncated: true, totalResults: parsed.length });
+          } else if (typeof parsed === 'object' && parsed !== null) {
+            // For objects with array fields (e.g. { plans: [...] })
+            for (const key of Object.keys(parsed)) {
+              if (Array.isArray(parsed[key]) && parsed[key].length > 10) {
+                const total = parsed[key].length;
+                parsed[key] = parsed[key].slice(0, 10);
+                parsed[`${key}_truncated`] = true;
+                parsed[`${key}_total`] = total;
+              }
+            }
+            result = JSON.stringify(parsed);
+          }
+        } catch {
+          // Not valid JSON — hard truncate
+        }
+        if (result.length > MAX_TOOL_RESULT_LENGTH) {
+          result = result.slice(0, MAX_TOOL_RESULT_LENGTH - 50) + '... [truncated]';
+        }
+      }
 
       return { role: 'tool' as const, tool_call_id: toolCall.id, content: result };
     }),
@@ -249,12 +285,16 @@ const KNOWN_OPERATORS = [
   'at&t', 't-mobile', 'verizon', 'jio', 'bsnl',
 ];
 
+function matchesOperator(text: string, op: string): boolean {
+  // Use word boundary matching to avoid false positives (e.g., "orange" in "orange data plan")
+  const escaped = op.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+}
+
 function checkToolResultFidelity(
   response: string,
   toolResults: Array<{ content: string; toolName?: string }>,
 ): string | null {
-  const responseLower = response.toLowerCase();
-
   for (const tr of toolResults) {
     if (tr.toolName !== 'detect_operator') continue;
     try {
@@ -265,10 +305,10 @@ function checkToolResultFidelity(
 
       // Check if the response mentions a DIFFERENT known operator
       for (const op of KNOWN_OPERATORS) {
-        if (responseLower.includes(op) && !correctName.includes(op)) {
+        if (matchesOperator(response, op) && !correctName.includes(op)) {
           // Model mentioned wrong operator — check the correct one ISN'T also there
           const correctFirst = correctName.split(' ')[0];
-          if (!responseLower.includes(correctFirst)) {
+          if (!matchesOperator(response, correctFirst)) {
             console.warn(
               `[Fidelity Fix] LLM said "${op}" but detect_operator returned "${parsed.name}". Overriding response.`
             );
@@ -304,12 +344,13 @@ export async function runToppaAgent(
   state: Partial<AgentState> = {},
   options?: { onStream?: (chunk: string) => void },
 ): Promise<{ response: string }> {
-  // Set scheduling context so schedule_task/my_tasks/cancel_task tools can access userId/chatId
-  if (state.userAddress && state.source === 'telegram') {
-    setSchedulingContext({ userId: state.userAddress, chatId: (state as any).chatId || 0 });
-  } else {
-    setSchedulingContext(null);
-  }
+  // Build per-request context — passed directly to tool functions via executeToolCalls.
+  // Previously this was a module-level global that could be overwritten by concurrent requests.
+  // Build ctx for any source that has a userAddress — not just Telegram.
+  // A2A and future sources get tool access when they provide user identity.
+  const requestCtx: SchedulingContext | null = state.userAddress
+    ? { userId: state.userAddress, chatId: (state as any).chatId || 0, walletAddress: state.walletAddress }
+    : null;
 
   // Build messages with system prompt
   const messages: OpenAI.ChatCompletionMessageParam[] = [
@@ -327,7 +368,11 @@ export async function runToppaAgent(
 
   const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
   let finalResponse = '';
-  let lastToolResults: Array<{ content: string; toolName?: string }> = [];
+  // Accumulate detect_operator results across ALL iterations for fidelity check.
+  // Previously this was overwritten each iteration, so multi-turn flows
+  // (detect_operator in iter 1 → another tool in iter 2 → response in iter 3)
+  // lost the detect_operator result before the fidelity check ran.
+  let allDetectResults: Array<{ content: string; toolName?: string }> = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     // Dynamic tool_choice: force tool calling on first turn when message
@@ -405,13 +450,18 @@ export async function runToppaAgent(
         id: tc.id,
         function: { name: tc.name, arguments: tc.arguments },
       })),
+      requestCtx,
     );
 
-    // Track tool results for post-response fidelity check
-    lastToolResults = toolResults.map((tr, idx) => ({
-      content: tr.content,
-      toolName: toolCallsArray[idx]?.name,
-    }));
+    // Accumulate detect_operator results for post-response fidelity check
+    for (let idx = 0; idx < toolResults.length; idx++) {
+      if (toolCallsArray[idx]?.name === 'detect_operator') {
+        allDetectResults.push({
+          content: toolResults[idx].content,
+          toolName: 'detect_operator',
+        });
+      }
+    }
 
     // Short-circuit: payment_required → order_confirmation (saves LLM round trip)
     if (useShortCircuit) {
@@ -433,16 +483,26 @@ export async function runToppaAgent(
 
   // Post-response fidelity check: catch DeepSeek misreading tool results
   // (e.g., tool returns "MTN Nigeria" but LLM says "Airtel Nigeria")
-  if (finalResponse && lastToolResults.length > 0) {
-    const correction = checkToolResultFidelity(finalResponse, lastToolResults);
+  if (finalResponse && allDetectResults.length > 0) {
+    const correction = checkToolResultFidelity(finalResponse, allDetectResults);
     if (correction) {
       finalResponse = correction;
     }
   }
 
   // Save conversation to memory (non-blocking — don't slow down the response)
+  // Don't save raw order_confirmation JSON — it pollutes history and confuses the LLM on next turn
   if (state.userAddress) {
-    saveConversation(state.userAddress, userMessage, finalResponse).catch((err: any) => console.error('[Memory Save Error]', err.message));
+    let memoryResponse = finalResponse;
+    try {
+      const parsed = JSON.parse(finalResponse);
+      if (parsed?.type === 'order_confirmation') {
+        memoryResponse = `I prepared an order: ${parsed.description || parsed.action || 'service request'} for ${parsed.productAmount ?? '?'} cUSD.`;
+      }
+    } catch {
+      // Not JSON — save as-is
+    }
+    saveConversation(state.userAddress, userMessage, memoryResponse).catch((err: any) => console.error('[Memory Save Error]', err.message));
   }
 
   return { response: finalResponse };

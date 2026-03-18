@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi, formatUnits } from 'viem';
+import { createPublicClient, http, parseAbi, formatUnits, parseUnits } from 'viem';
 import { celo, celoSepolia } from 'viem/chains';
 
 /**
@@ -57,7 +57,7 @@ export function calculateTotalPayment(productAmount?: number): {
   productAmount: number;
   serviceFee: number;
 } {
-  if (!productAmount || productAmount <= 0) {
+  if (!productAmount || !isFinite(productAmount) || productAmount <= 0) {
     return { total: 0, productAmount: 0, serviceFee: 0 };
   }
   const serviceFee = Math.round(productAmount * SERVICE_FEE_PERCENT * 100) / 100;
@@ -101,7 +101,7 @@ export async function createX402PaymentRequest(params: {
       {
         scheme: 'exact',
         network: chain.name.toLowerCase(),
-        maxAmountRequired: String(Math.round(total * (10 ** PAYMENT_TOKEN_DECIMALS))),
+        maxAmountRequired: parseUnits(total.toFixed(PAYMENT_TOKEN_DECIMALS > 6 ? 8 : 6), PAYMENT_TOKEN_DECIMALS).toString(),
         resource: params.service,
         description: params.description,
         mimeType: 'application/json',
@@ -176,6 +176,7 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
     }
 
     // Check transaction age — reject payments older than 1 hour
+    // Fail-closed: if we can't verify recency, reject the payment
     const MAX_TX_AGE_BLOCKS = 720; // ~1 hour at 5s/block on Celo
     try {
       const currentBlock = await client.getBlockNumber();
@@ -183,8 +184,9 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
       if (txAge > MAX_TX_AGE_BLOCKS) {
         return { verified: false, error: `Transaction too old (${txAge} blocks ago, max ${MAX_TX_AGE_BLOCKS}). Submit a fresh payment.` };
       }
-    } catch {
-      // If we can't check block number, continue with other checks
+    } catch (err: any) {
+      console.error('[x402] Failed to verify transaction age:', err.message);
+      return { verified: false, error: 'Unable to verify transaction recency. Try again.' };
     }
 
     // Look for cUSD Transfer event to our wallet
@@ -211,13 +213,14 @@ export async function verifyX402Payment(paymentData: string, requiredAmount?: nu
       }
     }
 
-    if (!payer || amount === BigInt(0)) {
+    if (!payer || !/^0x[0-9a-fA-F]{40}$/.test(payer) || amount === BigInt(0)) {
       return { verified: false, error: `No ${PAYMENT_TOKEN_SYMBOL} transfer to agent wallet found in transaction` };
     }
 
     // Check amount is sufficient (with 0.2% tolerance for minor rounding)
     const minRequired = requiredAmount ?? 0;
-    const requiredWei = BigInt(Math.round(minRequired * (10 ** PAYMENT_TOKEN_DECIMALS) * 0.998));
+    const fullWei = parseUnits(minRequired.toFixed(PAYMENT_TOKEN_DECIMALS > 6 ? 8 : 6), PAYMENT_TOKEN_DECIMALS);
+    const requiredWei = fullWei * 998n / 1000n;
     if (amount < requiredWei) {
       return {
         verified: false,

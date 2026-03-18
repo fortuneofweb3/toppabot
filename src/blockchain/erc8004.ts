@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, parseAbi, encodeFunctionData, toHex } from 'viem';
+import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
 import { celo, celoSepolia } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 
@@ -248,7 +248,7 @@ export async function registerAgent() {
     const hash = await getWalletClient().writeContract(request);
     console.log('  Transaction submitted:', hash);
 
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
     console.log('  Confirmed in block:', receipt.blockNumber);
 
     // Extract agentId from ERC-721 Transfer event (topics[3] is the tokenId)
@@ -306,7 +306,7 @@ export async function updateAgentURI() {
     const hash = await getWalletClient().writeContract(request);
     console.log('  Transaction submitted:', hash);
 
-    const receipt = await getPublicClient().waitForTransactionReceipt({ hash });
+    const receipt = await getPublicClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
     console.log('  Confirmed in block:', receipt.blockNumber);
 
     return {
@@ -365,7 +365,7 @@ export async function recordTransaction(params: {
     });
 
     const hash = await getWalletClient().writeContract(request);
-    await getPublicClient().waitForTransactionReceipt({ hash });
+    await getPublicClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
 
     console.log(`[ERC-8004] Recorded ${tag1}/${tag2} feedback, tx: ${hash}`);
     return { recorded: true, transactionHash: hash };

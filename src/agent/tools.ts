@@ -10,20 +10,22 @@ import {
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
 import { getCachedReloadlyBalance } from "../shared/balance-cache";
+import { getReceiptByReloadlyId } from "../blockchain/service-receipts";
 import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
 import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
 import { setUserCountry } from "./user-activity";
+import { sanitizeCountryCode, sanitizePhone } from "../shared/sanitize";
 
 /**
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
  * Each tool has a name, description, Zod schema, and async function.
  */
 
-interface Tool {
+export interface Tool {
   name: string;
   description: string;
   schema: z.ZodObject<any>;
-  func: (args: any) => Promise<string>;
+  func: (args: any, ctx?: SchedulingContext | null) => Promise<string>;
 }
 
 /**
@@ -39,6 +41,8 @@ export const sendAirtimeTool: Tool = {
     amount: z.number().describe("Amount in USD (cUSD). Use values from fixedAmountsCUSD or within minAmountCUSD-maxAmountCUSD range."),
   }),
   func: async ({ phone, countryCode, amount }) => {
+    phone = sanitizePhone(phone);
+    countryCode = sanitizeCountryCode(countryCode);
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -61,9 +65,10 @@ export const getOperatorsTool: Tool = {
   schema: z.object({
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
   }),
-  func: async ({ countryCode }) => {
+  func: async ({ countryCode }, ctx) => {
     try {
-      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
+      countryCode = sanitizeCountryCode(countryCode);
+      if (ctx) setUserCountry(ctx.userId, countryCode);
       const operators = await getOperators(countryCode);
       const balance = await getCachedReloadlyBalance();
       return JSON.stringify(operators.map(op => {
@@ -102,9 +107,10 @@ export const getDataPlansTool: Tool = {
   schema: z.object({
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
   }),
-  func: async ({ countryCode }) => {
+  func: async ({ countryCode }, ctx) => {
     try {
-      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
+      countryCode = sanitizeCountryCode(countryCode);
+      if (ctx) setUserCountry(ctx.userId, countryCode);
       const operators = await getDataOperators(countryCode);
       const balance = await getCachedReloadlyBalance();
       return JSON.stringify(operators.map(op => {
@@ -148,6 +154,8 @@ export const sendDataTool: Tool = {
     operatorId: z.number().describe("Data operator ID from get_data_plans"),
   }),
   func: async ({ phone, countryCode, amount, operatorId }) => {
+    phone = sanitizePhone(phone);
+    countryCode = sanitizeCountryCode(countryCode);
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -197,9 +205,10 @@ export const getBillersTool: Tool = {
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
     type: z.string().optional().nullable().describe("Bill type filter: ELECTRICITY_BILL_PAYMENT, WATER_BILL_PAYMENT, TV_BILL_PAYMENT, INTERNET_BILL_PAYMENT"),
   }),
-  func: async ({ countryCode, type }) => {
+  func: async ({ countryCode, type }, ctx) => {
     try {
-      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
+      countryCode = sanitizeCountryCode(countryCode);
+      if (ctx) setUserCountry(ctx.userId, countryCode);
       const billers = await getBillers({ countryCode, type: type as any });
       return JSON.stringify(billers.map(b => {
         const fxRate = b.fx?.rate || 1;
@@ -239,6 +248,7 @@ export const searchGiftCardsTool: Tool = {
   }),
   func: async ({ query, countryCode }) => {
     try {
+      if (countryCode) countryCode = sanitizeCountryCode(countryCode);
       const results = await searchGiftCards(query, countryCode);
       const balance = await getCachedReloadlyBalance();
       return JSON.stringify(results.slice(0, 10).map(p => ({
@@ -272,13 +282,14 @@ export const getGiftCardsTool: Tool = {
   }),
   func: async ({ countryCode }) => {
     try {
+      countryCode = sanitizeCountryCode(countryCode);
       const products = await getGiftCardProducts(countryCode);
       const balance = await getCachedReloadlyBalance();
       const brands = new Map<string, { brandName: string; category: string | null; products: number; minPrice: number; maxPrice: number; currency: string }>();
       for (const p of products) {
         const existing = brands.get(p.brand.brandName);
-        const min = p.minSenderDenomination || p.fixedSenderDenominations?.[0] || 0;
-        const max = p.maxSenderDenomination || p.fixedSenderDenominations?.slice(-1)[0] || 0;
+        const min = p.minSenderDenomination ?? p.fixedSenderDenominations?.[0] ?? 0;
+        const max = p.maxSenderDenomination ?? p.fixedSenderDenominations?.slice(-1)[0] ?? 0;
         if (existing) {
           existing.products++;
           existing.minPrice = Math.min(existing.minPrice, min);
@@ -319,7 +330,7 @@ export const buyGiftCardTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { productId, amount, recipientEmail, quantity: quantity || 1 },
+      details: { productId, unitPrice: amount, recipientEmail, quantity: quantity || 1 },
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -334,8 +345,22 @@ export const getGiftCardCodeTool: Tool = {
   schema: z.object({
     transactionId: z.number().describe("Transaction ID from buy_gift_card"),
   }),
-  func: async ({ transactionId }) => {
+  func: async ({ transactionId }, ctx) => {
     try {
+      // Ownership check: verify a receipt exists for this transactionId
+      // and belongs to the current user (prevents guessing sequential IDs)
+      const receipt = await getReceiptByReloadlyId(transactionId);
+      if (!receipt) {
+        return JSON.stringify({ error: 'No purchase found for this transaction ID. Make sure you have the correct ID from your gift card purchase.' });
+      }
+      // Ownership check is mandatory — if we can't verify, deny access.
+      // Without this, anyone could enumerate sequential Reloadly transaction IDs.
+      if (!ctx?.walletAddress) {
+        return JSON.stringify({ error: 'Unable to verify ownership. Please try again.' });
+      }
+      if (receipt.payer === 'unknown' || receipt.payer.toLowerCase() !== ctx.walletAddress.toLowerCase()) {
+        return JSON.stringify({ error: 'This transaction does not belong to you.' });
+      }
       const codes = await getGiftCardRedeemCode(transactionId);
       return JSON.stringify({ codes });
     } catch (error: any) {
@@ -355,6 +380,7 @@ export const checkCountryTool: Tool = {
   }),
   func: async ({ countryCode }) => {
     try {
+      countryCode = sanitizeCountryCode(countryCode);
       const services = await getCountryServices(countryCode);
       return JSON.stringify(services);
     } catch (error: any) {
@@ -372,9 +398,10 @@ export const getPromotionsTool: Tool = {
   schema: z.object({
     countryCode: z.string().describe("Country ISO code (e.g. NG, KE, GH)"),
   }),
-  func: async ({ countryCode }) => {
+  func: async ({ countryCode }, ctx) => {
     try {
-      if (_schedulingContext) setUserCountry(_schedulingContext.userId, countryCode);
+      countryCode = sanitizeCountryCode(countryCode);
+      if (ctx) setUserCountry(ctx.userId, countryCode);
       const promotions = await getPromotions(countryCode);
       return JSON.stringify(promotions.slice(0, 10).map((p: any) => ({
         operatorId: p.operatorId,
@@ -401,6 +428,8 @@ export const detectOperatorTool: Tool = {
   }),
   func: async ({ phone, countryCode }) => {
     try {
+      phone = sanitizePhone(phone);
+      countryCode = sanitizeCountryCode(countryCode);
       const op = await detectOperator(phone, countryCode);
       const balance = await getCachedReloadlyBalance();
       const fxRate = op.fx?.rate || 1;
@@ -447,10 +476,7 @@ export const scheduleTaskTool: Tool = {
     productAmount: z.number().describe("Product amount in USD"),
     scheduledAt: z.string().describe("ISO 8601 datetime for when to execute (e.g. '2025-03-15T17:00:00Z')"),
   }),
-  func: async ({ description, toolName, toolArgs, productAmount, scheduledAt }) => {
-    // This is called by the agent — userId and chatId are injected by the caller
-    // via the _schedulingContext (set before each agent run)
-    const ctx = _schedulingContext;
+  func: async ({ description, toolName, toolArgs, productAmount, scheduledAt }, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Scheduling is only available in Telegram' });
     }
@@ -482,7 +508,7 @@ export const scheduleTaskTool: Tool = {
       description,
       scheduledAt: scheduledDate.toISOString(),
       totalWithFee: total,
-      message: `Task scheduled for ${scheduledDate.toLocaleString()}. You'll be asked to confirm payment when it's time. Total: ${total} cUSD.`,
+      message: `Task scheduled for ${scheduledDate.toLocaleString('en-US')}. You'll be asked to confirm payment when it's time. Total: ${total} cUSD.`,
     });
   },
 };
@@ -494,8 +520,7 @@ export const myTasksTool: Tool = {
   name: "my_tasks",
   description: "Show the user's pending scheduled tasks. Use when user asks about their upcoming/scheduled tasks.",
   schema: z.object({}),
-  func: async () => {
-    const ctx = _schedulingContext;
+  func: async (_args, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Tasks are only available in Telegram' });
     }
@@ -524,8 +549,7 @@ export const cancelTaskTool: Tool = {
   schema: z.object({
     taskId: z.string().describe("Task ID to cancel (from my_tasks)"),
   }),
-  func: async ({ taskId }) => {
-    const ctx = _schedulingContext;
+  func: async ({ taskId }, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Tasks are only available in Telegram' });
     }
@@ -548,8 +572,7 @@ export const saveInstructionTool: Tool = {
     instruction: z.string().describe("The instruction to remember (e.g. 'Brother\\'s number is +2348147658721, MTN Nigeria')"),
     category: z.enum(['preference', 'recurring', 'contact', 'alert', 'general']).describe("Category of instruction"),
   }),
-  func: async ({ instruction, category }) => {
-    const ctx = _schedulingContext;
+  func: async ({ instruction, category }, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Instructions are only available in Telegram' });
     }
@@ -565,8 +588,7 @@ export const getInstructionsTool: Tool = {
   name: "get_instructions",
   description: "Retrieve the user's saved instructions, preferences, and goals. Use when user asks what you remember about them.",
   schema: z.object({}),
-  func: async () => {
-    const ctx = _schedulingContext;
+  func: async (_args, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Instructions are only available in Telegram' });
     }
@@ -591,8 +613,7 @@ export const removeInstructionTool: Tool = {
   schema: z.object({
     instructionFragment: z.string().describe("Part of the instruction text to match and remove"),
   }),
-  func: async ({ instructionFragment }) => {
-    const ctx = _schedulingContext;
+  func: async ({ instructionFragment }, ctx) => {
     if (!ctx) {
       return JSON.stringify({ error: 'Instructions are only available in Telegram' });
     }
@@ -617,6 +638,7 @@ export const convertCurrencyTool: Tool = {
   }),
   func: async ({ amount, fromCurrency, countryCode }) => {
     try {
+      countryCode = sanitizeCountryCode(countryCode);
       const fxData = await getFxRate(countryCode);
       if (!fxData) {
         return JSON.stringify({ error: `No FX rate available for country ${countryCode}` });
@@ -630,7 +652,7 @@ export const convertCurrencyTool: Tool = {
           from: { amount, currency: "USD" },
           to: { amount: localAmount, currency: currencyCode },
           fxRate: rate,
-          description: `${amount} USD = ${localAmount.toLocaleString()} ${currencyCode}`,
+          description: `${amount} USD = ${localAmount.toLocaleString('en-US')} ${currencyCode}`,
         });
       } else {
         const usdAmount = Math.round((amount / rate) * 100) / 100;
@@ -638,7 +660,7 @@ export const convertCurrencyTool: Tool = {
           from: { amount, currency: currencyCode },
           to: { amount: usdAmount, currency: "USD" },
           fxRate: rate,
-          description: `${amount.toLocaleString()} ${currencyCode} = ${usdAmount} USD`,
+          description: `${amount.toLocaleString('en-US')} ${currencyCode} = ${usdAmount} USD`,
         });
       }
     } catch (error: any) {
@@ -647,11 +669,12 @@ export const convertCurrencyTool: Tool = {
   },
 };
 
-// Scheduling context — set by the caller before each agent run so tools can access userId/chatId
-let _schedulingContext: { userId: string; chatId: number } | null = null;
-
-export function setSchedulingContext(ctx: { userId: string; chatId: number } | null) {
-  _schedulingContext = ctx;
+// Scheduling context — passed as second arg to tool.func() by executeToolCalls.
+// Previously was a module-level global that could be overwritten by concurrent requests.
+export interface SchedulingContext {
+  userId: string;
+  chatId: number;
+  walletAddress?: string;
 }
 
 // Paid tools — execute real transactions via Reloadly (cost money)

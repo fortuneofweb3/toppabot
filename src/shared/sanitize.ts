@@ -15,13 +15,32 @@ export function sanitizeCountryCode(code: string | string[]): string {
   return sanitized;
 }
 
+export function sanitizeAccountNumber(value: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Invalid account number: must be a non-empty string');
+  }
+  const trimmed = value.trim();
+  if (!/^[a-zA-Z0-9\- ]+$/.test(trimmed)) {
+    throw new Error('Invalid account number: contains invalid characters');
+  }
+  if (trimmed.length > 50) {
+    throw new Error('Invalid account number: too long (max 50 characters)');
+  }
+  return trimmed;
+}
+
 export function sanitizePhone(phone: string): string {
   if (typeof phone !== 'string') {
     throw new Error('Invalid phone number: must be a string');
   }
-  const sanitized = phone.replace(/[^0-9+\-\s]/g, '');
+  // Strip everything except digits and leading +
+  const sanitized = phone.replace(/[^0-9+]/g, '');
   if (sanitized.length < 5 || sanitized.length > 20) {
-    throw new Error('Invalid phone number: must be 5-20 digits');
+    throw new Error('Invalid phone number: must be 5-20 characters');
+  }
+  // Allow at most one '+' and only at the start
+  if (!/^\+?[0-9]+$/.test(sanitized)) {
+    throw new Error('Invalid phone number: only digits allowed, with optional leading +');
   }
   return sanitized;
 }

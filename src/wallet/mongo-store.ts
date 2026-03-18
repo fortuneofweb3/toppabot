@@ -66,6 +66,21 @@ export class MongoWalletStore implements IWalletStore {
     );
   }
 
+  async insertIfAbsent(telegramId: string, wallet: StoredWallet): Promise<StoredWallet> {
+    const col = await this.collection();
+    try {
+      await col.insertOne(wallet);
+      return wallet;
+    } catch (err: any) {
+      // E11000 duplicate key error → wallet already exists, return existing
+      if (err.code === 11000) {
+        const existing = await col.findOne({ telegramId });
+        return existing!;
+      }
+      throw err;
+    }
+  }
+
   async exists(telegramId: string): Promise<boolean> {
     const col = await this.collection();
     const count = await col.countDocuments({ telegramId }, { limit: 1 });

@@ -18,6 +18,8 @@ export interface StoredWallet {
 export interface IWalletStore {
   get(telegramId: string): Promise<StoredWallet | null>;
   set(telegramId: string, wallet: StoredWallet): Promise<void>;
+  /** Insert only if no wallet exists for this user. Returns the existing or newly created wallet. */
+  insertIfAbsent(telegramId: string, wallet: StoredWallet): Promise<StoredWallet>;
   exists(telegramId: string): Promise<boolean>;
   delete(telegramId: string): Promise<void>;
 }
@@ -31,6 +33,13 @@ export class InMemoryWalletStore implements IWalletStore {
 
   async set(telegramId: string, wallet: StoredWallet): Promise<void> {
     this.wallets.set(telegramId, wallet);
+  }
+
+  async insertIfAbsent(telegramId: string, wallet: StoredWallet): Promise<StoredWallet> {
+    const existing = this.wallets.get(telegramId);
+    if (existing) return existing;
+    this.wallets.set(telegramId, wallet);
+    return wallet;
   }
 
   async exists(telegramId: string): Promise<boolean> {

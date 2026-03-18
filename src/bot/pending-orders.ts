@@ -10,6 +10,7 @@
  * so double-clicks can't cause duplicate payments.
  */
 
+import crypto from 'crypto';
 import { Collection } from 'mongodb';
 import { getDb } from '../wallet/mongo-store';
 
@@ -71,10 +72,11 @@ export class PendingOrderStore {
   async create(order: PendingOrder): Promise<void> {
     try {
       const col = await getCollection();
-      // Cancel any existing non-terminal order for this user (including stuck processing)
+      // Cancel any existing non-terminal order for this user (but NEVER delete processing orders —
+      // those have active payments/Reloadly calls in flight)
       await col.deleteMany({
         telegramId: order.telegramId,
-        status: { $in: ['pending_confirmation', 'pending_payment', 'processing'] },
+        status: { $in: ['pending_confirmation', 'pending_payment'] },
       });
       // Insert with TTL date
       await col.insertOne({
@@ -197,8 +199,12 @@ export class PendingOrderStore {
 }
 
 /**
- * Generate a short unique order ID
+ * Generate a short, cryptographically random order ID.
+ * Format: order_<13-digit timestamp>_<8 hex chars from crypto.randomBytes>
+ * Uses crypto.randomBytes instead of Math.random for unpredictability.
+ * Must stay short enough for Telegram callback_data (64 byte limit).
  */
 export function generateOrderId(): string {
-  return `order_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const hex = crypto.randomBytes(4).toString('hex'); // 8 hex chars, 32 bits of entropy
+  return `order_${Date.now()}_${hex}`;
 }

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Collection } from 'mongodb';
 import { getDb } from '../wallet/mongo-store';
 import { runToppaAgent } from '../agent/graph';
+import crypto from 'crypto';
 
 /**
  * A2A (Agent-to-Agent Protocol) — JSON-RPC 2.0 Task Handler
@@ -25,6 +26,35 @@ const A2A_ERRORS = {
 } as const;
 
 const TERMINAL_STATES = new Set(['TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED']);
+
+// Prompt injection blocklist — mirrors sanitizeTelegramInput in telegram.ts
+const INJECTION_PATTERNS = [
+  'ignore previous', 'ignore all', 'new instructions', 'forget everything',
+  'system:', 'admin:', 'sudo', 'root:', '<script>', '<|im_end|>', '<|im_start|>',
+  'disregard', 'override', 'jailbreak', 'developer mode',
+  '\\[system\\]', '\\{system\\}', '<\\|system\\|>', '<\\|user\\|>',
+  'pretend you', 'act as if', 'roleplay as',
+  'ignore above', 'ignore the above', 'ignore your instructions',
+  'bypass', 'do anything now',
+];
+
+function sanitizeA2AInput(input: string): string {
+  if (input.length > 500) {
+    throw new Error('Message too long');
+  }
+  const normalized = input
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
+    .replace(/[\u0400-\u04FF]/g, (c) => {
+      const map: Record<string, string> = { '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0455': 's', '\u0456': 'i', '\u0445': 'x' };
+      return map[c] || c;
+    });
+  for (const phrase of INJECTION_PATTERNS) {
+    if (new RegExp(phrase, 'gi').test(normalized)) {
+      throw new Error('Message contains potentially malicious content');
+    }
+  }
+  return input;
+}
 
 // ─── Task Types ───
 
@@ -159,6 +189,15 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
       });
       return;
     }
+    // Ownership check: if contextId is provided, it must match the task's context
+    if (message.contextId && existingTask.contextId !== message.contextId) {
+      res.json({
+        jsonrpc: '2.0',
+        id: rpcId,
+        error: a2aError(A2A_ERRORS.TASK_NOT_FOUND, 'Task not found'),
+      });
+      return;
+    }
     if (TERMINAL_STATES.has(existingTask.status.state)) {
       res.json({
         jsonrpc: '2.0',
@@ -181,6 +220,19 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
       jsonrpc: '2.0',
       id: rpcId,
       error: a2aError(-32602, 'No text content found in message parts'),
+    });
+    return;
+  }
+
+  // Sanitize input — A2A is an open endpoint, must block prompt injection
+  let sanitizedText: string;
+  try {
+    sanitizedText = sanitizeA2AInput(userText);
+  } catch {
+    res.json({
+      jsonrpc: '2.0',
+      id: rpcId,
+      error: a2aError(-32602, 'Message rejected by input filter'),
     });
     return;
   }
@@ -217,7 +269,7 @@ async function handleSendMessage(rpcId: any, params: any, res: Response) {
   await saveTask(task);
 
   try {
-    const result = await runToppaAgent(userText, { source: 'a2a' as any });
+    const result = await runToppaAgent(sanitizedText, { source: 'a2a', userAddress: contextId });
 
     const responseText = typeof result.response === 'string'
       ? result.response
@@ -286,6 +338,17 @@ async function handleGetTask(rpcId: any, params: any, res: Response) {
     return;
   }
 
+  // Ownership check: caller must provide matching contextId to read a task.
+  // Prevents enumeration — task IDs are UUIDs but contextId adds a second factor.
+  if (params?.contextId && task.contextId !== params.contextId) {
+    res.json({
+      jsonrpc: '2.0',
+      id: rpcId,
+      error: a2aError(A2A_ERRORS.TASK_NOT_FOUND, 'Task not found'),
+    });
+    return;
+  }
+
   res.json({ jsonrpc: '2.0', id: rpcId, result: { task } });
 }
 
@@ -300,6 +363,16 @@ async function handleCancelTask(rpcId: any, params: any, res: Response) {
 
   const task = await getTask(taskId);
   if (!task) {
+    res.json({
+      jsonrpc: '2.0',
+      id: rpcId,
+      error: a2aError(A2A_ERRORS.TASK_NOT_FOUND, 'Task not found'),
+    });
+    return;
+  }
+
+  // Ownership check: require matching contextId to cancel a task
+  if (params?.contextId && task.contextId !== params.contextId) {
     res.json({
       jsonrpc: '2.0',
       id: rpcId,

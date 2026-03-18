@@ -64,17 +64,28 @@ async function getCollection(): Promise<Collection<ServiceReceipt>> {
   _collection = db.collection<ServiceReceipt>(COLLECTION_NAME);
 
   if (!_indexesCreated) {
-    // Index on payment tx hash for quick lookup
-    await _collection.createIndex({ paymentTxHash: 1 });
+    // Index on payment tx hash — unique to prevent receipt duplication/replay.
+    // A given on-chain tx hash should only map to ONE service execution.
+    await _collection.createIndex({ paymentTxHash: 1 }, { unique: true });
     // Index on source + createdAt for channel-specific queries
     await _collection.createIndex({ source: 1, createdAt: -1 });
     // Index on payer for user history
     await _collection.createIndex({ payer: 1, createdAt: -1 });
-    // TTL: keep receipts for 90 days
-    await _collection.createIndex(
-      { createdAt: 1 },
-      { expireAfterSeconds: 90 * 24 * 60 * 60 },
-    );
+    // TTL: keep receipts for 90 days (update via collMod if TTL changed)
+    const RECEIPT_TTL = 90 * 24 * 60 * 60;
+    try {
+      await _collection.createIndex(
+        { createdAt: 1 },
+        { expireAfterSeconds: RECEIPT_TTL },
+      );
+    } catch (err: any) {
+      if (err.code === 85 || err.codeName === 'IndexOptionsConflict') {
+        await db.command({
+          collMod: COLLECTION_NAME,
+          index: { keyPattern: { createdAt: 1 }, expireAfterSeconds: RECEIPT_TTL },
+        });
+      }
+    }
     _indexesCreated = true;
   }
 
@@ -90,12 +101,22 @@ export async function createReceipt(receipt: Omit<ServiceReceipt, '_id' | 'creat
     const col = await getCollection();
     const doc: ServiceReceipt = {
       ...receipt,
+      // Normalize tx hash to lowercase — the unique index is case-sensitive,
+      // and getReceiptByTxHash queries with .toLowerCase(). Without this,
+      // mixed-case hashes could bypass the dedup guard.
+      paymentTxHash: receipt.paymentTxHash.toLowerCase().trim(),
       status: (receipt.status as any) || 'pending',
       createdAt: new Date(),
     };
     const result = await col.insertOne(doc);
     return result.insertedId.toString();
   } catch (err: any) {
+    if (err.code === 11000) {
+      // Duplicate paymentTxHash — this tx hash already has a receipt.
+      // This is a critical safety check: prevents double-execution for the same payment.
+      console.error('[ServiceReceipts] DUPLICATE receipt attempt for tx:', receipt.paymentTxHash);
+      throw new Error('Payment already processed. This transaction hash has already been used.');
+    }
     console.error('[ServiceReceipts] Failed to create receipt:', err.message);
     return ''; // Non-critical — don't block service execution
   }
@@ -105,11 +126,12 @@ export async function createReceipt(receipt: Omit<ServiceReceipt, '_id' | 'creat
  * Update a receipt after service execution completes (success or failure).
  */
 export async function updateReceipt(receiptId: string, update: {
-  status: 'success' | 'failed' | 'pending';
+  status?: 'success' | 'failed' | 'pending';
   reloadlyTransactionId?: number;
   reloadlyStatus?: string;
   serviceResult?: Record<string, any>;
   error?: string;
+  refundTxHash?: string;
   settlementReceipt?: ServiceReceipt['settlementReceipt'];
 }): Promise<void> {
   if (!receiptId) return;
@@ -139,6 +161,20 @@ export async function getReceiptByTxHash(txHash: string): Promise<ServiceReceipt
     return await col.findOne({ paymentTxHash: txHash.toLowerCase().trim() });
   } catch (err: any) {
     console.error('[ServiceReceipts] Failed to get receipt:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Get a receipt by Reloadly transaction ID.
+ * Used to verify ownership of gift card codes — ensures the requesting user is the buyer.
+ */
+export async function getReceiptByReloadlyId(reloadlyTransactionId: number): Promise<ServiceReceipt | null> {
+  try {
+    const col = await getCollection();
+    return await col.findOne({ reloadlyTransactionId });
+  } catch (err: any) {
+    console.error('[ServiceReceipts] Failed to get receipt by Reloadly ID:', err.message);
     return null;
   }
 }

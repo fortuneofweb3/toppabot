@@ -37,10 +37,12 @@ class UserSettingsStore {
       const existing = await col.findOne({ telegramId });
       if (existing) return existing;
 
-      // Default settings — insert and return
+      // Default settings — insert and return.
+      // autoReview is OFF by default: it uses the user's private key to sign
+      // on-chain reputation transactions, so users must explicitly opt in.
       const defaults: UserSettings = {
         telegramId,
-        autoReviewEnabled: true,
+        autoReviewEnabled: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -48,10 +50,10 @@ class UserSettingsStore {
       return defaults;
     } catch (err: any) {
       console.error('[UserSettings] Failed to get settings:', err.message);
-      // Return defaults on error so the app doesn't break
+      // Return safe defaults on error — never auto-enable private key usage
       return {
         telegramId,
-        autoReviewEnabled: true,
+        autoReviewEnabled: false,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

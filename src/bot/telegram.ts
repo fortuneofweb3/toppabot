@@ -7,7 +7,7 @@ import { WalletManager } from '../wallet/manager';
 import { InMemoryWalletStore } from '../wallet/store';
 import { MongoWalletStore } from '../wallet/mongo-store';
 import { PendingOrderStore, PendingOrder, generateOrderId } from './pending-orders';
-import { handleCallback } from './handlers';
+import { handleCallback, storePendingWithdrawal } from './handlers';
 import { userSettingsStore } from './user-settings';
 import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 import { startScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask, getUserScheduledTasks } from '../agent/scheduler';
@@ -119,11 +119,19 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reaso
 }
 
 function recordSpending(userId: string, amount: number) {
-  const userLimit = userRateLimits.get(userId);
-  if (userLimit) {
-    userLimit.totalSpent += amount;
-    persistSpendingToDb(userId, userLimit.totalSpent, userLimit.spendingResetDate);
+  let userLimit = userRateLimits.get(userId);
+  if (!userLimit) {
+    // Entry was evicted from in-memory cache — recreate with this spending
+    userLimit = {
+      requestCount: 0,
+      lastReset: Date.now(),
+      totalSpent: 0,
+      spendingResetDate: Date.now(),
+    };
+    userRateLimits.set(userId, userLimit);
   }
+  userLimit.totalSpent += amount;
+  persistSpendingToDb(userId, userLimit.totalSpent, userLimit.spendingResetDate);
 }
 
 // ─────────────────────────────────────────────────
@@ -269,7 +277,7 @@ async function cmdWallet(chatId: number, userId: string) {
       text:
         `💰 Your Toppa Wallet\n\n` +
         `Address:\n\`${address}\`\n\n` +
-        `Balance: ${balance} ${TOKEN_SYMBOL}\n` +
+        `Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
         `Network: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\n` +
         `Tap address above to copy, then deposit ${TOKEN_SYMBOL} to fund your wallet.`,
       parse_mode: 'Markdown',
@@ -317,12 +325,13 @@ async function cmdWithdraw(chatId: number, userId: string, text: string) {
     return;
   }
 
+  const wdId = storePendingWithdrawal(userId, amount, toAddress);
   await tg('sendMessage', {
     chat_id: chatId,
     text: `Withdraw ${amount} ${TOKEN_SYMBOL} to\n${toAddress}?`,
     reply_markup: { inline_keyboard: [
-      [{ text: 'Confirm Withdrawal', callback_data: `withdraw_confirm_${userId}_${amount}_${toAddress}` }],
-      [{ text: 'Cancel', callback_data: `withdraw_cancel_${userId}` }],
+      [{ text: 'Confirm Withdrawal', callback_data: `wd_${wdId}` }],
+      [{ text: 'Cancel', callback_data: `wdc_${wdId}` }],
     ]},
   });
 }
@@ -379,14 +388,14 @@ async function cmdRate(chatId: number, text: string) {
     const { rate, currencyCode } = fxData;
     const examples = [1, 5, 10, 25].map(usd => {
       const local = Math.round(usd * rate);
-      return `${usd} ${TOKEN_SYMBOL} = ${local.toLocaleString()} ${currencyCode}`;
+      return `${usd} ${TOKEN_SYMBOL} = ${local.toLocaleString('en-US')} ${currencyCode}`;
     }).join('\n');
 
     await tg('sendMessage', {
       chat_id: chatId,
       text:
         `Rate for ${countryCode} (${currencyCode})\n\n` +
-        `1 ${TOKEN_SYMBOL} = ${rate.toLocaleString()} ${currencyCode}\n\n` +
+        `1 ${TOKEN_SYMBOL} = ${rate.toLocaleString('en-US')} ${currencyCode}\n\n` +
         `${examples}\n\n` +
         `This is the Reloadly delivery rate for airtime/data.`,
     });
@@ -433,7 +442,20 @@ async function cmdCancel(chatId: number, userId: string) {
     return;
   }
 
-  await pendingOrders.updateStatus(order.orderId, 'cancelled');
+  // Only cancel orders that are waiting for user action — never cancel mid-processing orders
+  if (order.status === 'processing') {
+    await tg('sendMessage', { chat_id: chatId, text: 'Your order is currently processing and cannot be cancelled.' });
+    return;
+  }
+
+  const transitioned = await pendingOrders.atomicTransition(
+    order.orderId, ['pending_confirmation', 'pending_payment'], 'cancelled',
+  );
+  if (!transitioned) {
+    await tg('sendMessage', { chat_id: chatId, text: 'Order is already processing or expired.' });
+    return;
+  }
+
   await pendingOrders.remove(order.orderId);
   await tg('sendMessage', { chat_id: chatId, text: `❌ Order cancelled\n\n${order.description}` });
 }
@@ -482,7 +504,7 @@ async function cmdStatus(chatId: number, userId: string) {
   if (tasks.length > 0) {
     msg += `Scheduled Tasks (${tasks.length}):\n`;
     tasks.forEach((t, i) => {
-      msg += `${i + 1}. ${t.description} — ${new Date(t.scheduledAt).toLocaleString()}\n`;
+      msg += `${i + 1}. ${t.description} — ${new Date(t.scheduledAt).toLocaleString('en-US')}\n`;
     });
   } else {
     msg += 'No scheduled tasks.';
@@ -615,7 +637,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
             `Amount: ${orderData.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
             `Service Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\n` +
             `Total: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
-            `Your Balance: ${balance} ${TOKEN_SYMBOL}\n\n` +
+            `Your Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
             `Expires in 10 minutes`,
           reply_markup: { inline_keyboard: [
             [{ text: '✅ Confirm Order', callback_data: `order_confirm_${orderId}` }],
@@ -633,7 +655,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
 
     if (error.message.includes('malicious') || error.message.includes('too long')) {
       await tg('sendMessage', { chat_id: chatId, text: error.message });
-    } else if (error.message.includes('INSUFFICIENT_BALANCE') || error.message.includes('balance')) {
+    } else if (error.message.includes('INSUFFICIENT_BALANCE') || error.message.includes('Insufficient balance')) {
       await tg('sendMessage', { chat_id: chatId, text: 'Unable to complete request. Please try again later or contact support.' });
     } else {
       await tg('sendMessage', { chat_id: chatId, text: 'An error occurred processing your request. Please try again.' });
@@ -767,8 +789,8 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
     process.once('SIGTERM', () => { stopPolling(); stopScheduler(); stopHeartbeat(); });
   }
 
-  // Start scheduler
-  startScheduler(async (task: ScheduledTask) => {
+  // Start scheduler (await ensures stuck-task recovery runs before accepting requests)
+  await startScheduler(async (task: ScheduledTask) => {
     try {
       const { total, serviceFee } = calculateTotalPayment(task.productAmount);
       const orderId = generateOrderId();

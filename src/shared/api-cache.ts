@@ -17,6 +17,8 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
+const MAX_CACHE_ENTRIES = 500;
+
 class ApiCache {
   private store = new Map<string, CacheEntry<any>>();
 
@@ -27,10 +29,33 @@ class ApiCache {
       this.store.delete(key);
       return null;
     }
+    // Move to end of Map iteration order (LRU: recently accessed = last evicted)
+    this.store.delete(key);
+    this.store.set(key, entry);
     return entry.data;
   }
 
   set<T>(key: string, data: T, ttlMs: number): void {
+    // If updating existing key, delete first to move to end of Map order
+    if (this.store.has(key)) {
+      this.store.delete(key);
+    } else if (this.store.size >= MAX_CACHE_ENTRIES) {
+      // Evict: prefer expired entries first, then oldest-accessed (LRU)
+      const now = Date.now();
+      let evicted = false;
+      for (const [k, v] of this.store) {
+        if (now > v.expiresAt) {
+          this.store.delete(k);
+          evicted = true;
+          break;
+        }
+      }
+      if (!evicted) {
+        // No expired entries — evict least-recently-used (first in Map order)
+        const firstKey = this.store.keys().next().value;
+        if (firstKey !== undefined) this.store.delete(firstKey);
+      }
+    }
     this.store.set(key, { data, expiresAt: Date.now() + ttlMs });
   }
 

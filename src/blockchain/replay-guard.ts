@@ -6,6 +6,7 @@
  * Used by:
  * - x402 REST API middleware (server.ts)
  * - MCP paid tools (mcp/tools.ts)
+ * - Telegram payment handler (handlers.ts)
  *
  * Atomicity:
  * - Uses MongoDB unique _id constraint on the hash.
@@ -13,8 +14,9 @@
  * - No TOCTOU race condition — the database enforces uniqueness atomically.
  *
  * TTL:
- * - MongoDB TTL index on `createdAt` auto-deletes entries after 24 hours.
- * - No manual cleanup needed.
+ * - MongoDB TTL index on `createdAt` auto-deletes entries after 365 days.
+ * - Long TTL prevents replay attacks — on-chain tx hashes are permanent,
+ *   so the guard should persist as long as practically needed.
  */
 
 import { Collection } from 'mongodb';
@@ -38,11 +40,22 @@ async function getCollection(): Promise<Collection<PaymentHashDoc>> {
   _collection = db.collection<PaymentHashDoc>(COLLECTION_NAME);
 
   if (!_indexesCreated) {
-    // TTL index: MongoDB auto-deletes documents 24 hours after createdAt
-    await _collection.createIndex(
-      { createdAt: 1 },
-      { expireAfterSeconds: 24 * 60 * 60 },
-    );
+    const TTL_SECONDS = 365 * 24 * 60 * 60; // 365 days
+    // Create TTL index (or update if TTL value changed on an existing collection)
+    try {
+      await _collection.createIndex(
+        { createdAt: 1 },
+        { expireAfterSeconds: TTL_SECONDS },
+      );
+    } catch (err: any) {
+      // Index already exists with different options — update via collMod
+      if (err.code === 85 || err.codeName === 'IndexOptionsConflict') {
+        await db.command({
+          collMod: COLLECTION_NAME,
+          index: { keyPattern: { createdAt: 1 }, expireAfterSeconds: TTL_SECONDS },
+        });
+      }
+    }
     _indexesCreated = true;
   }
 
@@ -91,7 +104,7 @@ export async function releasePaymentHash(txHash: string): Promise<void> {
     const col = await getCollection();
     await col.deleteOne({ _id: normalized });
   } catch (err: any) {
-    // Non-critical — hash will expire via TTL in 24h at worst
+    // Non-critical — hash will expire via TTL eventually
     console.error('[ReplayGuard] MongoDB error during release:', err.message);
   }
 }
@@ -120,13 +133,13 @@ export async function getReplayGuardStats() {
     const totalTracked = await col.countDocuments();
     return {
       totalTracked,
-      ttlHours: 24,
+      ttlDays: 365,
       storage: 'mongodb',
     };
   } catch {
     return {
       totalTracked: -1,
-      ttlHours: 24,
+      ttlDays: 365,
       storage: 'mongodb (error)',
     };
   }

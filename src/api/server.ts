@@ -23,6 +23,7 @@ import { handleMcpRequest } from '../mcp/server';
 import { generateAgentCard } from '../a2a/agent-card';
 import { handleA2ARequest } from '../a2a/handler';
 import { CELO_CAIP2 } from '../shared/constants';
+import { refundPayer } from '../shared/refund';
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -204,6 +205,29 @@ function errorResponse(error: any): { error: string; code?: string } {
   return { error: error.message || 'Unknown error' };
 }
 
+/**
+ * Shared catch handler for x402 paid endpoints.
+ * Marks receipt as failed, auto-refunds if service didn't succeed, sends error response.
+ */
+async function handleX402Error(
+  error: unknown, req: X402Request, res: Response,
+  receiptId: string, serviceSucceeded: boolean,
+): Promise<void> {
+  if (receiptId) {
+    await updateReceipt(receiptId, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+  // Auto-refund ONLY if the Reloadly service call itself failed.
+  // If service succeeded but bookkeeping (updateReceipt/recordTransaction) threw, do NOT refund.
+  if (!serviceSucceeded && req.x402?.payer && req.x402.breakdown) {
+    const refundTx = await refundPayer(req.x402.payer, req.x402.breakdown.total, 'x402_api', req.x402.txHash);
+    if (refundTx && receiptId) await updateReceipt(receiptId, { refundTxHash: refundTx });
+  }
+  res.status(errorStatus(error)).json(errorResponse(error));
+}
+
 // Sanitization functions imported from shared module
 import { sanitizeCountryCode, sanitizePhone } from '../shared/sanitize';
 
@@ -230,8 +254,9 @@ function parseFloatSafe(value: any, fieldName: string): number {
     throw new Error(`Invalid ${fieldName}: must be a number`);
   }
   const str = String(value).trim();
-  if (!/^\d+(\.\d+)?$/.test(str)) {
-    throw new Error(`Invalid ${fieldName}: must be a valid positive number`);
+  // Allow digits with optional decimal, max 6 decimal places (USDC precision)
+  if (!/^\d+(\.\d{1,6})?$/.test(str)) {
+    throw new Error(`Invalid ${fieldName}: must be a valid positive number (max 6 decimal places)`);
   }
   const parsed = parseFloat(str);
   if (!isFinite(parsed) || parsed <= 0 || parsed > 10000) {
@@ -260,9 +285,13 @@ function sanitizeAccountNumber(value: any, fieldName: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`Invalid ${fieldName}: must be a non-empty string`);
   }
-  const trimmed = value.trim().slice(0, 50);
+  const trimmed = value.trim();
+  // Validate BEFORE truncating — reject the full input if it has bad chars
   if (!/^[a-zA-Z0-9\- ]+$/.test(trimmed)) {
     throw new Error(`Invalid ${fieldName}: contains invalid characters (alphanumeric, hyphens, and spaces only)`);
+  }
+  if (trimmed.length > 50) {
+    throw new Error(`Invalid ${fieldName}: too long (max 50 characters)`);
   }
   return trimmed;
 }
@@ -276,7 +305,12 @@ function validateEmail(value: any, fieldName: string): string {
     throw new Error(`Invalid ${fieldName}: must be a string`);
   }
   const trimmed = value.trim().toLowerCase();
-  if (trimmed.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+  // Stricter email validation: single @, no consecutive dots, safe characters only
+  if (
+    trimmed.length > 254 ||
+    trimmed.length < 5 ||
+    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(trimmed)
+  ) {
     throw new Error(`Invalid ${fieldName}: must be a valid email address`);
   }
   return trimmed;
@@ -954,6 +988,7 @@ for (const ep of ['send-airtime', 'send-data', 'pay-bill', 'buy-gift-card']) {
 // Send airtime top-up via Reloadly
 app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
   let receiptId = '';
+  let serviceSucceeded = false; // V2 guard: only refund if Reloadly call itself failed
   try {
     const { phone, countryCode, amount, operatorId, useLocalAmount } = req.body;
 
@@ -1004,6 +1039,7 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
       operatorId: sanitizedOperatorId,
       useLocalAmount: !!useLocalAmount,
     });
+    serviceSucceeded = true; // Reloadly returned a response — do NOT refund on bookkeeping errors below
 
     // Update receipt with result
     const receiptStatus = reloadlyReceiptStatus(result.status);
@@ -1051,20 +1087,14 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
       },
     });
   } catch (error) {
-    // Track failed service execution (payment was taken but service failed)
-    if (receiptId) {
-      await updateReceipt(receiptId, {
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-    res.status(errorStatus(error)).json(errorResponse(error));
+    await handleX402Error(error, req, res, receiptId, serviceSucceeded);
   }
 });
 
 // Send data plan top-up via Reloadly
 app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
   let receiptId = '';
+  let serviceSucceeded = false;
   try {
     const { phone, countryCode, amount, operatorId, useLocalAmount } = req.body;
 
@@ -1113,6 +1143,7 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       operatorId: sanitizedOperatorId,
       useLocalAmount: !!useLocalAmount,
     });
+    serviceSucceeded = true;
 
     const receiptStatus = reloadlyReceiptStatus(result.status);
     await updateReceipt(receiptId, {
@@ -1156,16 +1187,14 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
       },
     });
   } catch (error) {
-    if (receiptId) {
-      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
-    }
-    res.status(errorStatus(error)).json(errorResponse(error));
+    await handleX402Error(error, req, res, receiptId, serviceSucceeded);
   }
 });
 
 // Pay utility bill via Reloadly (electricity, water, TV, internet)
 app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
   let receiptId = '';
+  let serviceSucceeded = false;
   try {
     const { billerId, accountNumber, amount, useLocalAmount } = req.body;
 
@@ -1207,9 +1236,11 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
     }
 
     const result = await payReloadlyBill({ billerId: sanitizedBillerId, accountNumber: sanitizedAccount, amount: sanitizedAmount, useLocalAmount: useLocalAmount !== false });
+    serviceSucceeded = true;
 
+    const billStatus = result.status === 'SUCCESSFUL' ? 'success' : result.status === 'FAILED' ? 'failed' : 'pending';
     await updateReceipt(receiptId, {
-      status: 'success',
+      status: billStatus,
       reloadlyTransactionId: result.id,
       reloadlyStatus: result.status,
       serviceResult: { referenceId: result.referenceId, message: result.message },
@@ -1218,7 +1249,7 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
     await recordTransaction({
       type: 'bill_payment_api',
       amount: sanitizedAmount,
-      status: 'success',
+      status: billStatus === 'success' ? 'success' : 'failed',
       metadata: {
         caller: req.x402?.payer,
         billerId: sanitizedBillerId,
@@ -1230,7 +1261,7 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
     if (req.x402) res.set('PAYMENT-RESPONSE', encodePaymentResponse(req.x402));
 
     res.json({
-      success: true,
+      success: billStatus === 'success',
       transactionId: result.id,
       status: result.status,
       referenceId: result.referenceId,
@@ -1243,16 +1274,14 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
       },
     });
   } catch (error) {
-    if (receiptId) {
-      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
-    }
-    res.status(errorStatus(error)).json(errorResponse(error));
+    await handleX402Error(error, req, res, receiptId, serviceSucceeded);
   }
 });
 
 // Buy a gift card
 app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Request, res: Response) => {
   let receiptId = '';
+  let serviceSucceeded = false;
   try {
     const { productId, amount, recipientEmail, quantity } = req.body;
 
@@ -1305,6 +1334,7 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
       recipientEmail: sanitizedEmail,
       quantity: sanitizedQuantity,
     });
+    serviceSucceeded = true;
 
     await updateReceipt(receiptId, {
       status: 'success',
@@ -1353,10 +1383,7 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
       },
     });
   } catch (error) {
-    if (receiptId) {
-      await updateReceipt(receiptId, { status: 'failed', error: error instanceof Error ? error.message : 'Unknown error' });
-    }
-    res.status(errorStatus(error)).json(errorResponse(error));
+    await handleX402Error(error, req, res, receiptId, serviceSucceeded);
   }
 });
 
@@ -1431,6 +1458,9 @@ app.get('/admin/receipts/tx/:txHash', async (req: Request, res: Response) => {
 
 // Get gift card redeem code after purchase (free — already paid at purchase time)
 app.get('/gift-card-code/:transactionId', async (req: Request, res: Response) => {
+  // V3 fix: require admin auth — codes are sensitive (redeemable value).
+  // Buy-gift-card auto-fetches codes in its response. MCP has its own tool.
+  if (!requireAdmin(req, res)) return;
   try {
     const transactionId = parseIntSafe(req.params.transactionId, 'transaction ID');
     const codes = await getGiftCardRedeemCode(transactionId);
@@ -1466,7 +1496,7 @@ export function startApiServer() {
     console.log(`   Paid:    POST /send-data                     - Send data plan top-up`);
     console.log(`   Paid:    POST /pay-bill                      - Pay utility bill`);
     console.log(`   Paid:    POST /buy-gift-card                 - Buy a gift card (includes codes)`);
-    console.log(`   Public:  GET  /gift-card-code/:id            - Retrieve gift card codes`);
+    console.log(`   Admin:   GET  /gift-card-code/:id            - Retrieve gift card codes (API key required)`);
     console.log(`   Admin:   GET  /admin/receipts/*              - Receipt management (API key required)`);
     console.log(`   MCP:     POST /mcp                          - MCP Streamable HTTP (13 tools)`);
     console.log(`   A2A:     GET  /.well-known/agent.json       - A2A Agent Card`);

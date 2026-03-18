@@ -11,10 +11,11 @@ import {
 import { verifyX402Payment, calculateTotalPayment, getX402Info, PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
 import { reservePaymentHash, releasePaymentHash } from '../blockchain/replay-guard';
 import { recordTransaction } from '../blockchain/erc8004';
-import { createReceipt, updateReceipt } from '../blockchain/service-receipts';
+import { createReceipt, updateReceipt, getReceiptByTxHash } from '../blockchain/service-receipts';
 import { CELO_CAIP2 } from '../shared/constants';
 import { getCachedReloadlyBalance } from '../shared/balance-cache';
-import { sanitizeCountryCode, sanitizePhone } from '../shared/sanitize';
+import { sanitizeCountryCode, sanitizePhone, sanitizeAccountNumber } from '../shared/sanitize';
+import { refundPayer } from '../shared/refund';
 
 /**
  * Verify x402 payment for paid MCP tools.
@@ -78,6 +79,42 @@ async function requirePayment(paymentTxHash: string | undefined, amount: number)
   }
 
   return { error: false, verification };
+}
+
+/**
+ * Handle errors in paid MCP tools: update receipt, refund if service failed, return error response.
+ * Extracted from 4 identical catch blocks to eliminate duplication.
+ */
+async function handlePaidToolError(
+  error: Error,
+  receiptId: string,
+  serviceSucceeded: boolean,
+  payer: string | undefined,
+  amount: number,
+  paymentTxHash: string | undefined,
+) {
+  if (receiptId) {
+    await updateReceipt(receiptId, { status: 'failed', error: error.message });
+  }
+  let refundTx: string | null = null;
+  if (!serviceSucceeded && payer && payer !== 'unknown') {
+    const { total: refundAmount } = calculateTotalPayment(amount);
+    refundTx = await refundPayer(payer, refundAmount, 'mcp', paymentTxHash);
+    if (refundTx && receiptId) await updateReceipt(receiptId, { refundTxHash: refundTx });
+  }
+  return {
+    content: [{
+      type: 'text' as const,
+      text: JSON.stringify({
+        error: error.message,
+        refunded: !!refundTx,
+        refundTx,
+        note: refundTx
+          ? 'Payment was refunded to your wallet.'
+          : 'Payment was verified but service failed. Contact support with your payment tx hash.',
+      }),
+    }],
+  };
 }
 
 /**
@@ -295,10 +332,25 @@ export function registerMcpTools(server: McpServer) {
 
   server.tool(
     'get_gift_card_code',
-    'Get the redeem code/PIN for a purchased gift card. Call after buy_gift_card.',
-    { transactionId: z.number().int().positive().describe('Transaction ID from buy_gift_card') },
-    async ({ transactionId }) => {
+    'Get the redeem code/PIN for a purchased gift card. Requires the paymentTxHash from buy_gift_card to verify ownership.',
+    {
+      transactionId: z.number().int().positive().describe('Transaction ID from buy_gift_card'),
+      paymentTxHash: z.string().min(10).describe('The x402 payment tx hash used for buy_gift_card — proves you are the buyer'),
+    },
+    async ({ transactionId, paymentTxHash }) => {
       try {
+        // Verify the caller is the original purchaser by checking the receipt
+        const receipt = await getReceiptByTxHash(paymentTxHash);
+        if (!receipt || receipt.serviceType !== 'gift_card') {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Invalid paymentTxHash — no matching gift card purchase found. Provide the tx hash from your buy_gift_card call.' }) }] };
+        }
+        // Require reloadlyTransactionId — if undefined, purchase hasn't completed yet
+        if (receipt.reloadlyTransactionId === undefined) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Gift card purchase is still processing. Wait a moment and retry.' }) }] };
+        }
+        if (receipt.reloadlyTransactionId !== transactionId) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Transaction ID does not match the payment. Use the transactionId from your buy_gift_card response.' }) }] };
+        }
         const codes = await getGiftCardRedeemCode(transactionId);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ codes }) }] };
       } catch (error: any) {
@@ -375,7 +427,7 @@ export function registerMcpTools(server: McpServer) {
                 from: { amount, currency: 'USD' },
                 to: { amount: localAmount, currency: currencyCode },
                 fxRate: rate,
-                description: `${amount} USD = ${localAmount.toLocaleString()} ${currencyCode}`,
+                description: `${amount} USD = ${localAmount.toLocaleString('en-US')} ${currencyCode}`,
               }),
             }],
           };
@@ -388,7 +440,7 @@ export function registerMcpTools(server: McpServer) {
                 from: { amount, currency: currencyCode },
                 to: { amount: usdAmount, currency: 'USD' },
                 fxRate: rate,
-                description: `${amount.toLocaleString()} ${currencyCode} = ${usdAmount} USD`,
+                description: `${amount.toLocaleString('en-US')} ${currencyCode} = ${usdAmount} USD`,
               }),
             }],
           };
@@ -416,6 +468,7 @@ export function registerMcpTools(server: McpServer) {
       if (paymentCheck.error) return paymentCheck as any;
 
       let receiptId = '';
+      let serviceSucceeded = false;
       try {
         const sanitizedPhone = sanitizePhone(phone);
         const sanitizedCountry = sanitizeCountryCode(countryCode);
@@ -435,6 +488,7 @@ export function registerMcpTools(server: McpServer) {
         }
 
         const result = await sendAirtime({ phone: sanitizedPhone, countryCode: sanitizedCountry, amount, useLocalAmount });
+        serviceSucceeded = true;
         const success = result.status === 'SUCCESSFUL';
 
         await updateReceipt(receiptId, {
@@ -466,11 +520,7 @@ export function registerMcpTools(server: McpServer) {
           }],
         };
       } catch (error: any) {
-        // Payment was verified but service failed — track it
-        if (receiptId) {
-          await updateReceipt(receiptId, { status: 'failed', error: error.message });
-        }
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message, paymentConsumed: true, note: 'Payment was verified but service execution failed. Contact support with your payment tx hash.' }) }] };
+        return handlePaidToolError(error, receiptId, serviceSucceeded, paymentCheck.verification?.payer, amount, paymentTxHash);
       }
     },
   );
@@ -491,6 +541,7 @@ export function registerMcpTools(server: McpServer) {
       if (paymentCheck.error) return paymentCheck as any;
 
       let receiptId = '';
+      let serviceSucceeded = false;
       try {
         const sanitizedPhone = sanitizePhone(phone);
         const sanitizedCountry = sanitizeCountryCode(countryCode);
@@ -509,6 +560,7 @@ export function registerMcpTools(server: McpServer) {
         }
 
         const result = await sendData({ phone: sanitizedPhone, countryCode: sanitizedCountry, amount, operatorId, useLocalAmount });
+        serviceSucceeded = true;
         const success = result.status === 'SUCCESSFUL';
 
         await updateReceipt(receiptId, {
@@ -540,8 +592,7 @@ export function registerMcpTools(server: McpServer) {
           }],
         };
       } catch (error: any) {
-        if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message, paymentConsumed: true, note: 'Payment was verified but service execution failed. Contact support with your payment tx hash.' }) }] };
+        return handlePaidToolError(error, receiptId, serviceSucceeded, paymentCheck.verification?.payer, amount, paymentTxHash);
       }
     },
   );
@@ -561,6 +612,7 @@ export function registerMcpTools(server: McpServer) {
       if (paymentCheck.error) return paymentCheck as any;
 
       let receiptId = '';
+      let serviceSucceeded = false;
       try {
         if (paymentCheck.verification) {
           receiptId = await createReceipt({
@@ -575,10 +627,13 @@ export function registerMcpTools(server: McpServer) {
           });
         }
 
-        const result = await payReloadlyBill({ billerId, accountNumber, amount, useLocalAmount });
+        const sanitizedAccount = sanitizeAccountNumber(accountNumber);
+        const result = await payReloadlyBill({ billerId, accountNumber: sanitizedAccount, amount, useLocalAmount });
+        serviceSucceeded = true;
 
+        const billStatus = result.status === 'SUCCESSFUL' ? 'success' : result.status === 'FAILED' ? 'failed' : 'pending';
         await updateReceipt(receiptId, {
-          status: 'success',
+          status: billStatus,
           reloadlyTransactionId: result.id,
           reloadlyStatus: result.status,
           serviceResult: { referenceId: result.referenceId, message: result.message },
@@ -587,13 +642,12 @@ export function registerMcpTools(server: McpServer) {
         await recordTransaction({
           type: 'bill_payment_mcp',
           amount,
-          status: 'success',
+          status: billStatus === 'success' ? 'success' : 'failed',
           metadata: { source: 'mcp', billerId, accountNumber },
         });
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
       } catch (error: any) {
-        if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message, paymentConsumed: true, note: 'Payment was verified but service execution failed. Contact support with your payment tx hash.' }) }] };
+        return handlePaidToolError(error, receiptId, serviceSucceeded, paymentCheck.verification?.payer, amount, paymentTxHash);
       }
     },
   );
@@ -613,6 +667,7 @@ export function registerMcpTools(server: McpServer) {
       if (paymentCheck.error) return paymentCheck as any;
 
       let receiptId = '';
+      let serviceSucceeded = false;
       try {
         if (paymentCheck.verification) {
           receiptId = await createReceipt({
@@ -633,6 +688,7 @@ export function registerMcpTools(server: McpServer) {
           recipientEmail,
           quantity: quantity || 1,
         });
+        serviceSucceeded = true;
 
         await updateReceipt(receiptId, {
           status: 'success',
@@ -663,8 +719,7 @@ export function registerMcpTools(server: McpServer) {
           }],
         };
       } catch (error: any) {
-        if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message, paymentConsumed: true, note: 'Payment was verified but service execution failed. Contact support with your payment tx hash.' }) }] };
+        return handlePaidToolError(error, receiptId, serviceSucceeded, paymentCheck.verification?.payer, amount, paymentTxHash);
       }
     },
   );

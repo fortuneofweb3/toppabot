@@ -97,7 +97,7 @@ export async function markTaskExecuting(taskId: ObjectId): Promise<boolean> {
   const col = await collection();
   const result = await col.updateOne(
     { _id: taskId, status: 'pending' },
-    { $set: { status: 'executing' } },
+    { $set: { status: 'executing', executedAt: new Date() } },
   );
   return result.modifiedCount > 0;
 }
@@ -148,8 +148,24 @@ let _onTaskDue: ((task: ScheduledTask) => Promise<void>) | null = null;
  * Start the scheduler — checks for due tasks every 60 seconds.
  * Caller provides the execution callback (handles payment + tool execution + notification).
  */
-export function startScheduler(onTaskDue: (task: ScheduledTask) => Promise<void>) {
+export async function startScheduler(onTaskDue: (task: ScheduledTask) => Promise<void>) {
   _onTaskDue = onTaskDue;
+
+  // Recovery: fail any tasks stuck in 'executing' from a previous crash/restart.
+  // If a task was executing when the process died, it never got marked completed/failed.
+  try {
+    const col = await collection();
+    const stuckCutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min ago
+    const result = await col.updateMany(
+      { status: 'executing', executedAt: { $lt: stuckCutoff } },
+      { $set: { status: 'failed', error: 'Task stuck in executing state (server restarted)' } },
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`[Scheduler] Recovered ${result.modifiedCount} stuck executing task(s)`);
+    }
+  } catch (err: any) {
+    console.error('[Scheduler] Recovery query failed:', err.message);
+  }
 
   _executorInterval = setInterval(async () => {
     try {
@@ -160,7 +176,12 @@ export function startScheduler(onTaskDue: (task: ScheduledTask) => Promise<void>
         if (!claimed) continue; // Another instance got it
 
         try {
-          await _onTaskDue!(task);
+          if (!_onTaskDue) {
+            console.error('[Scheduler] Handler not initialized, failing task:', task._id);
+            await markTaskFailed(task._id!, 'Handler not initialized');
+            continue;
+          }
+          await _onTaskDue(task);
         } catch (err: any) {
           console.error(`[Scheduler] Task ${task._id} failed:`, err.message);
           await markTaskFailed(task._id!, err.message);

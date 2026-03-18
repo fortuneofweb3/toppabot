@@ -57,7 +57,7 @@ export async function submitAutoReputation(feedback: ReputationFeedback): Promis
     feeCurrency: PAYMENT_TOKEN_ADDRESS, // Pay gas in cUSD
   } as any);
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
 
   return hash;
 }

@@ -21,6 +21,7 @@ interface StoredMessage {
 
 const MAX_HISTORY_MESSAGES = 20; // Keep last 20 messages (10 user + 10 assistant turns)
 const HISTORY_TTL_DAYS = 7; // Expire messages older than 7 days
+const MAX_MESSAGE_LENGTH = 2000; // Truncate stored messages to prevent bloat
 
 let _collection: Collection<StoredMessage> | null = null;
 
@@ -72,9 +73,17 @@ export async function saveConversation(
     const col = await collection();
     const now = new Date();
 
+    // Truncate messages to prevent storage bloat and context overflow
+    const truncUser = userMessage.length > MAX_MESSAGE_LENGTH
+      ? userMessage.slice(0, MAX_MESSAGE_LENGTH) + '...'
+      : userMessage;
+    const truncAssistant = assistantResponse.length > MAX_MESSAGE_LENGTH
+      ? assistantResponse.slice(0, MAX_MESSAGE_LENGTH) + '...'
+      : assistantResponse;
+
     await col.insertMany([
-      { userId, role: 'user', content: userMessage, timestamp: now },
-      { userId, role: 'assistant', content: assistantResponse, timestamp: new Date(now.getTime() + 1) },
+      { userId, role: 'user', content: truncUser, timestamp: now },
+      { userId, role: 'assistant', content: truncAssistant, timestamp: new Date(now.getTime() + 1) },
     ]);
 
     // Prune if over limit (keep only the most recent MAX_HISTORY_MESSAGES)

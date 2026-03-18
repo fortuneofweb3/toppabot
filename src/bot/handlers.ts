@@ -1,20 +1,56 @@
+import crypto from 'crypto';
 import { tg, TgCallbackQuery } from './tg-client';
 import { WalletManager } from '../wallet/manager';
 import { PendingOrderStore } from './pending-orders';
 import { verifyX402Payment, calculateTotalPayment } from '../blockchain/x402';
 import { recordTransaction } from '../blockchain/erc8004';
-import { submitAutoReputation, calculateRating } from '../blockchain/reputation';
+import { submitAutoReputation } from '../blockchain/reputation';
 import { userSettingsStore } from './user-settings';
 import {
   sendAirtime, sendData,
   payBill as payReloadlyBill,
   buyGiftCard, getGiftCardRedeemCode,
 } from '../apis/reloadly';
-import { createReceipt, updateReceipt } from '../blockchain/service-receipts';
+import { createReceipt, updateReceipt, getReceiptByReloadlyId } from '../blockchain/service-receipts';
 import { PAYMENT_TOKEN_SYMBOL } from '../blockchain/x402';
 import { reservePaymentHash } from '../blockchain/replay-guard';
 import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 import { invalidateReloadlyBalanceCache } from '../shared/balance-cache';
+import { sanitizePhone, sanitizeCountryCode, sanitizeAccountNumber } from '../shared/sanitize';
+
+/**
+ * Sanitize toolArgs before passing to Reloadly — defense in depth.
+ * The LLM generates these from user input and is an untrusted intermediary.
+ */
+function sanitizeToolArgs(toolName: string, args: Record<string, any>): Record<string, any> {
+  const s = { ...args };
+  // Sanitize fields common across tools
+  if (s.phone != null) s.phone = sanitizePhone(String(s.phone));
+  if (s.countryCode != null) s.countryCode = sanitizeCountryCode(String(s.countryCode));
+  if (s.accountNumber != null) s.accountNumber = sanitizeAccountNumber(String(s.accountNumber));
+  // Validate numeric fields
+  if (s.amount != null) {
+    s.amount = Number(s.amount);
+    if (!isFinite(s.amount) || s.amount <= 0) throw new Error('Invalid amount');
+  }
+  if (s.operatorId != null) {
+    s.operatorId = Number(s.operatorId);
+    if (!Number.isInteger(s.operatorId) || s.operatorId <= 0) throw new Error('Invalid operator ID');
+  }
+  if (s.productId != null) {
+    s.productId = Number(s.productId);
+    if (!Number.isInteger(s.productId) || s.productId <= 0) throw new Error('Invalid product ID');
+  }
+  if (s.billerId != null) {
+    s.billerId = Number(s.billerId);
+    if (!Number.isInteger(s.billerId) || s.billerId <= 0) throw new Error('Invalid biller ID');
+  }
+  if (s.unitPrice != null) {
+    s.unitPrice = Number(s.unitPrice);
+    if (!isFinite(s.unitPrice) || s.unitPrice <= 0) throw new Error('Invalid unit price');
+  }
+  return s;
+}
 
 /**
  * Execute a Reloadly service tool by name
@@ -23,21 +59,32 @@ async function executeServiceTool(
   toolName: string,
   toolArgs: Record<string, any>,
 ): Promise<any> {
+  const args = sanitizeToolArgs(toolName, toolArgs);
   switch (toolName) {
     case 'send_airtime':
-      return sendAirtime(toolArgs as any);
+      return sendAirtime(args as any);
     case 'send_data':
-      return sendData(toolArgs as any);
+      return sendData(args as any);
     case 'pay_bill':
-      return payReloadlyBill(toolArgs as any);
+      return payReloadlyBill(args as any);
     case 'buy_gift_card': {
-      const result = await buyGiftCard(toolArgs as any);
-      try {
-        const codes = await getGiftCardRedeemCode(result.transactionId);
-        return { ...result, redeemCodes: codes };
-      } catch {
-        return result;
+      const result = await buyGiftCard(args as any);
+      // Retry fetching redeem codes — Reloadly may need a few seconds to generate them.
+      // This is a read-only GET call (no duplicate purchase risk).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const codes = await getGiftCardRedeemCode(result.transactionId);
+          if (codes && (Array.isArray(codes) ? codes.length > 0 : true)) {
+            return { ...result, redeemCodes: codes };
+          }
+        } catch {
+          // Codes not ready yet — wait and retry
+        }
+        if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
       }
+      // Codes still not ready after retries — return without them.
+      // User can ask the agent later: "get code for transaction <id>"
+      return { ...result, redeemCodesNote: 'Codes are being generated. Ask me for the code in a minute.' };
     }
     default:
       throw new Error(`Unknown service: ${toolName}`);
@@ -47,37 +94,57 @@ async function executeServiceTool(
 /**
  * Format the result of a service execution for display
  */
-function formatServiceResult(toolName: string, result: any): string {
+function formatServiceResult(toolName: string, result: any, order?: { toolArgs?: Record<string, any>; totalAmount?: number }): string {
   switch (toolName) {
     case 'send_airtime':
     case 'send_data': {
-      let text = (
-        `Operator: ${result.operatorName || 'Auto-detected'}\n` +
-        `Amount: ${result.deliveredAmount} ${result.deliveredAmountCurrencyCode || ''}\n` +
-        `Status: ${result.status}\n` +
-        `Transaction ID: ${result.transactionId}`
-      );
+      const phone = order?.toolArgs?.phone || order?.toolArgs?.recipientPhone || '';
+      const cUSD = order?.totalAmount;
+      const localAmt = result.deliveredAmount;
+      const localCur = result.deliveredAmountCurrencyCode || '';
+
+      let text = `${result.operatorName || 'Operator'}\n`;
+      if (phone) text += `${phone}\n`;
+      if (cUSD != null && localAmt && localCur) {
+        text += `${cUSD.toFixed(2)} cUSD (${localAmt} ${localCur})\n`;
+      } else if (cUSD != null) {
+        text += `${cUSD.toFixed(2)} cUSD\n`;
+      } else if (localAmt) {
+        text += `${localAmt} ${localCur}\n`;
+      }
+      text += `Ref: ${result.transactionId}`;
       if (result.pinDetail) {
-        text += `\n\nPIN Code: ${result.pinDetail.code}`;
+        text += `\n\nPIN: ${result.pinDetail.code}`;
         if (result.pinDetail.ivr) text += `\nDial: ${result.pinDetail.ivr}`;
         if (result.pinDetail.validity) text += `\nValid: ${result.pinDetail.validity}`;
         if (result.pinDetail.info1) text += `\n${result.pinDetail.info1}`;
       }
       return text;
     }
-    case 'pay_bill':
-      return (
-        `Status: ${result.status}\n` +
-        `Reference: ${result.referenceId || result.id}\n` +
-        `${result.message || ''}`
-      );
+    case 'pay_bill': {
+      const cUSD = order?.totalAmount;
+      const acct = order?.toolArgs?.accountNumber || order?.toolArgs?.subscriberAccountNumber || '';
+      let text = '';
+      if (acct) text += `Account: ${acct}\n`;
+      if (cUSD != null) text += `${cUSD.toFixed(2)} cUSD\n`;
+      text += `Ref: ${result.referenceId || result.id}`;
+      if (result.message) text += `\n${result.message}`;
+      return text;
+    }
     case 'buy_gift_card': {
-      let text = (
-        `Brand: ${result.product?.brand?.brandName || 'Gift Card'}\n` +
-        `Amount: ${result.amount} ${result.currencyCode || ''}\n` +
-        `Status: ${result.status}\n` +
-        `Transaction ID: ${result.transactionId}`
-      );
+      const cUSD = order?.totalAmount;
+      const brand = result.product?.brand?.brandName || 'Gift Card';
+      let text = `${brand}\n`;
+      if (cUSD != null) {
+        text += `${cUSD.toFixed(2)} cUSD`;
+        if (result.amount && result.currencyCode && result.currencyCode !== 'USD') {
+          text += ` (${result.amount} ${result.currencyCode})`;
+        }
+        text += '\n';
+      } else if (result.amount) {
+        text += `${result.amount} ${result.currencyCode || ''}\n`;
+      }
+      text += `Ref: ${result.transactionId}`;
       if (result.redeemCodes) {
         if (Array.isArray(result.redeemCodes)) {
           const codes = result.redeemCodes.map((c: any) => {
@@ -90,6 +157,8 @@ function formatServiceResult(toolName: string, result: any): string {
         } else {
           text += `\n\nRedeem Code: ${result.redeemCodes}`;
         }
+      } else if (result.redeemCodesNote) {
+        text += `\n\n${result.redeemCodesNote}`;
       }
       return text;
     }
@@ -98,8 +167,45 @@ function formatServiceResult(toolName: string, result: any): string {
   }
 }
 
-// Track in-progress withdrawals to prevent double-click race conditions
+// Track in-progress withdrawals and payments to prevent concurrent wallet operations.
+// If a payment is processing, withdrawals are blocked (and vice versa).
+// This prevents the race where both pass the balance check but only one can succeed on-chain.
+// Locks auto-expire after 2 minutes to prevent stuck locks from blocking users permanently.
+const WALLET_OP_TIMEOUT_MS = 2 * 60 * 1000;
 const withdrawalsInProgress = new Set<string>();
+const walletOpsInProgress = new Map<string, number>(); // telegramId → timestamp
+
+function acquireWalletLock(userId: string): boolean {
+  const existing = walletOpsInProgress.get(userId);
+  if (existing && Date.now() - existing < WALLET_OP_TIMEOUT_MS) {
+    return false; // Lock held and not expired
+  }
+  if (existing) {
+    console.warn(`[WalletLock] Expired lock for user ${userId} — releasing stale lock`);
+  }
+  walletOpsInProgress.set(userId, Date.now());
+  return true;
+}
+
+function releaseWalletLock(userId: string): void {
+  walletOpsInProgress.delete(userId);
+}
+
+// Pending withdrawal storage — keeps callback_data under Telegram's 64-byte limit.
+// Instead of encoding userId + amount + address in the callback string (always >64 bytes),
+// we store them here keyed by a short random ID.
+const WITHDRAWAL_TTL_MS = 10 * 60 * 1000;
+const pendingWithdrawals = new Map<string, { userId: string; amount: number; toAddress: string; expiresAt: number }>();
+
+export function storePendingWithdrawal(userId: string, amount: number, toAddress: string): string {
+  const now = Date.now();
+  for (const [id, wd] of pendingWithdrawals) {
+    if (now > wd.expiresAt) pendingWithdrawals.delete(id);
+  }
+  const wdId = crypto.randomBytes(4).toString('hex');
+  pendingWithdrawals.set(wdId, { userId, amount, toAddress, expiresAt: now + WITHDRAWAL_TTL_MS });
+  return wdId;
+}
 
 // Quick action button prompts
 const quickActions: Record<string, string> = {
@@ -120,7 +226,7 @@ export async function handleCallback(
   recordSpending: (userId: string, amount: number) => void,
 ): Promise<void> {
   const data = query.data || '';
-  if (data.length > 100) return; // Reject oversized callback data
+  if (!data || data.length > 64) return; // Reject empty or oversized callback data (Telegram limit: 64 bytes)
   const userId = query.from.id.toString();
   const chatId = query.message?.chat.id;
   const messageId = query.message?.message_id;
@@ -147,7 +253,7 @@ export async function handleCallback(
     }
 
     // ─── Order Confirmation ──────────────────────
-    if ((match = data.match(/^order_confirm_(order_\d{13}_[a-z0-9]{6})$/))) {
+    if ((match = data.match(/^order_confirm_(order_\d{13}_[a-z0-9]{6,8})$/))) {
       const orderId = match[1];
 
       if (!userId) { await answer('Session error. Please try again.'); return; }
@@ -171,7 +277,7 @@ export async function handleCallback(
         await editMsg(
           `❌ Insufficient Balance\n\n` +
           `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
-          `Available: ${balance} ${TOKEN_SYMBOL}\n` +
+          `Available: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
           `Short by: ${shortage.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
           `Deposit ${TOKEN_SYMBOL} to:\n\`${address}\``,
           { parse_mode: 'Markdown' },
@@ -180,12 +286,13 @@ export async function handleCallback(
         return;
       }
 
+      const balanceRounded = parseFloat(balance).toFixed(2);
       const remaining = (balanceNum - order.totalAmount).toFixed(2);
       await editMsg(
         `Payment Request\n\n` +
         `${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} from your wallet\n` +
         `(+ ~$0.001 gas fee)\n\n` +
-        `Balance: ${balance} ${TOKEN_SYMBOL}\n` +
+        `Balance: ${balanceRounded} ${TOKEN_SYMBOL}\n` +
         `Remaining: ~${remaining} ${TOKEN_SYMBOL}`,
         {
           reply_markup: { inline_keyboard: [
@@ -199,19 +306,24 @@ export async function handleCallback(
     }
 
     // ─── Order Cancel ────────────────────────────
-    if ((match = data.match(/^order_cancel_(order_\d{13}_[a-z0-9]{6})$/))) {
+    if ((match = data.match(/^order_cancel_(order_\d{13}_[a-z0-9]{6,8})$/))) {
       const orderId = match[1];
+
+      // Check ownership BEFORE transitioning state to avoid group chat race
+      const existing = await pendingOrders.get(orderId);
+      if (!existing || (existing.status !== 'pending_confirmation' && existing.status !== 'pending_payment')) {
+        await answer('Order already cancelled or expired.');
+        return;
+      }
+      if (existing.telegramId !== userId) {
+        await answer('Unauthorized.');
+        return;
+      }
 
       const order = await pendingOrders.atomicTransition(
         orderId, ['pending_confirmation', 'pending_payment'], 'cancelled',
       );
       if (!order) { await answer('Order already cancelled or expired.'); return; }
-
-      if (userId && order.telegramId !== userId) {
-        await pendingOrders.updateStatus(orderId, 'pending_confirmation');
-        await answer('Unauthorized.');
-        return;
-      }
 
       await editMsg('Order cancelled.');
       await answer();
@@ -219,7 +331,7 @@ export async function handleCallback(
     }
 
     // ─── Payment Accept (Core Execution Path) ────
-    if ((match = data.match(/^pay_accept_(order_\d{13}_[a-z0-9]{6})$/))) {
+    if ((match = data.match(/^pay_accept_(order_\d{13}_[a-z0-9]{6,8})$/))) {
       const orderId = match[1];
 
       if (!userId) { await answer('Session error. Please try again.'); return; }
@@ -233,18 +345,27 @@ export async function handleCallback(
         return;
       }
 
+      // Prevent concurrent wallet operations (payment + withdrawal race)
+      if (!acquireWalletLock(userId)) {
+        await pendingOrders.updateStatus(orderId, 'pending_payment');
+        await answer('Another transaction is processing. Please wait.');
+        return;
+      }
+
       await editMsg('⏳ Processing payment... (1/4)');
       await answer();
 
       let receiptId = '';
+      let paymentTxHash = ''; // Track whether cUSD was transferred (for refund on service failure)
+      let serviceSucceeded = false; // V2 guard: only refund if Reloadly call itself failed
       try {
-        const { balance: currentBalance } = await walletManager.getBalance(order.telegramId);
+        const { balance: currentBalance, address: userWalletAddress } = await walletManager.getBalance(order.telegramId);
         if (parseFloat(currentBalance) < order.totalAmount) {
           await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
           const address = await walletManager.getAddress(order.telegramId);
           await editMsg(
             `❌ Insufficient Balance\n\n` +
-            `Your balance dropped to ${currentBalance} ${TOKEN_SYMBOL} since confirmation.\n` +
+            `Your balance dropped to ${parseFloat(currentBalance).toFixed(2)} ${TOKEN_SYMBOL} since confirmation.\n` +
             `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
             `Deposit ${TOKEN_SYMBOL} to:\n${address}`,
           );
@@ -253,6 +374,7 @@ export async function handleCallback(
 
         await editMsg('⏳ Transferring cUSD... (2/4)');
         const { txHash } = await walletManager.transferToAgent(order.telegramId, order.totalAmount);
+        paymentTxHash = txHash; // Mark payment as sent — refund if service fails
 
         await editMsg('⏳ Verifying on-chain... (3/4)');
         const isReserved = await reservePaymentHash(txHash, 'telegram');
@@ -267,7 +389,7 @@ export async function handleCallback(
                             'gift_card' as const;
         receiptId = await createReceipt({
           paymentTxHash: txHash,
-          payer: order.telegramId,
+          payer: userWalletAddress,
           paymentAmount: order.totalAmount.toString(),
           paymentToken: PAYMENT_TOKEN_SYMBOL,
           paymentNetwork: CELO_CAIP2,
@@ -282,6 +404,8 @@ export async function handleCallback(
                             'Purchasing gift card';
         await editMsg(`⏳ ${actionLabel}... (4/4)`);
         const result = await executeServiceTool(order.toolName, order.toolArgs);
+        // V2 guard: Reloadly service call completed — do NOT refund on bookkeeping errors below
+        serviceSucceeded = true;
 
         await updateReceipt(receiptId, {
           status: 'success',
@@ -290,7 +414,7 @@ export async function handleCallback(
           serviceResult: { toolName: order.toolName },
         });
 
-        recordSpending(order.telegramId, order.productAmount);
+        recordSpending(order.telegramId, order.totalAmount);
         invalidateReloadlyBalanceCache();
 
         await recordTransaction({
@@ -324,32 +448,44 @@ export async function handleCallback(
         const { balance: newBalance } = await walletManager.getBalance(order.telegramId);
         const explorerUrl = `${EXPLORER_BASE}/tx/${txHash}`;
 
+        const balanceRounded = parseFloat(newBalance).toFixed(2);
         const completionText =
           `✅ ${order.action.charAt(0).toUpperCase() + order.action.slice(1)} Complete!\n\n` +
-          `${formatServiceResult(order.toolName, result)}\n\n` +
-          `Balance: ${newBalance} ${TOKEN_SYMBOL}`;
+          `${formatServiceResult(order.toolName, result, order)}\n\n` +
+          `Balance: ${balanceRounded} ${TOKEN_SYMBOL}`;
+
+        // Gift card codes not ready — add a "Get Code" retry button
+        const gcCodesDelayed = order.toolName === 'buy_gift_card' && result.redeemCodesNote && result.transactionId;
 
         if (userSettings.autoReviewEnabled) {
-          await editMsg(completionText, {
-            reply_markup: { inline_keyboard: [
-              [{ text: '🔍 View Payment on Celoscan', url: explorerUrl }],
-            ]},
-          });
+          const buttons: Array<Array<{ text: string; callback_data?: string; url?: string }>> = [
+            [{ text: '🔍 View Payment on Celoscan', url: explorerUrl }],
+          ];
+          if (gcCodesDelayed) {
+            buttons.push([{ text: '🎁 Get Redeem Code', callback_data: `gc_code_${result.transactionId}` }]);
+          }
+          await editMsg(completionText, { reply_markup: { inline_keyboard: buttons } });
         } else {
-          await editMsg(completionText + `\n\n⭐ How was your experience?`);
+          const extraText = gcCodesDelayed ? '\n\nTap "Get Redeem Code" below when ready.' : '\n\n⭐ How was your experience?';
+          await editMsg(completionText + extraText);
+
+          const ratingButtons: Array<Array<{ text: string; callback_data: string }>> = [
+            [
+              { text: '⭐', callback_data: `rate_${orderId}_1` },
+              { text: '⭐⭐', callback_data: `rate_${orderId}_2` },
+              { text: '⭐⭐⭐', callback_data: `rate_${orderId}_3` },
+            ],
+            [
+              { text: '⭐⭐⭐⭐', callback_data: `rate_${orderId}_4` },
+              { text: '⭐⭐⭐⭐⭐', callback_data: `rate_${orderId}_5` },
+            ],
+            [{ text: 'Skip', callback_data: `rate_${orderId}_skip` }],
+          ];
+          if (gcCodesDelayed) {
+            ratingButtons.unshift([{ text: '🎁 Get Redeem Code', callback_data: `gc_code_${result.transactionId}` }]);
+          }
           await sendMsg('Rate this service:', {
-            reply_markup: { inline_keyboard: [
-              [
-                { text: '⭐', callback_data: `rate_${orderId}_1` },
-                { text: '⭐⭐', callback_data: `rate_${orderId}_2` },
-                { text: '⭐⭐⭐', callback_data: `rate_${orderId}_3` },
-              ],
-              [
-                { text: '⭐⭐⭐⭐', callback_data: `rate_${orderId}_4` },
-                { text: '⭐⭐⭐⭐⭐', callback_data: `rate_${orderId}_5` },
-              ],
-              [{ text: 'Skip', callback_data: `rate_${orderId}_skip` }],
-            ]},
+            reply_markup: { inline_keyboard: ratingButtons },
           });
         }
       } catch (error: any) {
@@ -358,9 +494,23 @@ export async function handleCallback(
         if (receiptId) await updateReceipt(receiptId, { status: 'failed', error: error.message });
         await pendingOrders.updateStatus(orderId, 'failed', { error: error.message });
 
+        // Auto-refund ONLY if the Reloadly service call itself failed.
+        // If service succeeded but bookkeeping (updateReceipt/recordTransaction) threw, do NOT refund.
+        let refunded = false;
+        if (paymentTxHash && !serviceSucceeded) {
+          try {
+            const refundResult = await walletManager.refundUser(order.telegramId, order.totalAmount, paymentTxHash);
+            console.log(`[Auto-Refund] ${order.totalAmount} cUSD refunded to user ${order.telegramId} | tx: ${refundResult.txHash}`);
+            if (receiptId) await updateReceipt(receiptId, { refundTxHash: refundResult.txHash });
+            refunded = true;
+          } catch (refundErr: any) {
+            console.error('[Auto-Refund FAILED]', { orderId, userId: order.telegramId, error: refundErr.message });
+          }
+        }
+
         // Categorize errors — never expose raw error.message to users
         let userMsg: string;
-        if (error.message.includes('Insufficient balance') || error.message.includes('balance')) {
+        if (error.message.includes('Insufficient balance') || error.message.includes('Insufficient cUSD')) {
           userMsg = `Insufficient ${TOKEN_SYMBOL} balance. Deposit more via /wallet.`;
         } else if (error.message.includes('verification') || error.message.includes('INVALID')) {
           userMsg = 'Payment verification failed. Please try again.';
@@ -370,24 +520,79 @@ export async function handleCallback(
           userMsg = 'Transaction failed. Please try again or contact support.';
         }
 
+        if (refunded) {
+          userMsg += `\n\n${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} has been refunded to your wallet.`;
+        } else if (paymentTxHash && !serviceSucceeded) {
+          userMsg += `\n\nYour payment is being reviewed for a refund. Contact support if not resolved.`;
+        }
+
         await editMsg(`❌ Transaction Failed\n\n${userMsg}`);
+      } finally {
+        releaseWalletLock(userId);
       }
       return;
     }
 
     // ─── Payment Decline ─────────────────────────
-    if ((match = data.match(/^pay_decline_(order_\d{13}_[a-z0-9]{6})$/))) {
+    if ((match = data.match(/^pay_decline_(order_\d{13}_[a-z0-9]{6,8})$/))) {
       const orderId = match[1];
-      const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'cancelled');
 
-      if (order && userId && order.telegramId !== userId) {
-        await pendingOrders.updateStatus(orderId, 'pending_payment');
+      // Check ownership BEFORE transitioning state to avoid group chat race
+      const existing = await pendingOrders.get(orderId);
+      if (!existing || existing.status !== 'pending_payment') {
+        await answer('Order expired or already processed.');
+        return;
+      }
+      if (existing.telegramId !== userId) {
         await answer('Unauthorized.');
         return;
       }
 
+      await pendingOrders.atomicTransition(orderId, 'pending_payment', 'cancelled');
       await editMsg('Payment declined. Order cancelled.');
       await answer();
+      return;
+    }
+
+    // ─── Gift Card Code Retrieval ──────────────────
+    if ((match = data.match(/^gc_code_(\d+)$/))) {
+      if (!userId) { await answer('Session error. Please try again.'); return; }
+      const transactionId = parseInt(match[1], 10);
+
+      // Ownership check: verify this user bought this gift card
+      const receipt = await getReceiptByReloadlyId(transactionId);
+      if (!receipt || receipt.serviceType !== 'gift_card') {
+        await answer('Gift card purchase not found.', true);
+        return;
+      }
+
+      // Verify the Telegram user's wallet matches the receipt payer.
+      // Deny if payer is 'unknown' or doesn't match — never skip ownership check.
+      if (userId) {
+        const userAddress = await walletManager.getAddress(userId);
+        if (!userAddress || receipt.payer === 'unknown' || receipt.payer.toLowerCase() !== userAddress.toLowerCase()) {
+          await answer('Unauthorized.', true);
+          return;
+        }
+      }
+
+      await answer();
+      try {
+        const codes = await getGiftCardRedeemCode(transactionId);
+        if (codes && Array.isArray(codes) && codes.length > 0) {
+          const formatted = codes.map((c: any) => {
+            const parts = [];
+            if (c.cardNumber) parts.push(`Card: ${c.cardNumber}`);
+            if (c.pinCode) parts.push(`PIN: ${c.pinCode}`);
+            return parts.length > 0 ? parts.join('\n') : JSON.stringify(c);
+          }).join('\n---\n');
+          await sendMsg(`🎁 Redeem Code(s):\n\n${formatted}`);
+        } else {
+          await sendMsg('Codes are still being generated. Try again in a minute.');
+        }
+      } catch {
+        await sendMsg('Could not fetch codes yet. Try again in a minute.');
+      }
       return;
     }
 
@@ -435,29 +640,44 @@ export async function handleCallback(
 
     // ─── Export Cancel ───────────────────────────
     if ((match = data.match(/^export_cancel_(\d+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
       await editMsg('Private key export cancelled.');
       await answer();
       return;
     }
 
     // ─── Withdraw Confirm ────────────────────────
-    if ((match = data.match(/^withdraw_confirm_(\d+_.+)$/))) {
-      const parts = match[1].split('_');
-      const targetUserId = parts[0];
-      const amount = parseFloat(parts[1]);
-      const toAddress = parts.slice(2).join('_');
-
-      if (userId !== targetUserId) { await answer('Unauthorized'); return; }
-      if (!amount || !isFinite(amount) || amount <= 0) { await answer('Invalid withdrawal amount.'); return; }
-      if (!toAddress || !/^0x[0-9a-fA-F]{40}$/.test(toAddress)) { await answer('Invalid withdrawal address.'); return; }
+    if ((match = data.match(/^wd_([a-f0-9]{8})$/))) {
+      if (!userId) { await answer('Session error. Please try again.'); return; }
+      const wd = pendingWithdrawals.get(match[1]);
+      if (!wd || Date.now() > wd.expiresAt) {
+        pendingWithdrawals.delete(match[1]);
+        await answer('Withdrawal expired. Please use /withdraw again.');
+        return;
+      }
+      if (userId !== wd.userId) { await answer('Unauthorized'); return; }
+      pendingWithdrawals.delete(match[1]);
+      const { amount, toAddress } = wd;
 
       const withdrawKey = `${userId}_${amount}_${toAddress}`;
       if (withdrawalsInProgress.has(withdrawKey)) { await answer('Withdrawal already processing.'); return; }
+      if (!acquireWalletLock(userId)) { await answer('A payment is processing. Please wait.'); return; }
       withdrawalsInProgress.add(withdrawKey);
 
       try {
         await editMsg('⏳ Processing withdrawal...');
         await answer();
+
+        // Re-check balance after acquiring lock (could have changed since confirmation)
+        const { balance: currentBalance } = await walletManager.getBalance(userId);
+        if (parseFloat(currentBalance) < amount) {
+          await editMsg(
+            `❌ Insufficient Balance\n\n` +
+            `Your balance dropped to ${parseFloat(currentBalance).toFixed(2)} ${TOKEN_SYMBOL}.\n` +
+            `Required: ${amount.toFixed(2)} ${TOKEN_SYMBOL}`,
+          );
+          return;
+        }
 
         const result = await walletManager.withdraw(userId, toAddress, amount);
         const { balance: newBalance } = await walletManager.getBalance(userId);
@@ -465,9 +685,9 @@ export async function handleCallback(
 
         await editMsg(
           `✅ Withdrawal Complete!\n\n` +
-          `Sent: ${result.amount} ${TOKEN_SYMBOL}\n` +
+          `Sent: ${parseFloat(result.amount).toFixed(2)} ${TOKEN_SYMBOL}\n` +
           `To: \`${result.to}\`\n\n` +
-          `Balance: ${newBalance} ${TOKEN_SYMBOL}`,
+          `Balance: ${parseFloat(newBalance).toFixed(2)} ${TOKEN_SYMBOL}`,
           {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [
@@ -481,12 +701,19 @@ export async function handleCallback(
         await editMsg(`❌ ${msg}`);
       } finally {
         withdrawalsInProgress.delete(withdrawKey);
+        releaseWalletLock(userId);
       }
       return;
     }
 
     // ─── Withdraw Cancel ─────────────────────────
-    if ((match = data.match(/^withdraw_cancel_(\d+)$/))) {
+    if ((match = data.match(/^wdc_([a-f0-9]{8})$/))) {
+      const wd = pendingWithdrawals.get(match[1]);
+      if (wd && wd.userId !== userId) {
+        await answer('Unauthorized.');
+        return;
+      }
+      pendingWithdrawals.delete(match[1]);
       await editMsg('Withdrawal cancelled.');
       await answer();
       return;
@@ -501,7 +728,7 @@ export async function handleCallback(
         const explorerUrl = `${EXPLORER_BASE}/address/${address}`;
 
         await editMsg(
-          `💰 Your Wallet\n\nBalance: ${balance} ${TOKEN_SYMBOL}\n\nAddress:\n\`${address}\``,
+          `💰 Your Wallet\n\nBalance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n\nAddress:\n\`${address}\``,
           {
             parse_mode: 'Markdown',
             reply_markup: { inline_keyboard: [
@@ -566,7 +793,7 @@ export async function handleCallback(
     }
 
     // ─── Star Rating ─────────────────────────────
-    if ((match = data.match(/^rate_(\d+)_(\d+|skip)$/))) {
+    if ((match = data.match(/^rate_(order_\d{13}_[a-z0-9]{6,8})_(\d+|skip)$/))) {
       const orderId = match[1];
       const ratingStr = match[2];
 

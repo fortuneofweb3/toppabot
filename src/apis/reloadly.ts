@@ -11,6 +11,7 @@
  */
 
 import { apiCache, CACHE_TTL } from '../shared/api-cache';
+import { sanitizePhone } from '../shared/sanitize';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -124,7 +125,7 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
         error.name === 'FetchError' ||
         error.code === 'ECONNRESET' ||
         error.code === 'ETIMEDOUT' ||
-        (error instanceof ReloadlyError && [429, 500, 502, 503, 504].includes(error.httpStatus))
+        (error instanceof ReloadlyError && [401, 429, 500, 502, 503, 504].includes(error.httpStatus))
       );
 
       if (isLastAttempt || !isRetryable) throw error;
@@ -325,12 +326,13 @@ export async function getOperators(countryCode: string) {
  * Auto-detect operator from phone number
  */
 export async function detectOperator(phone: string, countryCode: string) {
+  const sanitized = sanitizePhone(phone);
   const cc = countryCode.toUpperCase();
-  const cacheKey = `detect:${phone}:${cc}`;
+  const cacheKey = `detect:${sanitized}:${cc}`;
   const cached = apiCache.get<ReloadlyOperator>(cacheKey);
   if (cached) return cached;
 
-  const result = await airtimeRequest<ReloadlyOperator>('GET', `/operators/auto-detect/phone/${phone}/countries/${cc}`);
+  const result = await airtimeRequest<ReloadlyOperator>('GET', `/operators/auto-detect/phone/${encodeURIComponent(sanitized)}/countries/${cc}`);
   apiCache.set(cacheKey, result, CACHE_TTL.DETECT_OPERATOR);
   return result;
 }
@@ -345,10 +347,12 @@ export async function sendAirtime(params: {
   operatorId?: number;
   useLocalAmount?: boolean;
 }) {
+  const sanitizedPhone = sanitizePhone(params.phone);
+
   // Auto-detect operator if not provided
   let operatorId = params.operatorId;
   if (!operatorId) {
-    const operator = await detectOperator(params.phone, params.countryCode);
+    const operator = await detectOperator(sanitizedPhone, params.countryCode);
     operatorId = operator.operatorId;
   }
 
@@ -359,7 +363,7 @@ export async function sendAirtime(params: {
     customIdentifier: `toppa-${Date.now()}`,
     recipientPhone: {
       countryCode: params.countryCode.toUpperCase(),
-      number: params.phone,
+      number: sanitizedPhone,
     },
   });
 }
@@ -386,6 +390,8 @@ export async function sendData(params: {
   operatorId: number; // Required — must be a data operator
   useLocalAmount?: boolean;
 }) {
+  const sanitizedPhone = sanitizePhone(params.phone);
+
   return airtimeRequest<ReloadlyTopupResponse>('POST', '/topups', {
     operatorId: params.operatorId,
     amount: params.amount,
@@ -393,7 +399,7 @@ export async function sendData(params: {
     customIdentifier: `toppa-data-${Date.now()}`,
     recipientPhone: {
       countryCode: params.countryCode.toUpperCase(),
-      number: params.phone,
+      number: sanitizedPhone,
     },
   });
 }
@@ -446,7 +452,7 @@ export async function payBill(params: {
     subscriberAccountNumber: params.accountNumber,
     amount: params.amount,
     billerId: params.billerId,
-    useLocalAmount: params.useLocalAmount ?? true,
+    useLocalAmount: params.useLocalAmount ?? false,
     referenceId: `toppa-bill-${Date.now()}`,
   });
 }
@@ -614,7 +620,13 @@ export interface ReloadlyCountry {
  * Get all supported countries (from airtime API)
  */
 export async function getCountries() {
-  return airtimeRequest<ReloadlyCountry[]>('GET', '/countries');
+  const cacheKey = 'countries:ALL';
+  const cached = apiCache.get<ReloadlyCountry[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await airtimeRequest<ReloadlyCountry[]>('GET', '/countries');
+  apiCache.set(cacheKey, result, CACHE_TTL.OPERATORS); // Country data rarely changes — 30 min TTL
+  return result;
 }
 
 /**
