@@ -557,6 +557,44 @@ app.get('/registration.json', (_req: Request, res: Response) => {
   res.json(getAgentRegistrationFile());
 });
 
+// MCP Server Card (discovery endpoint for scanners)
+app.get('/.well-known/mcp.json', (_req: Request, res: Response) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.json({
+    '$schema': 'https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json',
+    schema_version: '2025-06-18',
+    version: '2.0.0',
+    protocolVersion: '2025-03-26',
+    serverInfo: {
+      name: 'toppa',
+      title: 'Toppa',
+      version: '2.0.0',
+    },
+    description: 'AI agent for airtime, data, bills, and gift cards across 170+ countries. Powered by Celo (cUSD) via x402 micropayments.',
+    iconUrl: 'https://api.toppa.cc/agent-image.png',
+    endpoint: 'https://api.toppa.cc/mcp',
+    transport: {
+      type: 'streamable-http',
+      endpoint: '/mcp',
+    },
+    capabilities: {
+      tools: {},
+    },
+    tools: [
+      'get_operators', 'get_data_plans', 'get_billers',
+      'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
+      'check_country', 'get_promotions', 'convert_currency',
+      'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
+    ],
+    erc8004: {
+      agent_id: parseInt(process.env.AGENT_ID || '1870'),
+      chain: 'celo',
+      chain_id: 42220,
+      registry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
+    },
+  });
+});
+
 // Legacy SVG route
 app.get('/agent-image.svg', (_req: Request, res: Response) => {
   res.set('Content-Type', 'image/svg+xml');

@@ -172,7 +172,7 @@ export function getAgentRegistrationFile(): object {
       },
       {
         name: 'MCP',
-        endpoint: `${apiUrl}/mcp`,
+        endpoint: `${apiUrl}/.well-known/mcp.json`,
         version: '2025-03-26',
         mcpTools: [
           'get_operators', 'get_data_plans', 'get_billers',
