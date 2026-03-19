@@ -58,6 +58,33 @@ function formatOperatorText(op: any, balance: number): string {
 }
 
 /**
+ * Validate that an amount is acceptable for a given operator.
+ * Returns an error message string if invalid, or null if OK.
+ */
+function validateOperatorAmount(operator: any, amountCUSD: number): string | null {
+  if (operator.denominationType === 'FIXED') {
+    const fixed = operator.fixedAmounts as number[] | null;
+    if (fixed && fixed.length > 0) {
+      // Check if amount matches any fixed denomination (allow ±0.01 tolerance)
+      const match = fixed.find((f: number) => Math.abs(f - amountCUSD) < 0.015);
+      if (!match) {
+        const available = fixed.slice(0, 8).map((f: number) => `${f.toFixed(2)} cUSD`).join(', ');
+        return `${operator.name} only accepts fixed amounts: ${available}. Pick one of these.`;
+      }
+    }
+  } else {
+    // RANGE type
+    if (operator.minAmount && amountCUSD < operator.minAmount) {
+      return `${operator.name} requires at least ${operator.minAmount.toFixed(2)} cUSD. You requested ${amountCUSD.toFixed(2)} cUSD.`;
+    }
+    if (operator.maxAmount && amountCUSD > operator.maxAmount) {
+      return `${operator.name} allows max ${operator.maxAmount.toFixed(2)} cUSD. You requested ${amountCUSD.toFixed(2)} cUSD.`;
+    }
+  }
+  return null;
+}
+
+/**
  * Tool 1: Send airtime top-up (170+ countries)
  * Payment-gated: returns order details for external payment flow.
  */
@@ -72,6 +99,16 @@ export const sendAirtimeTool: Tool = {
   func: async ({ phone, countryCode, amount }) => {
     phone = sanitizePhone(phone);
     countryCode = sanitizeCountryCode(countryCode);
+
+    // Validate amount against operator constraints before generating payment
+    try {
+      const operator = await detectOperator(phone, countryCode);
+      const amountError = validateOperatorAmount(operator, amount);
+      if (amountError) return JSON.stringify({ status: 'error', error: amountError });
+    } catch (e: any) {
+      // If operator detection fails, let it proceed — Reloadly will catch it later
+    }
+
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -147,6 +184,19 @@ export const sendDataTool: Tool = {
   func: async ({ phone, countryCode, amount, operatorId }) => {
     phone = sanitizePhone(phone);
     countryCode = sanitizeCountryCode(countryCode);
+
+    // Validate amount against operator constraints before generating payment
+    try {
+      const operators = await getOperators(countryCode);
+      const operator = operators.find(op => op.operatorId === operatorId);
+      if (operator) {
+        const amountError = validateOperatorAmount(operator, amount);
+        if (amountError) return JSON.stringify({ status: 'error', error: amountError });
+      }
+    } catch (e: any) {
+      // If operator lookup fails, let it proceed
+    }
+
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',

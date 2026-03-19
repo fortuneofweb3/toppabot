@@ -519,12 +519,15 @@ export async function handleCallback(
 
         // Categorize errors — never expose raw error.message to users
         let userMsg: string;
-        if (error.message.includes('Insufficient balance') || error.message.includes('Insufficient cUSD') || error.message.includes('transfer amount exceeds balance')) {
+        const errMsg = error.message || '';
+        if (errMsg.includes('Insufficient balance') || errMsg.includes('Insufficient cUSD') || errMsg.includes('transfer amount exceeds balance')) {
           userMsg = `You don't have enough ${TOKEN_SYMBOL} to complete this payment. Deposit more to your wallet via /wallet.`;
-        } else if (error.message.includes('verification') || error.message.includes('INVALID')) {
+        } else if (errMsg.includes('verification') || errMsg.includes('INVALID')) {
           userMsg = 'Payment verification failed. Please try again.';
-        } else if (error.message.includes('operator') || error.message.includes('OPERATOR')) {
+        } else if (errMsg.includes('operator') || errMsg.includes('OPERATOR')) {
           userMsg = 'Service provider error. Please check your details and try again.';
+        } else if (errMsg.includes('amount') || errMsg.includes('AMOUNT') || errMsg.includes('minimum') || errMsg.includes('maximum') || errMsg.includes('denomination')) {
+          userMsg = 'The amount is not accepted by the provider. Try a different amount — use /start to see available plans.';
         } else {
           userMsg = 'Transaction failed. Please try again or contact support.';
         }
