@@ -114,6 +114,8 @@ export function getAgentRegistrationFile(): object {
     version: '2.0.0',
     updatedAt: Math.floor(Date.now() / 1000),
     x402Support: true,
+    agent_type: 'service',
+    categories: ['finance', 'payments', 'telecom', 'blockchain'],
     tags: [
       'airtime', 'data-bundles', 'bill-payment', 'gift-cards',
       'telecom', 'digital-payments', 'celo', 'x402', 'stablecoin',
