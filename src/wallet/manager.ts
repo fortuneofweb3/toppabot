@@ -143,8 +143,10 @@ export class WalletManager {
       args: [account.address],
     }) as bigint;
 
-    // Reserve buffer for gas when feeCurrency is cUSD (gas is paid from same balance)
-    const gasBuffer = FEE_CURRENCY ? parseUnits('0.01', PAYMENT_TOKEN_DECIMALS) : 0n;
+    // Reserve 0.05 cUSD for gas when feeCurrency is cUSD — Celo pre-charges
+    // gasLimit * maxFeePerGas from the cUSD balance BEFORE the transfer executes.
+    // The old 0.01 buffer was insufficient; real-world feeCurrency txs need ~0.04-0.05.
+    const gasBuffer = FEE_CURRENCY ? parseUnits('0.05', PAYMENT_TOKEN_DECIMALS) : 0n;
     if (balance < amountWei + gasBuffer) {
       const available = formatUnits(balance - gasBuffer > 0n ? balance - gasBuffer : 0n, PAYMENT_TOKEN_DECIMALS);
       throw new Error(

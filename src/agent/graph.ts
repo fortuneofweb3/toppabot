@@ -199,8 +199,9 @@ function checkPaymentShortCircuit(
         const totalNeeded = parsed.totalWithFee ?? parsed.productAmount;
 
         // Early balance check — reject before showing order confirmation
-        // Reserve 0.01 cUSD for gas (Celo feeCurrency pays gas from cUSD balance)
-        const GAS_RESERVE = 0.01;
+        // Reserve 0.05 cUSD for gas — Celo feeCurrency pre-charges gasLimit * maxFeePerGas
+        // from the cUSD balance BEFORE the transfer executes. 0.01 is insufficient.
+        const GAS_RESERVE = 0.05;
         if (walletBalance && !isNaN(parseFloat(walletBalance))) {
           const usable = parseFloat(walletBalance) - GAS_RESERVE;
           if (usable < totalNeeded) {

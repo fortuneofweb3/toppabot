@@ -277,7 +277,7 @@ export async function handleCallback(
 
       const { balance } = await walletManager.getBalance(order.telegramId);
       const balanceNum = parseFloat(balance);
-      const GAS_RESERVE = 0.01; // Reserve for cUSD gas fees
+      const GAS_RESERVE = 0.05; // Reserve for cUSD gas fees (Celo feeCurrency pre-charge)
       const usableBalance = balanceNum - GAS_RESERVE;
 
       if (usableBalance < order.totalAmount) {
@@ -370,7 +370,7 @@ export async function handleCallback(
       let serviceSucceeded = false; // V2 guard: only refund if Reloadly call itself failed
       try {
         const { balance: currentBalance, address: userWalletAddress } = await walletManager.getBalance(order.telegramId);
-        const usableBal = parseFloat(currentBalance) - 0.01; // gas reserve
+        const usableBal = parseFloat(currentBalance) - 0.05; // gas reserve (Celo feeCurrency pre-charge)
         if (usableBal < order.totalAmount) {
           await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
           const address = await walletManager.getAddress(order.telegramId);
