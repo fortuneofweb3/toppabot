@@ -124,7 +124,7 @@ PAID SERVICES: Call the tool directly — the system handles payment flow. For o
   Bill: {"type":"order_confirmation","action":"bill","description":"...","productAmount":20.00,"toolName":"pay_bill","toolArgs":{"billerId":456,"accountNumber":"...","amount":20.00}}
 Gift card toolArgs use "unitPrice" NOT "amount". All amounts in cUSD. One order at a time.
 
-BILLS: Common services → bill types: DStv/GOtv/Startimes = TV_BILL_PAYMENT, PHCN/NEPA/prepaid meter = ELECTRICITY_BILL_PAYMENT, DEWA/water = WATER_BILL_PAYMENT, internet/wifi = INTERNET_BILL_PAYMENT. Call get_billers with the right type. If empty, call WITHOUT the type filter to show all billers.
+BILLS: Call get_billers once with the relevant type (ELECTRICITY_BILL_PAYMENT, TV_BILL_PAYMENT, WATER_BILL_PAYMENT, INTERNET_BILL_PAYMENT). If it returns empty or no billers, tell the user that service isn't available for their country — do NOT retry with different types or loop. Move on.
 
 CLARIFY FIRST: If a request is vague or missing key info (which service? which country? what amount?), ask a SHORT clarifying question instead of guessing with tool calls. Example: user says "Nigeria" → ask "What do you need? Airtime, data, bills, or gift cards?" But if the request is clear (e.g. "DStv bill for meter 1234"), go straight to the tool.
 
