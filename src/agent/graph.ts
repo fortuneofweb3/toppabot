@@ -100,8 +100,8 @@ const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
 // Fast lookup: tool name → tool function
 const toolMap = new Map(tools.map(t => [t.name, t]));
 
-// Max tool-calling iterations — most queries complete in 2-3, cap at 5 to prevent runaway
-const MAX_ITERATIONS = 5;
+// Max tool-calling iterations — most queries complete in 2-3, cap at 6 to prevent runaway
+const MAX_ITERATIONS = 6;
 
 /**
  * System prompt — defines agent behavior
@@ -124,7 +124,9 @@ PAID SERVICES: Call the tool directly — the system handles payment flow. For o
   Bill: {"type":"order_confirmation","action":"bill","description":"...","productAmount":20.00,"toolName":"pay_bill","toolArgs":{"billerId":456,"accountNumber":"...","amount":20.00}}
 Gift card toolArgs use "unitPrice" NOT "amount". All amounts in cUSD. One order at a time.
 
-RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes.
+BILLS: Common services → bill types: DStv/GOtv/Startimes = TV_BILL_PAYMENT, PHCN/NEPA/prepaid meter = ELECTRICITY_BILL_PAYMENT, DEWA/water = WATER_BILL_PAYMENT, internet/wifi = INTERNET_BILL_PAYMENT. Call get_billers with the right type. If empty, call WITHOUT the type filter to show all billers.
+
+RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes. When a user mentions a country or service, go straight to the relevant tool — don't ask for clarification you can infer.
 `;
 
 /**
@@ -484,7 +486,7 @@ export async function runToppaAgent(
   }
 
   if (!finalResponse) {
-    finalResponse = 'I ran into a processing limit. Please try a simpler request.';
+    finalResponse = "Sorry, I couldn't complete that. Please try again.";
   }
 
   // Post-response fidelity check: catch DeepSeek misreading tool results
