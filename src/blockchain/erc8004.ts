@@ -259,6 +259,10 @@ export function getAgentRegistrationFile(): object {
         agentId,
         agentRegistry: `eip155:${chainId}:${IDENTITY_REGISTRY}`,
       },
+      {
+        agentId: 34481,
+        agentRegistry: `eip155:8453:${IDENTITY_REGISTRY}`,
+      },
     ] : [],
     supportedTrust: ['reputation', 'crypto-economic', 'tee-attestation'],
   };
