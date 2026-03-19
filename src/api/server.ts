@@ -96,8 +96,11 @@ function buildFastCache(): Record<string, string> {
   };
 }
 
+// Disable x-powered-by globally (prevent framework fingerprinting)
+app.disable('x-powered-by');
+
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (req.method !== 'GET') return next();
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   if (!_fastCache) _fastCache = buildFastCache();
   const body = _fastCache[req.path];
   if (!body) return next();
@@ -634,6 +637,24 @@ app.get('/registration.json', (_req: Request, res: Response) => {
 });
 
 // MCP Server Card (discovery endpoint for scanners)
+// POST handler: 8004scan health-checks POST to this URL — forward to MCP handler
+app.post('/.well-known/mcp.json', paymentLimiter, (req: Request, res: Response, next: NextFunction) => {
+  const accept = req.headers.accept || '';
+  if (!accept.includes('text/event-stream')) {
+    req.headers.accept = 'application/json, text/event-stream';
+  }
+  next();
+}, async (req: Request, res: Response) => {
+  try {
+    await handleMcpRequest(req, res);
+  } catch (error: any) {
+    console.error('[MCP Error]', error.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'MCP request failed' });
+    }
+  }
+});
+
 app.get('/.well-known/mcp.json', (_req: Request, res: Response) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.json({

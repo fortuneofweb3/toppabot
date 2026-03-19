@@ -2,6 +2,12 @@
   "buildCommand": null,
   "outputDirectory": ".",
   "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/.well-known/agent-registration.json",
+      "destination": "https://api.toppa.cc/.well-known/agent-registration.json"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
