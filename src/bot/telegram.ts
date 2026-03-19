@@ -524,8 +524,19 @@ async function cmdExport(chatId: number) {
 // Text Message Handler (AI Agent + Order Detection)
 // ─────────────────────────────────────────────────
 
+// Per-user message lock — prevents duplicate processing when users spam messages
+const userMessageLock = new Map<string, number>(); // userId → timestamp
+
 async function handleTextMessage(chatId: number, userId: string, userMessage: string) {
   const msgStart = Date.now();
+
+  // Reject if this user already has a message being processed (prevents duplicates)
+  const lockTime = userMessageLock.get(userId);
+  if (lockTime && Date.now() - lockTime < 30_000) {
+    return; // Silently drop — user will see response from the in-flight message
+  }
+  userMessageLock.set(userId, Date.now());
+
   trackActivity(userId, chatId).catch(() => {});
 
   try {
@@ -615,7 +626,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
       // Staleness guard: if a processing order is >3 min old, the server likely crashed mid-execution.
       // The in-memory wallet lock resets on restart, but the MongoDB order stays stuck.
       // Mark it failed and let the user continue rather than blocking them indefinitely.
-      const STALE_PROCESSING_MS = 3 * 60 * 1000;
+      const STALE_PROCESSING_MS = 60 * 1000; // 1 minute — most orders complete in <30s
       const activeOrder = await pendingOrders.getByUser(userId);
       if (activeOrder?.status === 'processing') {
         const orderAge = Date.now() - activeOrder.createdAt;
@@ -688,6 +699,8 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     } else {
       await tg('sendMessage', { chat_id: chatId, text: 'An error occurred processing your request. Please try again.' });
     }
+  } finally {
+    userMessageLock.delete(userId);
   }
 }
 
