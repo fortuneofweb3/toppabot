@@ -143,9 +143,12 @@ export class WalletManager {
       args: [account.address],
     }) as bigint;
 
-    if (balance < amountWei) {
+    // Reserve buffer for gas when feeCurrency is cUSD (gas is paid from same balance)
+    const gasBuffer = FEE_CURRENCY ? parseUnits('0.01', PAYMENT_TOKEN_DECIMALS) : 0n;
+    if (balance < amountWei + gasBuffer) {
+      const available = formatUnits(balance - gasBuffer > 0n ? balance - gasBuffer : 0n, PAYMENT_TOKEN_DECIMALS);
       throw new Error(
-        `Insufficient balance: ${formatUnits(balance, PAYMENT_TOKEN_DECIMALS)} cUSD available, ` +
+        `Insufficient balance: ${available} cUSD available (after gas reserve), ` +
         `${amountUsd} cUSD needed. Deposit to: ${wallet.address}`,
       );
     }

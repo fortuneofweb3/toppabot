@@ -277,15 +277,17 @@ export async function handleCallback(
 
       const { balance } = await walletManager.getBalance(order.telegramId);
       const balanceNum = parseFloat(balance);
+      const GAS_RESERVE = 0.01; // Reserve for cUSD gas fees
+      const usableBalance = balanceNum - GAS_RESERVE;
 
-      if (balanceNum < order.totalAmount) {
+      if (usableBalance < order.totalAmount) {
         await pendingOrders.updateStatus(orderId, 'pending_confirmation');
         const address = await walletManager.getAddress(order.telegramId);
-        const shortage = order.totalAmount - balanceNum;
+        const shortage = order.totalAmount - usableBalance;
         await editMsg(
           `❌ Insufficient Balance\n\n` +
           `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
-          `Available: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
+          `Available: ${usableBalance > 0 ? usableBalance.toFixed(2) : '0.00'} ${TOKEN_SYMBOL} (after gas)\n` +
           `Short by: ${shortage.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
           `Deposit ${TOKEN_SYMBOL} to:\n\`${address}\``,
           { parse_mode: 'Markdown' },
@@ -368,12 +370,13 @@ export async function handleCallback(
       let serviceSucceeded = false; // V2 guard: only refund if Reloadly call itself failed
       try {
         const { balance: currentBalance, address: userWalletAddress } = await walletManager.getBalance(order.telegramId);
-        if (parseFloat(currentBalance) < order.totalAmount) {
+        const usableBal = parseFloat(currentBalance) - 0.01; // gas reserve
+        if (usableBal < order.totalAmount) {
           await pendingOrders.updateStatus(orderId, 'failed', { error: 'Balance dropped below required amount' });
           const address = await walletManager.getAddress(order.telegramId);
           await editMsg(
             `❌ Insufficient Balance\n\n` +
-            `Your balance dropped to ${parseFloat(currentBalance).toFixed(2)} ${TOKEN_SYMBOL} since confirmation.\n` +
+            `Your balance dropped to ${usableBal > 0 ? usableBal.toFixed(2) : '0.00'} ${TOKEN_SYMBOL} (after gas) since confirmation.\n` +
             `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
             `Deposit ${TOKEN_SYMBOL} to:\n${address}`,
           );

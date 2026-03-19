@@ -199,11 +199,13 @@ function checkPaymentShortCircuit(
         const totalNeeded = parsed.totalWithFee ?? parsed.productAmount;
 
         // Early balance check — reject before showing order confirmation
+        // Reserve 0.01 cUSD for gas (Celo feeCurrency pays gas from cUSD balance)
+        const GAS_RESERVE = 0.01;
         if (walletBalance && !isNaN(parseFloat(walletBalance))) {
-          const bal = parseFloat(walletBalance);
-          if (bal < totalNeeded) {
-            const shortage = (totalNeeded - bal).toFixed(2);
-            return `You need ${totalNeeded.toFixed(2)} cUSD for this but your balance is only ${bal.toFixed(2)} cUSD. You're short by ${shortage} cUSD. Please deposit more cUSD to your wallet first (/wallet to see your address).`;
+          const usable = parseFloat(walletBalance) - GAS_RESERVE;
+          if (usable < totalNeeded) {
+            const shortage = (totalNeeded - usable).toFixed(2);
+            return `You need ${totalNeeded.toFixed(2)} cUSD for this but you only have ${usable > 0 ? usable.toFixed(2) : '0.00'} cUSD available (after gas). You're short by ${shortage} cUSD. Deposit more to your wallet (/wallet).`;
           }
         }
 
