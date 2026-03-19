@@ -95,6 +95,11 @@ let cachedAgentId: bigint | null = null;
  * Fields: type, name, description, image, services, x402Support, active, registrations, supportedTrust
  */
 
+// IPFS CIDs for content-addressed agent metadata (pinned via Pinata)
+const IPFS_PFP_CID = 'bafkreighzi2o73xnqa4nma7l4lgic4la3wgcehx7up2a7k35yfasei4i3i';
+const IPFS_REGISTRATION_CID = 'Qma4J24WHP2wu8wHUJKjR5HsL2HtwEvGKLcKU2sMrEEmob';
+const IPFS_GATEWAY = process.env.IPFS_GATEWAY || 'https://ipfs.toppa.cc';
+
 export function getAgentRegistrationFile(): object {
   const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
   const agentId = process.env.AGENT_ID ? parseInt(process.env.AGENT_ID) : null;
@@ -195,7 +200,7 @@ export function getAgentRegistrationFile(): object {
       },
       {
         name: 'A2A',
-        endpoint: `${apiUrl}/.well-known/agent.json`,
+        endpoint: `${apiUrl}/.well-known/agent-card.json`,
         version: '0.3.0',
         a2aSkills: [
           'natural_language_processing/natural_language_generation/text_generation',
@@ -255,8 +260,17 @@ export function getAgentRegistrationFile(): object {
 }
 
 function getAgentURI(): string {
-  const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
-  return `${apiUrl}/registration.json`;
+  return `ipfs://${IPFS_REGISTRATION_CID}`;
+}
+
+/** HTTP gateway URL for the agent PFP (for browsers/scanners that don't resolve ipfs://) */
+export function getAgentImageURL(): string {
+  return `${IPFS_GATEWAY}/ipfs/${IPFS_PFP_CID}`;
+}
+
+/** HTTP gateway URL for the registration JSON */
+export function getAgentRegistrationURL(): string {
+  return `${IPFS_GATEWAY}/ipfs/${IPFS_REGISTRATION_CID}`;
 }
 
 /**

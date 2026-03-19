@@ -1,7 +1,7 @@
 import { getX402Info } from '../blockchain/x402';
 
 /**
- * Generate the A2A Agent Card served at /.well-known/agent.json
+ * Generate the A2A Agent Card served at /.well-known/agent-card.json
  *
  * Follows the A2A protocol spec v1.0: https://a2a-protocol.org
  * Uses camelCase field names per spec (protobuf -> JSON serialization).

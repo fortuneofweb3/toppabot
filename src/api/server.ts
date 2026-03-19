@@ -490,7 +490,7 @@ app.get('/', (_req: Request, res: Response) => {
       },
       a2a: {
         spec: 'https://a2a-protocol.org',
-        agentCard: '/.well-known/agent.json',
+        agentCard: '/.well-known/agent-card.json',
         endpoint: '/a2a',
         methods: ['message/send', 'tasks/get', 'tasks/cancel'],
       },
@@ -987,6 +987,11 @@ app.get('/mcp', (_req: Request, res: Response) => {
 });
 
 // A2A Agent Card discovery (Google Agent-to-Agent protocol)
+app.get('/.well-known/agent-card.json', (_req: Request, res: Response) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.json(generateAgentCard());
+});
+// Legacy path — keep for backward compatibility
 app.get('/.well-known/agent.json', (_req: Request, res: Response) => {
   res.set('Cache-Control', 'public, max-age=3600');
   res.json(generateAgentCard());
@@ -1545,7 +1550,7 @@ export function startApiServer() {
     console.log(`   Admin:   GET  /gift-card-code/:id            - Retrieve gift card codes (API key required)`);
     console.log(`   Admin:   GET  /admin/receipts/*              - Receipt management (API key required)`);
     console.log(`   MCP:     POST /mcp                          - MCP Streamable HTTP (13 tools)`);
-    console.log(`   A2A:     GET  /.well-known/agent.json       - A2A Agent Card`);
+    console.log(`   A2A:     GET  /.well-known/agent-card.json  - A2A Agent Card`);
     console.log(`   A2A:     POST /a2a                          - A2A JSON-RPC endpoint`);
     const x = getX402Info();
     console.log(`   Payment: x402 (product + ${x.feePercent * 100}% fee in ${x.currency})`);
