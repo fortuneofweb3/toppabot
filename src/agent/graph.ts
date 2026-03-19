@@ -126,7 +126,9 @@ Gift card toolArgs use "unitPrice" NOT "amount". All amounts in cUSD. One order 
 
 BILLS: Common services → bill types: DStv/GOtv/Startimes = TV_BILL_PAYMENT, PHCN/NEPA/prepaid meter = ELECTRICITY_BILL_PAYMENT, DEWA/water = WATER_BILL_PAYMENT, internet/wifi = INTERNET_BILL_PAYMENT. Call get_billers with the right type. If empty, call WITHOUT the type filter to show all billers.
 
-RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes. When a user mentions a country or service, go straight to the relevant tool — don't ask for clarification you can infer.
+CLARIFY FIRST: If a request is vague or missing key info (which service? which country? what amount?), ask a SHORT clarifying question instead of guessing with tool calls. Example: user says "Nigeria" → ask "What do you need? Airtime, data, bills, or gift cards?" But if the request is clear (e.g. "DStv bill for meter 1234"), go straight to the tool.
+
+RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes.
 `;
 
 /**
