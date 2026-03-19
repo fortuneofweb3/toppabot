@@ -187,7 +187,7 @@ export function getAgentRegistrationFile(): object {
       {
         name: 'MCP',
         endpoint: `${apiUrl}/.well-known/mcp.json`,
-        version: '2025-03-26',
+        version: '2025-06-18',
         mcpTools: [
           'get_operators', 'get_data_plans', 'get_billers',
           'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
@@ -214,7 +214,7 @@ export function getAgentRegistrationFile(): object {
       {
         name: 'web',
         description: 'Web interface for Toppa agent',
-        endpoint: 'https://toppa.cc',
+        endpoint: 'https://www.toppa.cc',
         method: 'GET',
         protocol: 'Web',
       },

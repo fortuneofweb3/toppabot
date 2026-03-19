@@ -33,6 +33,82 @@ const isProduction = process.env.NODE_ENV === 'production';
 app.set('trust proxy', 1);
 
 // ─────────────────────────────────────────────────
+// Fast-path for scanner health checks (<50ms target)
+// Runs BEFORE all middleware (cors, helmet, morgan, rate-limit)
+// Pre-computes JSON responses once, returns raw strings
+// ─────────────────────────────────────────────────
+let _fastCache: Record<string, string> | null = null;
+
+function buildFastCache(): Record<string, string> {
+  const agentCard = JSON.stringify(generateAgentCard());
+  const registration = JSON.stringify(getAgentRegistrationFile());
+  const mcpInfo = JSON.stringify({
+    protocol: 'MCP',
+    transport: 'Streamable HTTP',
+    version: '2025-06-18',
+    tools: [
+      'get_operators', 'get_data_plans', 'get_billers',
+      'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
+      'check_country', 'get_promotions', 'convert_currency',
+      'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
+    ],
+    endpoint: 'POST /mcp',
+    description: 'Model Context Protocol endpoint — send JSON-RPC POST requests with Accept: application/json, text/event-stream',
+  });
+  const mcpCard = JSON.stringify({
+    '$schema': 'https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json',
+    schema_version: '2025-06-18',
+    version: '2.0.0',
+    protocolVersion: '2025-06-18',
+    serverInfo: { name: 'toppa', title: 'Toppa', version: '2.0.0' },
+    description: 'AI agent for airtime, data, bills, and gift cards across 170+ countries. Powered by Celo (cUSD) via x402 micropayments.',
+    iconUrl: 'https://api.toppa.cc/agent-image.png',
+    endpoint: 'https://api.toppa.cc/mcp',
+    transport: { type: 'streamable-http', endpoint: '/mcp' },
+    capabilities: { tools: {} },
+    tools: [
+      'get_operators', 'get_data_plans', 'get_billers',
+      'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
+      'check_country', 'get_promotions', 'convert_currency',
+      'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
+    ],
+    erc8004: {
+      agent_id: parseInt(process.env.AGENT_ID || '1870'),
+      chain: 'celo',
+      chain_id: 42220,
+      registry: '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432',
+    },
+  });
+  const healthCheck = JSON.stringify({
+    status: 'healthy',
+    version: '2.0.0',
+    agent: 'Toppa',
+  });
+
+  return {
+    '/.well-known/agent-card.json': agentCard,
+    '/.well-known/agent.json': agentCard,
+    '/a2a': agentCard,
+    '/registration.json': registration,
+    '/mcp': mcpInfo,
+    '/.well-known/mcp.json': mcpCard,
+    '/health': healthCheck,
+  };
+}
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'GET') return next();
+  if (!_fastCache) _fastCache = buildFastCache();
+  const body = _fastCache[req.path];
+  if (!body) return next();
+  res.set('Content-Type', 'application/json; charset=utf-8');
+  res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.send(body);
+});
+
+// ─────────────────────────────────────────────────
 // Security Middleware
 // ─────────────────────────────────────────────────
 
@@ -564,7 +640,7 @@ app.get('/.well-known/mcp.json', (_req: Request, res: Response) => {
     '$schema': 'https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json',
     schema_version: '2025-06-18',
     version: '2.0.0',
-    protocolVersion: '2025-03-26',
+    protocolVersion: '2025-06-18',
     serverInfo: {
       name: 'toppa',
       title: 'Toppa',
@@ -974,7 +1050,7 @@ app.get('/mcp', (_req: Request, res: Response) => {
   res.json({
     protocol: 'MCP',
     transport: 'Streamable HTTP',
-    version: '2025-03-26',
+    version: '2025-06-18',
     tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
@@ -1024,15 +1100,19 @@ app.post('/a2a', async (req: Request, res: Response) => {
 // ─────────────────────────────────────────────────
 
 // GET handlers for paid endpoints — so health checkers see them as reachable
+const _paidEndpointResponses: Record<string, string> = {};
 for (const ep of ['send-airtime', 'send-data', 'pay-bill', 'buy-gift-card']) {
+  _paidEndpointResponses[ep] = JSON.stringify({
+    service: ep,
+    method: 'POST',
+    paymentRequired: true,
+    protocol: 'x402',
+    status: 'available',
+  });
   app.get(`/${ep}`, (_req: Request, res: Response) => {
-    res.json({
-      service: ep,
-      method: 'POST',
-      paymentRequired: true,
-      protocol: 'x402',
-      status: 'available',
-    });
+    res.set('Cache-Control', 'public, max-age=300');
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.send(_paidEndpointResponses[ep]);
   });
 }
 
