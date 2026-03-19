@@ -186,14 +186,27 @@ async function executeToolCalls(
 /**
  * Check tool results for payment_required short-circuit.
  * Returns order_confirmation JSON string if found, null otherwise.
+ * If user balance is too low, returns a plain-text insufficient balance message instead.
  */
 function checkPaymentShortCircuit(
   toolResults: Array<{ content: string }>,
+  walletBalance?: string,
 ): string | null {
   for (const tr of toolResults) {
     try {
       const parsed = JSON.parse(tr.content);
       if (parsed.status === 'payment_required' && parsed.service && parsed.details) {
+        const totalNeeded = parsed.totalWithFee ?? parsed.productAmount;
+
+        // Early balance check — reject before showing order confirmation
+        if (walletBalance && !isNaN(parseFloat(walletBalance))) {
+          const bal = parseFloat(walletBalance);
+          if (bal < totalNeeded) {
+            const shortage = (totalNeeded - bal).toFixed(2);
+            return `You need ${totalNeeded.toFixed(2)} cUSD for this but your balance is only ${bal.toFixed(2)} cUSD. You're short by ${shortage} cUSD. Please deposit more cUSD to your wallet first (/wallet to see your address).`;
+          }
+        }
+
         const action = parsed.service
           .replace('send_', '')
           .replace('pay_', '')
@@ -453,8 +466,9 @@ export async function runToppaAgent(
     }
 
     // Short-circuit: payment_required → order_confirmation (saves LLM round trip)
+    // Also checks balance — returns insufficient-balance message if user can't afford it.
     if (useShortCircuit) {
-      const orderJson = checkPaymentShortCircuit(toolResults);
+      const orderJson = checkPaymentShortCircuit(toolResults, state.walletBalance);
       if (orderJson) {
         finalResponse = orderJson;
         break;

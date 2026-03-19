@@ -516,8 +516,8 @@ export async function handleCallback(
 
         // Categorize errors — never expose raw error.message to users
         let userMsg: string;
-        if (error.message.includes('Insufficient balance') || error.message.includes('Insufficient cUSD')) {
-          userMsg = `Insufficient ${TOKEN_SYMBOL} balance. Deposit more via /wallet.`;
+        if (error.message.includes('Insufficient balance') || error.message.includes('Insufficient cUSD') || error.message.includes('transfer amount exceeds balance')) {
+          userMsg = `You don't have enough ${TOKEN_SYMBOL} to complete this payment. Deposit more to your wallet via /wallet.`;
         } else if (error.message.includes('verification') || error.message.includes('INVALID')) {
           userMsg = 'Payment verification failed. Please try again.';
         } else if (error.message.includes('operator') || error.message.includes('OPERATOR')) {
