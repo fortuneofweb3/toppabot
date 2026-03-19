@@ -102,7 +102,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const body = _fastCache[req.path];
   if (!body) return next();
   res.set('Content-Type', 'application/json; charset=utf-8');
-  res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=60');
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.send(body);
