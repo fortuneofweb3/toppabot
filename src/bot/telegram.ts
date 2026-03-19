@@ -532,7 +532,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
 
   // Reject if this user already has a message being processed (prevents duplicates)
   const lockTime = userMessageLock.get(userId);
-  if (lockTime && Date.now() - lockTime < 30_000) {
+  if (lockTime && Date.now() - lockTime < 120_000) {
     return; // Silently drop — user will see response from the in-flight message
   }
   userMessageLock.set(userId, Date.now());
@@ -558,22 +558,6 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     const { balance, address } = await walletManager.getBalance(userId);
     console.log(`[Timing] Balance fetch: ${Date.now() - balanceStart}ms`);
 
-    // Streaming: accumulate LLM text chunks and push native drafts to Telegram
-    const draftId = Math.floor(Math.random() * 2147483647) + 1;
-    let streamedText = '';
-    let lastDraftText = '';
-
-    const draftInterval = setInterval(() => {
-      if (streamedText.length > 0 && streamedText !== lastDraftText) {
-        lastDraftText = streamedText;
-        // Telegram caps messages at 4096 chars — truncate draft to avoid silent failures
-        const draftText = stripMarkdown(streamedText).slice(0, 4096);
-        tgSilent('sendMessageDraft', { chat_id: chatId, draft_id: draftId, text: draftText });
-      }
-    }, 300);
-
-    const onStream = (chunk: string) => { streamedText += chunk; };
-
     let response: string;
     try {
       const result = await runToppaAgent(sanitizedMessage, {
@@ -583,10 +567,9 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
         walletAddress: address,
         walletBalance: balance,
         chatId,
-      } as any, { onStream });
+      } as any);
       response = result.response;
     } finally {
-      clearInterval(draftInterval);
       clearInterval(typingInterval);
     }
 
