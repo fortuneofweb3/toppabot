@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toppa Docs — Guides, API Reference & Project Info</title>
+  <meta name="description" content="Documentation for Toppa — user guides, developer API reference, x402 protocol, MCP tools, and project information.">
+
+  <link rel="icon" type="image/png" href="../favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <a href="../" class="topbar-brand">
+      <img src="../favicon.png" alt="" class="topbar-logo">
+      <span>Toppa</span>
+      <span class="topbar-sep">/</span>
+      <span class="topbar-label">Docs</span>
+    </a>
+    <nav class="topbar-nav">
+      <a href="#guides">Guides</a>
+      <a href="#developers">API</a>
+      <a href="#project">Project</a>
+      <a href="https://t.me/toppa402Bot" target="_blank" class="topbar-cta">Try Toppa</a>
+    </nav>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menu">&#9776;</button>
+  </header>
+
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-heading">User Guides</div>
+        <a href="#getting-started" class="sidebar-link active">Getting Started</a>
+        <a href="#send-airtime" class="sidebar-link">Airtime & Data</a>
+        <a href="#pay-bills" class="sidebar-link">Utility Bills</a>
+        <a href="#gift-cards" class="sidebar-link">Gift Cards</a>
+        <a href="#smart-memory" class="sidebar-link">Smart Memory</a>
+        <a href="#scheduled" class="sidebar-link">Scheduled Payments</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Developer Reference</div>
+        <a href="#api-overview" class="sidebar-link">API Overview</a>
+        <a href="#x402" class="sidebar-link">x402 Protocol</a>
+        <a href="#mcp" class="sidebar-link">MCP Server</a>
+        <a href="#a2a" class="sidebar-link">A2A Protocol</a>
+        <a href="#discovery" class="sidebar-link">Discovery APIs</a>
+        <a href="#agent-card" class="sidebar-link">Agent Card & ERC-8004</a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Project</div>
+        <a href="#about" class="sidebar-link">About Toppa</a>
+        <a href="#architecture" class="sidebar-link">Architecture</a>
+        <a href="#roadmap" class="sidebar-link">Roadmap</a>
+        <a href="#links" class="sidebar-link">Links & Resources</a>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="content">
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- USER GUIDES                                -->
+      <!-- ═══════════════════════════════════════════ -->
+      <div id="guides" class="content-group">
+        <div class="group-label">User Guides</div>
+
+        <section id="getting-started">
+          <h1>Getting Started</h1>
+          <p class="lead">Toppa is an AI agent on Telegram that lets you buy airtime, data, pay utility bills, and purchase gift cards using cUSD on the Celo blockchain. No sign-up, no KYC.</p>
+
+          <h2>1. Open the Bot</h2>
+          <p>Search for <strong>@toppa402Bot</strong> on Telegram or click <a href="https://t.me/toppa402Bot" target="_blank">this link</a>. Press <strong>Start</strong> to begin.</p>
+          <p>A cUSD wallet is automatically created for you. You'll see your wallet address in the welcome message.</p>
+
+          <h2>2. Fund Your Wallet</h2>
+          <p>Send cUSD (Celo Dollar) to your wallet address. You can get cUSD from:</p>
+          <ul>
+            <li><strong>Valora</strong> — mobile-first Celo wallet</li>
+            <li><strong>MiniPay</strong> — Opera's embedded Celo wallet</li>
+            <li><strong>Any Celo-compatible wallet</strong> — MetaMask, Celo Terminal, etc.</li>
+            <li><strong>Exchanges</strong> — Binance, Coinbase (withdraw to Celo network)</li>
+          </ul>
+          <div class="callout">
+            <strong>Tip:</strong> You can also ask Toppa for your wallet address anytime by typing "what's my wallet address?" or "balance".
+          </div>
+
+          <h2>3. Start Using Toppa</h2>
+          <p>Just type what you need in plain language. Toppa understands English, French, Yoruba, Swahili, and more. Examples:</p>
+          <div class="code-block">
+            <code>"Send ₦2000 airtime to my sister"</code>
+            <code>"Buy a $10 Netflix gift card"</code>
+            <code>"Pay my DStv subscription"</code>
+            <code>"Check my balance"</code>
+          </div>
+        </section>
+
+        <section id="send-airtime">
+          <h1>Airtime & Data</h1>
+          <p class="lead">Top up any phone number in 170+ countries with 800+ mobile operators. Toppa auto-detects the operator from the phone number.</p>
+
+          <h2>Sending Airtime</h2>
+          <p>Tell Toppa the amount and recipient. You can use local currency or USD:</p>
+          <div class="code-block">
+            <code>"Send $5 airtime to +234 802 1234 567"</code>
+            <code>"Top up my sister's phone with ₦1000"</code>
+            <code>"Recharge +254 712 345 678 with 500 KES"</code>
+          </div>
+          <p>Toppa will show you an order confirmation with the exact cUSD cost. Confirm to proceed.</p>
+
+          <h2>Buying Data Plans</h2>
+          <p>Request data bundles the same way:</p>
+          <div class="code-block">
+            <code>"Buy 2GB data for my number"</code>
+            <code>"Send 1GB MTN data to +234 803 000 0000"</code>
+          </div>
+
+          <h2>Using Saved Contacts</h2>
+          <p>Once you've saved a contact (see <a href="#smart-memory">Smart Memory</a>), you can use names instead of numbers:</p>
+          <div class="code-block">
+            <code>"Send airtime to mom"</code>
+            <code>"Buy data for my brother"</code>
+          </div>
+        </section>
+
+        <section id="pay-bills">
+          <h1>Utility Bills</h1>
+          <p class="lead">Pay electricity, water, TV subscriptions (DStv, GOtv, Startimes), and internet bills directly from chat.</p>
+
+          <h2>How It Works</h2>
+          <p>Tell Toppa what bill you want to pay:</p>
+          <div class="code-block">
+            <code>"Pay my DStv subscription"</code>
+            <code>"Pay electricity bill for meter 12345678"</code>
+            <code>"Renew my GOtv"</code>
+          </div>
+          <p>Toppa will look up available billers in your country and ask for any required details (meter number, smart card number, etc.).</p>
+
+          <h2>Supported Billers</h2>
+          <p>Billers vary by country. Use the <a href="https://api.toppa.cc" target="_blank">Playground</a> on the landing page to browse available billers by country, or ask Toppa directly:</p>
+          <div class="code-block">
+            <code>"What bills can I pay in Nigeria?"</code>
+            <code>"Show me electricity providers in Kenya"</code>
+          </div>
+        </section>
+
+        <section id="gift-cards">
+          <h1>Gift Cards</h1>
+          <p class="lead">Purchase from 300+ brands — Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Google Play, Apple, and more.</p>
+
+          <h2>Buying a Gift Card</h2>
+          <div class="code-block">
+            <code>"Buy a $25 Steam gift card"</code>
+            <code>"Get me a Netflix gift card for $15"</code>
+            <code>"I want an Amazon gift card"</code>
+          </div>
+          <p>Toppa will show available denominations and the cUSD price. After you confirm, the gift card code is delivered right in the chat.</p>
+
+          <h2>Browsing Available Cards</h2>
+          <div class="code-block">
+            <code>"What gift cards do you have?"</code>
+            <code>"Show me gaming gift cards"</code>
+          </div>
+        </section>
+
+        <section id="smart-memory">
+          <h1>Smart Memory</h1>
+          <p class="lead">Toppa remembers your contacts, preferences, and transaction history across sessions. No manual setup needed.</p>
+
+          <h2>Saving Contacts</h2>
+          <p>Toppa learns contacts naturally from your conversations:</p>
+          <div class="code-block">
+            <code>"My sister's number is +234 802 123 4567"</code>
+            <code>"Save +254 712 000 000 as my brother"</code>
+          </div>
+          <p>Once saved, use the name in future requests: <em>"Send airtime to my sister"</em>.</p>
+
+          <h2>Preferences</h2>
+          <p>Toppa learns your preferences over time:</p>
+          <ul>
+            <li>Preferred operator (MTN, Airtel, Safaricom, etc.)</li>
+            <li>Default currency and amounts</li>
+            <li>Confirmation preferences</li>
+          </ul>
+
+          <h2>Transaction History</h2>
+          <p>Ask about past transactions anytime:</p>
+          <div class="code-block">
+            <code>"Show my last 5 transactions"</code>
+            <code>"How much have I spent this week?"</code>
+          </div>
+        </section>
+
+        <section id="scheduled">
+          <h1>Scheduled Payments</h1>
+          <p class="lead">Set up recurring payments and Toppa handles them automatically. The heartbeat engine checks every 15 minutes.</p>
+
+          <h2>Setting Up a Schedule</h2>
+          <div class="code-block">
+            <code>"Send mom ₦1000 airtime every Friday"</code>
+            <code>"Pay my DStv on the 15th of every month"</code>
+            <code>"Remind me to buy data every Monday"</code>
+          </div>
+
+          <h2>Managing Schedules</h2>
+          <div class="code-block">
+            <code>"Show my scheduled payments"</code>
+            <code>"Cancel the Friday airtime schedule"</code>
+          </div>
+
+          <h2>Proactive Alerts</h2>
+          <p>Toppa's heartbeat engine will proactively message you when:</p>
+          <ul>
+            <li>A bill is coming due soon</li>
+            <li>A scheduled payment is about to execute</li>
+            <li>There are relevant promotions on your favorite operators</li>
+            <li>Your wallet balance is running low</li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- DEVELOPER REFERENCE                        -->
+      <!-- ═══════════════════════════════════════════ -->
+      <div id="developers" class="content-group">
+        <div class="group-label">Developer Reference</div>
+
+        <section id="api-overview">
+          <h1>API Overview</h1>
+          <p class="lead">Toppa exposes its capabilities through five integration layers. Choose the one that fits your use case.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Protocol</th>
+                  <th>Endpoint</th>
+                  <th>Auth</th>
+                  <th>Best For</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge">x402</span></td>
+                  <td><code>api.toppa.cc/*</code></td>
+                  <td>Pay-per-call (cUSD)</td>
+                  <td>Agents, automated purchases</td>
+                </tr>
+                <tr>
+                  <td><span class="badge">MCP</span></td>
+                  <td><code>api.toppa.cc/mcp</code></td>
+                  <td>None (open)</td>
+                  <td>Claude Desktop, Cursor, AI clients</td>
+                </tr>
+                <tr>
+                  <td><span class="badge">A2A</span></td>
+                  <td><code>api.toppa.cc/a2a</code></td>
+                  <td>None (open)</td>
+                  <td>Agent-to-agent task delegation</td>
+                </tr>
+                <tr>
+                  <td><span class="badge">REST</span></td>
+                  <td><code>api.toppa.cc/operators/:cc</code></td>
+                  <td>None (free)</td>
+                  <td>Discovery & browsing catalog</td>
+                </tr>
+                <tr>
+                  <td><span class="badge">Telegram</span></td>
+                  <td><code>t.me/toppa402Bot</code></td>
+                  <td>Telegram account</td>
+                  <td>Human end-users</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Base URL</h2>
+          <div class="code-block">
+            <code>https://api.toppa.cc</code>
+          </div>
+          <p>All endpoints accept and return JSON. No API keys required — paid endpoints use the x402 protocol (HTTP 402 + on-chain payment).</p>
+        </section>
+
+        <section id="x402">
+          <h1>x402 Protocol</h1>
+          <p class="lead">x402 turns HTTP 402 (Payment Required) into a machine-readable payment flow. Agents pay per API call using cUSD on Celo — no API keys, no accounts, no invoices.</p>
+
+          <h2>How It Works</h2>
+          <ol>
+            <li><strong>Request</strong> — Your agent sends a normal POST request to a paid endpoint.</li>
+            <li><strong>402 Response</strong> — Toppa returns HTTP 402 with payment details: price in cUSD, recipient address, and a payment schema.</li>
+            <li><strong>Pay</strong> — Your agent sends a cUSD transfer on the Celo blockchain for the exact amount.</li>
+            <li><strong>Retry with proof</strong> — Resend the same request with the transaction hash in the <code>X-PAYMENT</code> header.</li>
+            <li><strong>Fulfillment</strong> — Toppa verifies the payment on-chain and returns the result.</li>
+          </ol>
+
+          <h2>Example Flow</h2>
+          <div class="code-block dark">
+<pre># Step 1: Initial request
+POST https://api.toppa.cc/send-airtime
+Content-Type: application/json
+
+{
+  "phone": "+2348021234567",
+  "amount": 5,
+  "currency": "USD"
+}
+
+# Response: 402 Payment Required
+{
+  "price": "3.50",
+  "currency": "cUSD",
+  "recipient": "0x...",
+  "network": "celo"
+}
+
+# Step 2: After paying on-chain
+POST https://api.toppa.cc/send-airtime
+Content-Type: application/json
+X-PAYMENT: 0xabc123...def456
+
+{
+  "phone": "+2348021234567",
+  "amount": 5,
+  "currency": "USD"
+}
+
+# Response: 200 OK
+{
+  "status": "success",
+  "transactionId": "...",
+  "operatorName": "MTN Nigeria"
+}</pre>
+          </div>
+
+          <h2>Paid Endpoints</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>/send-airtime</code></td><td>POST</td><td>Send airtime to a phone number</td></tr>
+                <tr><td><code>/send-data</code></td><td>POST</td><td>Send a data bundle</td></tr>
+                <tr><td><code>/pay-bill</code></td><td>POST</td><td>Pay a utility bill</td></tr>
+                <tr><td><code>/buy-gift-card</code></td><td>POST</td><td>Purchase a gift card</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="mcp">
+          <h1>MCP Server</h1>
+          <p class="lead">Toppa exposes 13 tools via the Model Context Protocol (MCP), allowing AI clients like Claude Desktop and Cursor to execute real-world payments.</p>
+
+          <h2>Connection</h2>
+          <p>Toppa's MCP server uses Streamable HTTP transport:</p>
+          <div class="code-block dark">
+<pre># Claude Desktop config (~/.claude/claude_desktop_config.json)
+{
+  "mcpServers": {
+    "toppa": {
+      "transport": "streamable-http",
+      "url": "https://api.toppa.cc/mcp"
+    }
+  }
+}</pre>
+          </div>
+
+          <h2>Available Tools</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>get_operators</code></td><td>List mobile operators by country</td></tr>
+                <tr><td><code>get_operator_details</code></td><td>Get details for a specific operator</td></tr>
+                <tr><td><code>detect_operator</code></td><td>Auto-detect operator from phone number</td></tr>
+                <tr><td><code>send_airtime</code></td><td>Send airtime (paid)</td></tr>
+                <tr><td><code>send_data</code></td><td>Send data bundle (paid)</td></tr>
+                <tr><td><code>get_billers</code></td><td>List utility billers by country</td></tr>
+                <tr><td><code>pay_bill</code></td><td>Pay a utility bill (paid)</td></tr>
+                <tr><td><code>get_gift_cards</code></td><td>List available gift cards</td></tr>
+                <tr><td><code>get_gift_card_details</code></td><td>Get details for a specific gift card</td></tr>
+                <tr><td><code>buy_gift_card</code></td><td>Purchase a gift card (paid)</td></tr>
+                <tr><td><code>get_promotions</code></td><td>List current promotions</td></tr>
+                <tr><td><code>get_countries</code></td><td>List supported countries</td></tr>
+                <tr><td><code>get_fx_rate</code></td><td>Get exchange rates</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout">
+            <strong>Note:</strong> Paid tools (send_airtime, send_data, pay_bill, buy_gift_card) return an order confirmation object for user approval before executing payment via x402.
+          </div>
+        </section>
+
+        <section id="a2a">
+          <h1>A2A Protocol</h1>
+          <p class="lead">Google's Agent-to-Agent protocol enables machine-to-machine task delegation. Send tasks to Toppa from other agents using JSON-RPC.</p>
+
+          <h2>Endpoint</h2>
+          <div class="code-block dark">
+<pre>POST https://api.toppa.cc/a2a
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "tasks/send",
+  "id": "1",
+  "params": {
+    "task": {
+      "id": "unique-task-id",
+      "message": {
+        "role": "user",
+        "parts": [
+          {
+            "type": "text",
+            "text": "Send $5 airtime to +2348021234567"
+          }
+        ]
+      }
+    }
+  }
+}</pre>
+          </div>
+
+          <h2>Task Lifecycle</h2>
+          <ol>
+            <li><code>tasks/send</code> — Submit a task</li>
+            <li><code>tasks/get</code> — Check task status</li>
+            <li><code>tasks/cancel</code> — Cancel a pending task</li>
+          </ol>
+          <p>Tasks that require payment will return with status <code>input-required</code> and an order confirmation artifact for the calling agent to approve.</p>
+        </section>
+
+        <section id="discovery">
+          <h1>Discovery APIs</h1>
+          <p class="lead">Free, unauthenticated REST endpoints for browsing Toppa's catalog. No x402 payment required.</p>
+
+          <h2>Endpoints</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Endpoint</th><th>Description</th><th>Example</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td><code>GET /operators/:cc</code></td>
+                  <td>Mobile operators by country code</td>
+                  <td><code>/operators/NG</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /gift-cards</code></td>
+                  <td>All available gift cards</td>
+                  <td><code>/gift-cards</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /billers/:cc</code></td>
+                  <td>Utility billers by country</td>
+                  <td><code>/billers/KE</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /promotions/:cc</code></td>
+                  <td>Active promotions</td>
+                  <td><code>/promotions/NG</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /countries</code></td>
+                  <td>Supported countries</td>
+                  <td><code>/countries</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /fx-rate</code></td>
+                  <td>Exchange rates</td>
+                  <td><code>/fx-rate?from=NGN&to=USD</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /reputation</code></td>
+                  <td>On-chain reputation score</td>
+                  <td><code>/reputation</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Example</h2>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/operators/NG
+
+[
+  {
+    "operatorId": 174,
+    "name": "MTN Nigeria",
+    "bundle": false,
+    "data": false,
+    "denominationType": "RANGE",
+    "logoUrls": ["https://..."],
+    "countryCode": "NG"
+  },
+  ...
+]</pre>
+          </div>
+          <div class="callout">
+            <strong>Try it live:</strong> Use the <a href="../#playground">Playground</a> on the landing page to explore these endpoints interactively.
+          </div>
+        </section>
+
+        <section id="agent-card">
+          <h1>Agent Card & ERC-8004</h1>
+          <p class="lead">Toppa is a registered on-chain agent on Celo with a verifiable identity and reputation score, following the ERC-8004 standard.</p>
+
+          <h2>Agent Card</h2>
+          <p>Toppa publishes a standard agent card for automated discovery:</p>
+          <div class="code-block dark">
+<pre>GET https://api.toppa.cc/.well-known/agent.json
+
+{
+  "name": "Toppa",
+  "description": "AI agent for airtime, data, bills & gift cards",
+  "url": "https://toppa.cc",
+  "capabilities": {
+    "mcp": "https://api.toppa.cc/mcp",
+    "a2a": "https://api.toppa.cc/a2a",
+    "x402": true
+  },
+  "registration": {
+    "network": "celo",
+    "standard": "ERC-8004",
+    "agentId": 1870
+  }
+}</pre>
+          </div>
+
+          <h2>ERC-8004 Registration</h2>
+          <p>Toppa is registered as agent #1870 on the Celo blockchain under the ERC-8004 standard. This provides:</p>
+          <ul>
+            <li><strong>On-chain identity</strong> — verifiable, immutable registration</li>
+            <li><strong>Reputation score</strong> — computed from peer reviews and transaction history</li>
+            <li><strong>Discoverability</strong> — other agents can find Toppa through the registry</li>
+          </ul>
+
+          <h2>Verification Links</h2>
+          <ul>
+            <li><a href="https://agentscan.info/agents/celo/1870" target="_blank">View on Agentscan</a></li>
+            <li><a href="https://www.8004scan.io/agents/celo/1870" target="_blank">View on 8004scan</a></li>
+            <li><a href="https://api.toppa.cc/registration.json" target="_blank">Registration JSON</a></li>
+          </ul>
+        </section>
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- PROJECT INFO                               -->
+      <!-- ═══════════════════════════════════════════ -->
+      <div id="project" class="content-group">
+        <div class="group-label">Project</div>
+
+        <section id="about">
+          <h1>About Toppa</h1>
+          <p class="lead">Toppa is an autonomous AI agent that bridges the gap between cryptocurrency and everyday digital services. Built for people who need to send airtime, pay bills, and buy gift cards — but don't have access to traditional banking.</p>
+
+          <h2>The Problem</h2>
+          <p>Billions of people use mobile money and prepaid services daily. But buying airtime across borders, paying bills in different countries, or purchasing international gift cards requires navigating fragmented systems, currency exchanges, and KYC barriers.</p>
+
+          <h2>The Solution</h2>
+          <p>Toppa eliminates all of that. One chat interface, one currency (cUSD), zero paperwork. Tell Toppa what you need in plain language — it figures out the operator, calculates the cost, and executes the transaction.</p>
+
+          <h2>Key Differentiators</h2>
+          <ul>
+            <li><strong>AI-first, not form-first</strong> — No dropdowns, no forms. Just natural language.</li>
+            <li><strong>Borderless by default</strong> — 170+ countries, 800+ operators, one interface.</li>
+            <li><strong>Agent-native</strong> — Built from day one for both humans and AI agents.</li>
+            <li><strong>Crypto-native payments</strong> — cUSD on Celo. Fast, cheap, global.</li>
+            <li><strong>Memory & personality</strong> — Learns your contacts, habits, and preferences.</li>
+            <li><strong>Open protocols</strong> — x402, MCP, A2A. Any agent can integrate.</li>
+          </ul>
+        </section>
+
+        <section id="architecture">
+          <h1>Architecture</h1>
+          <p class="lead">Toppa uses a lightweight custom tool-calling loop with parallel execution — no heavy frameworks needed.</p>
+
+          <h2>Core Engine</h2>
+          <p>At the center is a direct tool-calling loop that sends messages to the LLM (DeepSeek). If the model returns tool calls, they're executed in parallel via <code>Promise.all()</code>. Results are fed back until the model provides a final response.</p>
+          <p>This is simpler, faster, and more predictable than framework-based approaches like LangGraph.</p>
+
+          <h2>Protocol Stack</h2>
+          <div class="stack">
+            <div class="stack-layer"><span class="badge">Telegram</span> Direct human users</div>
+            <div class="stack-layer"><span class="badge">A2A</span> Agent-to-Agent (JSON-RPC)</div>
+            <div class="stack-layer"><span class="badge">MCP</span> 13 tools via Streamable HTTP</div>
+            <div class="stack-layer"><span class="badge">x402</span> Pay-per-call REST API</div>
+            <div class="stack-layer"><span class="badge">Celo</span> cUSD payments + ERC-8004 identity</div>
+          </div>
+
+          <h2>Safety Model</h2>
+          <p>Paid tools (airtime, data, bills, gift cards) never execute actual purchases inside the LLM loop. Instead, they return a <code>payment_required</code> JSON payload with an order confirmation. The actual payment and fulfillment happen externally:</p>
+          <ul>
+            <li><strong>Telegram</strong> — wallet deduction after user confirms</li>
+            <li><strong>x402</strong> — on-chain payment verification before fulfillment</li>
+            <li><strong>MCP/A2A</strong> — order confirmation artifact returned for approval</li>
+          </ul>
+        </section>
+
+        <section id="roadmap">
+          <h1>Roadmap</h1>
+          <p class="lead">What's been built, what's in progress, and what's coming next.</p>
+
+          <h2>Shipped</h2>
+          <ul class="roadmap-list done">
+            <li>Telegram bot with natural language processing</li>
+            <li>Airtime, data, bills, and gift card fulfillment</li>
+            <li>Smart memory (contacts, preferences, history)</li>
+            <li>Heartbeat engine with proactive alerts</li>
+            <li>x402 payment protocol for all paid endpoints</li>
+            <li>MCP server with 13 tools</li>
+            <li>A2A protocol support</li>
+            <li>ERC-8004 on-chain registration (Agent #1870)</li>
+            <li>Free discovery APIs</li>
+            <li>Voice note support</li>
+            <li>Multilingual (English, French, Yoruba, Swahili)</li>
+          </ul>
+
+          <h2>In Progress</h2>
+          <ul class="roadmap-list progress">
+            <li>Reputation system with peer reviews</li>
+            <li>Scheduled payments (heartbeat-driven)</li>
+            <li>Operator promotions and deals</li>
+          </ul>
+
+          <h2>Planned</h2>
+          <ul class="roadmap-list planned">
+            <li>Multi-agent orchestration (Toppa as a sub-agent)</li>
+            <li>Additional payment tokens beyond cUSD</li>
+            <li>WhatsApp integration</li>
+            <li>Merchant tools and bulk airtime</li>
+            <li>SDK for third-party developers</li>
+          </ul>
+        </section>
+
+        <section id="links">
+          <h1>Links & Resources</h1>
+          <p class="lead">Everything you need to explore, integrate, or contribute.</p>
+
+          <div class="links-grid">
+            <a href="https://t.me/toppa402Bot" target="_blank" class="link-card">
+              <strong>Telegram Bot</strong>
+              <span>@toppa402Bot</span>
+            </a>
+            <a href="https://api.toppa.cc" target="_blank" class="link-card">
+              <strong>API Base</strong>
+              <span>api.toppa.cc</span>
+            </a>
+            <a href="https://api.toppa.cc/.well-known/agent.json" target="_blank" class="link-card">
+              <strong>Agent Card</strong>
+              <span>.well-known/agent.json</span>
+            </a>
+            <a href="https://agentscan.info/agents/celo/1870" target="_blank" class="link-card">
+              <strong>Agentscan</strong>
+              <span>Agent #1870</span>
+            </a>
+            <a href="https://www.8004scan.io/agents/celo/1870" target="_blank" class="link-card">
+              <strong>8004scan</strong>
+              <span>ERC-8004 profile</span>
+            </a>
+            <a href="https://github.com/fortuneofweb3/toppabot" target="_blank" class="link-card">
+              <strong>GitHub</strong>
+              <span>Source code</span>
+            </a>
+            <a href="../" class="link-card">
+              <strong>Landing Page</strong>
+              <span>toppa.cc</span>
+            </a>
+            <a href="https://api.toppa.cc/mcp" target="_blank" class="link-card">
+              <strong>MCP Endpoint</strong>
+              <span>Streamable HTTP</span>
+            </a>
+          </div>
+        </section>
+      </div>
+
+      <footer class="docs-footer">
+        <a href="../">Back to toppa.cc</a>
+        <span>Built on <a href="https://celo.org" target="_blank">Celo</a></span>
+      </footer>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

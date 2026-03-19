@@ -3,132 +3,155 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Toppa — Your Personal Agent for Airtime, Data, Bills & Gift Cards</title>
+  <title>Toppa — AI Agent for Airtime, Data, Bills & Gift Cards</title>
   <meta name="description" content="Toppa is an autonomous AI agent for airtime, data, utility bills, and gift cards across 170+ countries. Powered by Celo blockchain.">
 
-  <!-- Open Graph -->
-  <meta property="og:title" content="Toppa — Personal AI Agent for Digital Payments">
-  <meta property="og:description" content="Airtime, data, bills, and gift cards across 170+ countries. Powered by Celo.">
-  <meta property="og:image" content="https://toppa.cc/logo.png">
+  <meta property="og:title" content="Toppa — AI Agent for Digital Payments">
+  <meta property="og:description" content="Send airtime, data, pay bills, and buy gift cards across 170+ countries. Chat on Telegram, pay with cUSD.">
+  <meta property="og:image" content="https://toppa.cc/favicon.png">
   <meta property="og:url" content="https://toppa.cc">
   <meta property="og:type" content="website">
 
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Toppa — Personal AI Agent">
-  <meta name="twitter:description" content="Airtime, data, bills, and gift cards across 170+ countries.">
-  <meta name="twitter:image" content="https://toppa.cc/logo.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Toppa — AI Agent for Digital Payments">
+  <meta name="twitter:description" content="Send airtime, data, pay bills, and buy gift cards across 170+ countries.">
+  <meta name="twitter:image" content="https://toppa.cc/favicon.png">
 
-  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="apple-touch-icon" href="favicon.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- ─── Nav ──────────────────────────────────── -->
   <nav class="nav">
     <div class="container">
       <a href="#" class="nav-brand">
-        <img src="logo.png" alt="Toppa">
+        <img src="favicon.png" alt="" class="nav-logo">
         Toppa
       </a>
       <ul class="nav-links" id="navLinks">
         <li><a href="#features">Features</a></li>
         <li><a href="#how-it-works">How It Works</a></li>
-        <li><a href="#agent">Agent</a></li>
         <li><a href="#developers">Developers</a></li>
-        <li><a href="https://t.me/ToppaAgentBot" class="nav-cta" target="_blank">Open in Telegram</a></li>
+        <li><a href="#playground">Playground</a></li>
+        <li><a href="docs/">Docs</a></li>
+        <li><a href="https://t.me/toppa402Bot" class="nav-cta" target="_blank">Try Toppa</a></li>
       </ul>
-      <button class="nav-toggle" id="navToggle" aria-label="Toggle menu">&#9776;</button>
+      <button class="nav-toggle" id="navToggle" aria-label="Menu">&#9776;</button>
     </div>
   </nav>
 
-  <!-- ─── Hero ─────────────────────────────────── -->
   <section class="hero">
     <div class="container">
       <div class="hero-content">
-        <h1>Your Personal Agent for <span>Airtime, Data, Bills & Gift Cards</span></h1>
-        <p>Tell Toppa what you need in plain language. It handles payments across 170+ countries using cUSD on Celo — and remembers your preferences for next time.</p>
+        <div class="hero-badge"><span class="pulse"></span> Live on Celo Mainnet</div>
+        <h1>Pay bills and buy airtime with a simple message</h1>
+        <p class="hero-sub">Toppa is an AI agent on Telegram that handles airtime, data, utility bills, and gift cards across 170+ countries. Pay with cUSD on Celo.</p>
         <div class="hero-buttons">
-          <a href="https://t.me/ToppaAgentBot" class="btn-primary" target="_blank">Try on Telegram &rarr;</a>
-          <a href="https://api.toppa.cc" class="btn-secondary" target="_blank">API Docs</a>
+          <a href="https://t.me/toppa402Bot" class="btn btn-primary" target="_blank">Try on Telegram &rarr;</a>
+          <a href="https://api.toppa.cc" class="btn btn-outline" target="_blank">API Docs</a>
         </div>
-        <div class="hero-stats">
-          <div class="hero-stat">
-            <div class="number">170+</div>
-            <div class="label">Countries</div>
+        <div class="hero-metrics">
+          <div class="metric"><div class="value">170+</div><div class="label">Countries</div></div>
+          <div class="metric"><div class="value">800+</div><div class="label">Operators</div></div>
+          <div class="metric"><div class="value">300+</div><div class="label">Gift Cards</div></div>
+        </div>
+        <div class="hero-avatars">
+          <div class="avatar-stack">
+            <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Amara" alt="">
+            <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Kwame" alt="">
+            <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Fatima" alt="">
+            <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Chen" alt="">
+            <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Oluwaseun" alt="">
           </div>
-          <div class="hero-stat">
-            <div class="number">800+</div>
-            <div class="label">Operators</div>
-          </div>
-          <div class="hero-stat">
-            <div class="number">300+</div>
-            <div class="label">Gift Card Brands</div>
-          </div>
-          <div class="hero-stat">
-            <div class="number live-badge"><span class="dot"></span> Live</div>
-            <div class="label">On Celo Mainnet</div>
-          </div>
+          <span class="avatar-label">Trusted by users across Africa, Asia & beyond</span>
         </div>
       </div>
       <div class="hero-visual">
-        <img src="logo.png" alt="Toppa Logo" class="hero-logo">
+        <div class="chat-mockup">
+          <div class="chat-header">
+            <img src="favicon.png" alt="">
+            <span class="name">ToppaBot</span>
+            <span class="status">online</span>
+          </div>
+          <div class="chat-body">
+            <div class="msg msg-user">Send &#8358;2000 airtime to my sister</div>
+            <div class="msg msg-bot">
+              <div class="msg-row"><strong>MTN Nigeria</strong></div>
+              <div class="msg-row">&#8358;2,000 airtime &rarr; +234 802 &bull;&bull;&bull;&bull; 4521</div>
+              <div class="msg-row msg-cost">2.85 cUSD</div>
+              <div class="msg-row msg-confirm">Confirm payment?</div>
+            </div>
+            <div class="msg msg-user">Yes, send it</div>
+            <div class="msg msg-bot">
+              <div class="msg-row msg-success">&#10003; Airtime sent!</div>
+              <div class="msg-row msg-tx">TX: 0x7f3a...82b1</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ─── Features ─────────────────────────────── -->
   <section id="features">
     <div class="container">
       <div class="section-header fade-in">
-        <h2>Everything You Need, One Chat Away</h2>
-        <p>No apps to download, no forms to fill. Just tell Toppa what you want.</p>
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Everything you need, one chat away</h2>
+        <p class="section-desc">No apps to download, no forms to fill. Just tell Toppa what you want.</p>
       </div>
       <div class="features-grid">
         <div class="feature-card fade-in">
-          <div class="feature-icon">&#128241;</div>
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M7 2a2 2 0 00-2 2v12a2 2 0 002 2h6a2 2 0 002-2V4a2 2 0 00-2-2H7zm3 14a1 1 0 100-2 1 1 0 000 2z"/></svg></div>
           <h3>Airtime & Data</h3>
           <p>Top up any phone in 170+ countries. 800+ operators supported. Local currency or USD.</p>
         </div>
         <div class="feature-card fade-in">
-          <div class="feature-icon">&#9889;</div>
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"/></svg></div>
           <h3>Utility Bills</h3>
           <p>Pay electricity, water, TV (DStv, GOtv), and internet bills. One message, done.</p>
         </div>
         <div class="feature-card fade-in">
-          <div class="feature-icon">&#127873;</div>
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 5a3 3 0 015-2.236A3 3 0 0114.83 6H16a2 2 0 110 4h-5V9a1 1 0 10-2 0v1H4a2 2 0 110-4h1.17C5.06 5.687 5 5.35 5 5zm4 1V5a1 1 0 10-1 1h1zm2 0a1 1 0 10-1-1v1h1zm-6 6v2a2 2 0 002 2h2v-4H5zm6 4v-4h4v2a2 2 0 01-2 2h-2z" clip-rule="evenodd"/></svg></div>
           <h3>Gift Cards</h3>
-          <p>Buy from 300+ brands — Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, and more.</p>
+          <p>300+ brands — Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, and more.</p>
         </div>
         <div class="feature-card fade-in">
-          <div class="feature-icon">&#129504;</div>
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z"/></svg></div>
           <h3>Smart Memory</h3>
-          <p>Remembers your contacts, preferences, and habits. Schedules recurring payments automatically.</p>
+          <p>Remembers your contacts, preferences, and habits. Schedules recurring payments.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ─── How It Works ─────────────────────────── -->
-  <section id="how-it-works" style="background: var(--bg-card); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+  <section id="how-it-works" class="section-alt">
     <div class="container">
       <div class="section-header fade-in">
-        <h2>How It Works</h2>
-        <p>Three steps. No sign-ups, no forms, no complicated menus.</p>
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Three steps. No sign-up required.</h2>
       </div>
       <div class="steps">
         <div class="step fade-in">
-          <div class="step-number">1</div>
-          <h3>Open the Telegram Bot</h3>
-          <p>Start a chat with @ToppaAgentBot. A crypto wallet is created for you instantly.</p>
+          <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Adeola&backgroundColor=fff7ed" alt="" class="step-avatar">
+          <div class="step-num">1</div>
+          <h3>Open the Bot</h3>
+          <p>Start a chat with @toppa402Bot on Telegram. A crypto wallet is created for you instantly.</p>
         </div>
         <div class="step fade-in">
-          <div class="step-number">2</div>
-          <h3>Tell Toppa What You Need</h3>
+          <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Jelani&backgroundColor=fff7ed" alt="" class="step-avatar">
+          <div class="step-num">2</div>
+          <h3>Say What You Need</h3>
           <p>"Send $5 airtime to my brother" or "Buy a Netflix gift card" — just talk naturally.</p>
         </div>
         <div class="step fade-in">
-          <div class="step-number">3</div>
+          <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Zara&backgroundColor=fff7ed" alt="" class="step-avatar">
+          <div class="step-num">3</div>
           <h3>Confirm & Done</h3>
           <p>Review the order, confirm payment in cUSD. Toppa handles everything else.</p>
         </div>
@@ -136,75 +159,69 @@
     </div>
   </section>
 
-  <!-- ─── Autonomous Agent ─────────────────────── -->
-  <section id="agent" class="autonomous">
+  <section id="agent">
     <div class="container">
-      <div class="autonomous-grid">
-        <div class="autonomous-text fade-in">
-          <h2>Not a Chatbot. A Personal Agent.</h2>
+      <div class="agent-grid">
+        <div class="agent-text fade-in">
+          <div class="section-label">Autonomous</div>
+          <h2>Not a chatbot.<br>A personal agent.</h2>
           <p>Toppa doesn't just respond to commands — it thinks, remembers, and acts on your behalf.</p>
-          <ul class="autonomous-features">
+          <ul class="agent-list">
             <li>
-              <span class="icon">&#10003;</span>
-              <div class="text">
-                <strong>Remembers Everything</strong>
-                <span>Your contacts, preferences, payment history — saved across sessions.</span>
-              </div>
+              <span class="check">&#10003;</span>
+              <div><strong>Remembers Everything</strong><span>Your contacts, preferences, payment history — saved across sessions.</span></div>
             </li>
             <li>
-              <span class="icon">&#10003;</span>
-              <div class="text">
-                <strong>Proactive Alerts</strong>
-                <span>Reminds you when bills are due, spots promotions, suggests recurring payments.</span>
-              </div>
+              <span class="check">&#10003;</span>
+              <div><strong>Proactive Alerts</strong><span>Reminds you when bills are due, spots promotions, suggests recurring payments.</span></div>
             </li>
             <li>
-              <span class="icon">&#10003;</span>
-              <div class="text">
-                <strong>Scheduled Payments</strong>
-                <span>"Send airtime every Friday at 5pm" — set it once, Toppa handles the rest.</span>
-              </div>
+              <span class="check">&#10003;</span>
+              <div><strong>Scheduled Payments</strong><span>"Send airtime every Friday at 5pm" — set it once, Toppa handles the rest.</span></div>
             </li>
             <li>
-              <span class="icon">&#10003;</span>
-              <div class="text">
-                <strong>Speaks Your Language</strong>
-                <span>Write in any language — English, French, Yoruba, Swahili — and Toppa responds in kind.</span>
-              </div>
+              <span class="check">&#10003;</span>
+              <div><strong>Multilingual</strong><span>English, French, Yoruba, Swahili — Toppa responds in your language.</span></div>
             </li>
           </ul>
         </div>
-        <div class="autonomous-visual fade-in">
-          <div class="dim">// Heartbeat engine — checks every 15 min</div>
-          <br>
-          <span class="accent">User goals:</span><br>
-          &nbsp;&nbsp;1. [contact] Sister's number: +234...<br>
-          &nbsp;&nbsp;2. [recurring] DStv bill on the 15th<br>
-          &nbsp;&nbsp;3. [preference] Always MTN, local currency<br>
-          <br>
-          <span class="accent">Decision:</span> <span class="green">shouldMessage: true</span><br>
-          &nbsp;&nbsp;priority: <span class="accent">HIGH</span><br>
-          &nbsp;&nbsp;reason: "DStv bill due in 2 days"<br>
-          <br>
-          <span class="green">&rarr; "Hey! Your DStv subscription renews</span><br>
-          <span class="green">&nbsp;&nbsp;in 2 days. Want me to pay it now?"</span>
+        <div class="fade-in">
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body">
+              <span class="dim">// Heartbeat engine — checks every 15 min</span><br><br>
+              <span class="orange">User goals:</span><br>
+              &nbsp;&nbsp;1. [contact] Sister's number: +234...<br>
+              &nbsp;&nbsp;2. [recurring] DStv bill on the 15th<br>
+              &nbsp;&nbsp;3. [preference] Always MTN, local currency<br><br>
+              <span class="orange">Decision:</span> <span class="green">shouldMessage: true</span><br>
+              &nbsp;&nbsp;priority: <span class="orange">HIGH</span><br>
+              &nbsp;&nbsp;reason: "DStv bill due in 2 days"<br><br>
+              <span class="green">&rarr; "Hey! Your DStv subscription renews</span><br>
+              <span class="green">&nbsp;&nbsp;in 2 days. Want me to pay it now?"</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ─── For Developers ───────────────────────── -->
-  <section id="developers">
+  <section id="developers" class="section-alt">
     <div class="container">
       <div class="section-header fade-in">
-        <h2>Built for Agents & Developers</h2>
-        <p>Integrate Toppa into your own agents, apps, and workflows.</p>
+        <div class="section-label">Developers</div>
+        <h2 class="section-title">Built for agents & developers</h2>
+        <p class="section-desc">Integrate Toppa into your own agents, apps, and workflows.</p>
       </div>
       <div class="dev-grid">
         <div class="dev-card fade-in">
           <span class="badge">MCP</span>
           <h3>Model Context Protocol</h3>
-          <p>12 tools available via Streamable HTTP. Connect any MCP-compatible client directly.</p>
+          <p>13 tools available via Streamable HTTP. Connect any MCP-compatible client directly.</p>
           <code>POST api.toppa.cc/mcp</code>
         </div>
         <div class="dev-card fade-in">
@@ -216,14 +233,14 @@
         <div class="dev-card fade-in">
           <span class="badge">x402</span>
           <h3>Pay-Per-Use API</h3>
-          <p>Standard REST endpoints with x402 payment headers. Pay in cUSD, no API keys needed.</p>
+          <p>REST endpoints with x402 payment headers. Pay in cUSD, no API keys needed.</p>
           <code>POST api.toppa.cc/send-airtime</code>
         </div>
         <div class="dev-card fade-in">
           <span class="badge">ERC-8004</span>
           <h3>On-Chain Identity</h3>
           <p>Registered agent on Celo with on-chain reputation tracking and verifiable identity.</p>
-          <code>GET api.toppa.cc/identity</code>
+          <code>GET api.toppa.cc/registration.json</code>
         </div>
         <div class="dev-card fade-in">
           <span class="badge">Discovery</span>
@@ -241,71 +258,122 @@
     </div>
   </section>
 
-  <!-- ─── Countries ────────────────────────────── -->
-  <section id="countries" style="background: var(--bg-card); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+  <section id="playground">
     <div class="container">
       <div class="section-header fade-in">
-        <h2>Global Coverage</h2>
-        <p>From Lagos to London, Nairobi to New York — Toppa works where you are.</p>
+        <div class="section-label">Playground</div>
+        <h2 class="section-title">Explore the API</h2>
+        <p class="section-desc">Browse live data from Toppa's free discovery endpoints. No auth required.</p>
       </div>
-      <div class="countries-stats fade-in">
-        <div class="country-stat">
-          <span class="number">170+</span>
-          <span class="label">Countries</span>
+      <div class="pg fade-in">
+        <div class="pg-tabs">
+          <button class="pg-tab active" data-ep="operators">Operators</button>
+          <button class="pg-tab" data-ep="gift-cards">Gift Cards</button>
+          <button class="pg-tab" data-ep="billers">Billers</button>
+          <button class="pg-tab" data-ep="promotions">Promotions</button>
         </div>
-        <div class="country-stat">
-          <span class="number">800+</span>
-          <span class="label">Mobile Operators</span>
+        <div class="pg-main">
+          <div class="pg-bar">
+            <span class="pg-method-display">GET</span>
+            <span class="pg-url" id="pgUrl">https://api.toppa.cc/operators/NG</span>
+            <div class="pg-controls">
+              <select id="pgCountry" class="pg-select">
+                <option value="NG">Nigeria</option>
+                <option value="KE">Kenya</option>
+                <option value="GH">Ghana</option>
+                <option value="ZA">South Africa</option>
+                <option value="EG">Egypt</option>
+                <option value="CM">Cameroon</option>
+                <option value="UG">Uganda</option>
+                <option value="TZ">Tanzania</option>
+                <option value="IN">India</option>
+                <option value="PH">Philippines</option>
+                <option value="BR">Brazil</option>
+                <option value="MX">Mexico</option>
+                <option value="GB">United Kingdom</option>
+                <option value="US">United States</option>
+                <option value="FR">France</option>
+                <option value="DE">Germany</option>
+              </select>
+              <button class="btn btn-primary btn-sm" id="pgSend">Send &rarr;</button>
+            </div>
+          </div>
+          <div class="pg-response">
+            <div class="pg-response-bar">
+              <span>Response</span>
+              <span class="pg-status" id="pgStatus"></span>
+              <span class="pg-count" id="pgCount"></span>
+            </div>
+            <div class="pg-response-body" id="pgResponseBody">
+              <div class="pg-placeholder">Select an endpoint and click Send</div>
+            </div>
+          </div>
         </div>
-        <div class="country-stat">
-          <span class="number">300+</span>
-          <span class="label">Gift Card Brands</span>
-        </div>
-        <div class="country-stat">
-          <span class="number" id="reputationScore">—</span>
-          <span class="label">Reputation Score</span>
-        </div>
-      </div>
-      <div class="country-flags fade-in">
-        <div class="flag">&#127475;&#127468;</div>
-        <div class="flag">&#127472;&#127466;</div>
-        <div class="flag">&#127468;&#127469;</div>
-        <div class="flag">&#127487;&#127462;</div>
-        <div class="flag">&#127466;&#127468;</div>
-        <div class="flag">&#127464;&#127474;</div>
-        <div class="flag">&#127482;&#127468;</div>
-        <div class="flag">&#127481;&#127487;</div>
-        <div class="flag">&#127470;&#127475;</div>
-        <div class="flag">&#127468;&#127463;</div>
-        <div class="flag">&#127482;&#127480;</div>
-        <div class="flag">&#127463;&#127479;</div>
-        <div class="flag">&#127477;&#127469;</div>
-        <div class="flag">&#127474;&#127485;</div>
-        <div class="flag">&#127467;&#127479;</div>
-        <div class="flag">&#127465;&#127466;</div>
       </div>
     </div>
   </section>
 
-  <!-- ─── CTA ──────────────────────────────────── -->
+  <section id="coverage" class="coverage-section">
+    <div class="flag-grid-bg" aria-hidden="true">
+      <div class="flag-row">
+        <img src="https://flagcdn.com/w80/ng.png" alt=""><img src="https://flagcdn.com/w80/ke.png" alt=""><img src="https://flagcdn.com/w80/gh.png" alt=""><img src="https://flagcdn.com/w80/za.png" alt=""><img src="https://flagcdn.com/w80/eg.png" alt=""><img src="https://flagcdn.com/w80/cm.png" alt=""><img src="https://flagcdn.com/w80/ug.png" alt=""><img src="https://flagcdn.com/w80/tz.png" alt=""><img src="https://flagcdn.com/w80/sn.png" alt=""><img src="https://flagcdn.com/w80/et.png" alt=""><img src="https://flagcdn.com/w80/mw.png" alt="">
+      </div>
+      <div class="flag-row">
+        <img src="https://flagcdn.com/w80/in.png" alt=""><img src="https://flagcdn.com/w80/gb.png" alt=""><img src="https://flagcdn.com/w80/us.png" alt=""><img src="https://flagcdn.com/w80/br.png" alt=""><img src="https://flagcdn.com/w80/ph.png" alt=""><img src="https://flagcdn.com/w80/mx.png" alt=""><img src="https://flagcdn.com/w80/fr.png" alt=""><img src="https://flagcdn.com/w80/de.png" alt=""><img src="https://flagcdn.com/w80/es.png" alt=""><img src="https://flagcdn.com/w80/it.png" alt=""><img src="https://flagcdn.com/w80/pt.png" alt="">
+      </div>
+      <div class="flag-row">
+        <img src="https://flagcdn.com/w80/ae.png" alt=""><img src="https://flagcdn.com/w80/sa.png" alt=""><img src="https://flagcdn.com/w80/co.png" alt=""><img src="https://flagcdn.com/w80/bd.png" alt=""><img src="https://flagcdn.com/w80/id.png" alt=""><img src="https://flagcdn.com/w80/jp.png" alt=""><img src="https://flagcdn.com/w80/kr.png" alt=""><img src="https://flagcdn.com/w80/tr.png" alt=""><img src="https://flagcdn.com/w80/pk.png" alt=""><img src="https://flagcdn.com/w80/my.png" alt=""><img src="https://flagcdn.com/w80/sg.png" alt="">
+      </div>
+      <div class="flag-row">
+        <img src="https://flagcdn.com/w80/ar.png" alt=""><img src="https://flagcdn.com/w80/cl.png" alt=""><img src="https://flagcdn.com/w80/pe.png" alt=""><img src="https://flagcdn.com/w80/rw.png" alt=""><img src="https://flagcdn.com/w80/ci.png" alt=""><img src="https://flagcdn.com/w80/cd.png" alt=""><img src="https://flagcdn.com/w80/mz.png" alt=""><img src="https://flagcdn.com/w80/ao.png" alt=""><img src="https://flagcdn.com/w80/th.png" alt=""><img src="https://flagcdn.com/w80/vn.png" alt=""><img src="https://flagcdn.com/w80/mm.png" alt="">
+      </div>
+      <div class="flag-row">
+        <img src="https://flagcdn.com/w80/ng.png" alt=""><img src="https://flagcdn.com/w80/gh.png" alt=""><img src="https://flagcdn.com/w80/za.png" alt=""><img src="https://flagcdn.com/w80/ke.png" alt=""><img src="https://flagcdn.com/w80/ug.png" alt=""><img src="https://flagcdn.com/w80/tz.png" alt=""><img src="https://flagcdn.com/w80/eg.png" alt=""><img src="https://flagcdn.com/w80/sn.png" alt=""><img src="https://flagcdn.com/w80/cm.png" alt=""><img src="https://flagcdn.com/w80/et.png" alt=""><img src="https://flagcdn.com/w80/ne.png" alt="">
+      </div>
+    </div>
+    <div class="container" style="position:relative;z-index:2;">
+      <div class="section-header fade-in">
+        <div class="section-label">Coverage</div>
+        <h2 class="section-title">Global reach</h2>
+      </div>
+      <div class="stats-row fade-in">
+        <div class="stat"><div class="number">170+</div><div class="label">Countries</div></div>
+        <div class="stat"><div class="number">800+</div><div class="label">Mobile Operators</div></div>
+        <div class="stat"><div class="number">300+</div><div class="label">Gift Card Brands</div></div>
+        <div class="stat"><div class="number" id="reputationScore">&mdash;</div><div class="label">Reputation Score</div></div>
+      </div>
+    </div>
+  </section>
+
   <section class="cta">
     <div class="container fade-in">
-      <h2>Ready to Try Toppa?</h2>
+      <div class="cta-avatars">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Emeka" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Aisha" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Yuki" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Priya" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Korede" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Liam" alt="">
+        <img src="https://api.dicebear.com/9.x/notionists/svg?seed=Nonso" alt="">
+      </div>
+      <h2>Ready to try Toppa?</h2>
       <p>Open Telegram, send a message, and let Toppa handle the rest.</p>
-      <a href="https://t.me/ToppaAgentBot" class="btn-primary" target="_blank">Open in Telegram &rarr;</a>
+      <a href="https://t.me/toppa402Bot" class="btn btn-primary" target="_blank">Open in Telegram &rarr;</a>
     </div>
   </section>
 
-  <!-- ─── Footer ───────────────────────────────── -->
   <footer class="footer">
     <div class="container">
       <div class="footer-left">
         Built on <a href="https://celo.org" target="_blank">Celo</a> &middot; Powered by <a href="https://reloadly.com" target="_blank">Reloadly</a>
       </div>
       <ul class="footer-links">
-        <li><a href="https://t.me/ToppaAgentBot" target="_blank">Telegram</a></li>
+        <li><a href="https://t.me/toppa402Bot" target="_blank">Telegram</a></li>
+        <li><a href="docs/">Docs</a></li>
         <li><a href="https://api.toppa.cc" target="_blank">API</a></li>
         <li><a href="https://api.toppa.cc/.well-known/agent.json" target="_blank">Agent Card</a></li>
+        <li><a href="https://agentscan.info/agents/celo/1870" target="_blank">Agentscan</a></li>
+        <li><a href="https://www.8004scan.io/agents/celo/1870" target="_blank">8004scan</a></li>
         <li><a href="https://github.com/fortuneofweb3/toppabot" target="_blank">GitHub</a></li>
       </ul>
     </div>
