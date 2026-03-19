@@ -616,6 +616,10 @@ app.get('/.well-known/agent-registration.json', (_req: Request, res: Response) =
         agentId,
         agentRegistry: `eip155:${chainId}:${registryAddress}`,
       },
+      {
+        agentId: 34481,
+        agentRegistry: `eip155:8453:${registryAddress}`,
+      },
     ],
   });
 });
