@@ -51,8 +51,8 @@ interface UserRateLimit {
 
 const userRateLimits = new Map<string, UserRateLimit>();
 
-const RATE_LIMIT_WINDOW = 5 * 60 * 1000;
-const MAX_REQUESTS_PER_WINDOW = 10;
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute (was 5 min — too aggressive)
+const MAX_REQUESTS_PER_WINDOW = 20;  // 20/min ≈ 1 every 3s (normal chat is fine)
 const DAILY_SPENDING_LIMIT = 50;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
@@ -101,7 +101,7 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reaso
   }
 
   if (userLimit.requestCount >= MAX_REQUESTS_PER_WINDOW) {
-    return { allowed: false, reason: 'Too many requests. Please wait 5 minutes.' };
+    return { allowed: false, reason: 'Slow down a bit! Try again in a few seconds.' };
   }
 
   if (now - userLimit.spendingResetDate > SPENDING_RESET_WINDOW) {
