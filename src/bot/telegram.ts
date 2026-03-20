@@ -521,6 +521,61 @@ async function cmdExport(chatId: number) {
 }
 
 // ─────────────────────────────────────────────────
+// Voice Message Handler (Deepgram transcription)
+// ─────────────────────────────────────────────────
+
+const MAX_VOICE_DURATION = 120; // 2 minutes max
+
+async function handleVoiceMessage(chatId: number, userId: string, fileId: string, duration: number) {
+  if (duration > MAX_VOICE_DURATION) {
+    await tg('sendMessage', { chat_id: chatId, text: 'Voice message too long — keep it under 2 minutes.' });
+    return;
+  }
+
+  tgSilent('sendChatAction', { chat_id: chatId, action: 'typing' });
+
+  try {
+    // 1. Get file path from Telegram
+    const file = await tg<{ file_path: string }>('getFile', { file_id: fileId });
+    const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+
+    // 2. Download the voice file
+    const audioResponse = await fetch(fileUrl);
+    if (!audioResponse.ok) throw new Error('Failed to download voice file');
+    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+
+    // 3. Transcribe with Deepgram
+    const dgKey = process.env.DEEPGRAM_API_KEY;
+    if (!dgKey) throw new Error('DEEPGRAM_API_KEY not set');
+
+    const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${dgKey}`,
+        'Content-Type': 'audio/ogg',
+      },
+      body: audioBuffer,
+    });
+
+    if (!dgResponse.ok) throw new Error(`Deepgram ${dgResponse.status}: ${await dgResponse.text()}`);
+    const dgResult = await dgResponse.json() as any;
+    const text = dgResult?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
+    if (!text) {
+      await tg('sendMessage', { chat_id: chatId, text: "Couldn't understand the voice message. Try again or type your request." });
+      return;
+    }
+
+    console.log(`[Voice] User ${userId}: "${text.slice(0, 80)}..." (${duration}s)`);
+
+    // 4. Feed transcribed text to the normal message handler
+    await handleTextMessage(chatId, userId, text);
+  } catch (err: any) {
+    console.error('[Voice] Transcription failed:', err.message);
+    await tg('sendMessage', { chat_id: chatId, text: "Couldn't process that voice message. Try typing your request instead." });
+  }
+}
+
+// ─────────────────────────────────────────────────
 // Text Message Handler (AI Agent + Order Detection)
 // ─────────────────────────────────────────────────
 
@@ -733,6 +788,15 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
       }
 
       return handleTextMessage(chatId, userId, text);
+    }
+
+    // Voice message
+    if (update.message?.voice) {
+      const chatId = update.message.chat.id;
+      if (!update.message.from?.id) return;
+      const userId = update.message.from.id.toString();
+      const { file_id, duration } = update.message.voice;
+      return handleVoiceMessage(chatId, userId, file_id, duration);
     }
   } catch (err: any) {
     const uid = update.message?.from?.id || update.callback_query?.from?.id;
