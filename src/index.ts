@@ -42,6 +42,12 @@ async function main() {
     console.log('Telegram bot skipped (no TELEGRAM_BOT_TOKEN configured)');
   }
 
+  // Start WhatsApp bot if enabled
+  if (process.env.ENABLE_WHATSAPP === 'true') {
+    const { startWhatsAppBot } = await import('./bot/whatsapp');
+    await startWhatsAppBot();
+  }
+
   console.log('');
   console.log('✅ Toppa is live!');
   console.log('💬 Telegram: Send messages to your bot');

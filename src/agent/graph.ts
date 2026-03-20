@@ -27,10 +27,22 @@ import { formatUserContext } from './goals';
  * - Telegram bot: wallet transfer + on-chain verification (bot/handlers.ts)
  */
 
+// Primary LLM — OpenRouter (or custom via LLM_BASE_URL)
 const llm = new OpenAI({
-  apiKey: process.env.LLM_API_KEY || process.env.OPENAI_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://api.deepseek.com/v1',
+  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+  baseURL: process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
 });
+
+// Fallback LLM — kicks in when primary times out or gets rate limited
+// Uses same OpenRouter key by default (routes to paid DeepSeek ~$0.0003/req)
+const fallbackLlm = process.env.FALLBACK_LLM_KEY
+  ? new OpenAI({ apiKey: process.env.FALLBACK_LLM_KEY, baseURL: process.env.FALLBACK_LLM_BASE_URL || 'https://openrouter.ai/api/v1' })
+  : (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)
+    ? new OpenAI({ apiKey: (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)!, baseURL: 'https://openrouter.ai/api/v1' })
+    : null;
+const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'deepseek/deepseek-chat';
+let usingFallback = false;
+let fallbackUntil = 0; // Timestamp — use fallback until this time
 
 /**
  * Prepare JSON Schema for DeepSeek strict mode (constrained decoding).
@@ -141,7 +153,7 @@ RULES: Confirm amount and recipient before executing. Show transaction details a
 async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
   let prompt = SYSTEM_PROMPT;
   prompt += `\nCurrent datetime: ${new Date().toISOString()}`;
-  if (state.source === 'telegram' && state.walletAddress) {
+  if ((state.source === 'telegram' || state.source === 'whatsapp') && state.walletAddress) {
     prompt += `\nUser's wallet: ${state.walletAddress}`;
     prompt += `\nUser's cUSD balance: ${state.walletBalance || 'unknown'}`;
   }
@@ -343,7 +355,7 @@ export async function runToppaAgent(
     { role: 'user', content: userMessage },
   ];
 
-  const useShortCircuit = state.source === 'telegram' || state.source === 'a2a';
+  const useShortCircuit = state.source === 'telegram' || state.source === 'a2a' || state.source === 'whatsapp';
   let finalResponse = '';
   // Accumulate detect_operator results across ALL iterations for fidelity check.
   let allDetectResults: Array<{ content: string; toolName?: string }> = [];
@@ -355,66 +367,101 @@ export async function runToppaAgent(
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const iterStart = Date.now();
 
-    // Stream the LLM response — accumulate text + tool calls from chunks
-    // 30s timeout prevents DeepSeek hangs from leaving the user with no reply
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 30_000);
+    // Pick LLM client — use fallback if primary recently failed
+    const useFallback = usingFallback && fallbackLlm && Date.now() < fallbackUntil;
+    const activeLlm = useFallback ? fallbackLlm : llm;
+    const activeModel = useFallback ? FALLBACK_MODEL : (process.env.LLM_MODEL || 'deepseek-chat');
 
-    let stream;
-    try {
-      stream = await llm.chat.completions.create({
-        model: process.env.LLM_MODEL || 'deepseek-chat',
-        temperature: 0,
-        max_tokens: 800,
-        messages,
-        tools: llmTools,
-        tool_choice: 'auto',
-        stream: true,
-      }, { signal: abortController.signal });
-    } catch (err: any) {
-      clearTimeout(timeout);
-      console.error(`[Agent] LLM call failed iter=${i}: ${err.message}`);
-      finalResponse = "I'm having trouble right now. Please try again in a moment.";
-      break;
-    }
-
+    // Stream the LLM response — retry with fallback on timeout
     let textContent = '';
-    const pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+    let pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
+    let streamSucceeded = false;
 
-    try {
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta;
-        if (!delta) continue;
+    // attempts: 0 = primary, 1 = fallback (or retry primary if no fallback)
+    const maxAttempts = 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const isRetry = attempt > 0;
+      const client = (isRetry && fallbackLlm) ? fallbackLlm : activeLlm;
+      const model = (isRetry && fallbackLlm) ? FALLBACK_MODEL : activeModel;
 
-        // Text content — emit to stream callback
-        if (delta.content) {
-          textContent += delta.content;
-          options?.onStream?.(delta.content);
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 30_000);
+
+      let stream;
+      try {
+        stream = await client.chat.completions.create({
+          model,
+          temperature: 0,
+          max_tokens: 800,
+          messages,
+          tools: llmTools,
+          tool_choice: 'auto',
+          stream: true,
+        }, { signal: abortController.signal });
+      } catch (err: any) {
+        clearTimeout(timeout);
+        if (!isRetry) {
+          console.warn(`[Agent] LLM failed iter=${i} (${model}), ${fallbackLlm ? 'switching to fallback' : 'retrying'}...`);
+          continue;
         }
-
-        // Tool calls — accumulate silently (args arrive in fragments)
-        if (delta.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name = tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-            pendingToolCalls.set(tc.index, existing);
-          }
-        }
-      }
-    } catch (err: any) {
-      clearTimeout(timeout);
-      // If we got partial text before the timeout, use it
-      if (textContent.length > 10) {
-        console.warn(`[Agent] LLM stream interrupted iter=${i}, using partial text (${textContent.length} chars)`);
-      } else {
-        console.error(`[Agent] LLM stream failed iter=${i}: ${err.message}`);
+        console.error(`[Agent] LLM failed iter=${i} (${model}): ${err.message}`);
         finalResponse = "I'm having trouble right now. Please try again in a moment.";
         break;
       }
+
+      textContent = '';
+      pendingToolCalls = new Map();
+
+      try {
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta;
+          if (!delta) continue;
+
+          if (delta.content) {
+            textContent += delta.content;
+            options?.onStream?.(delta.content);
+          }
+
+          if (delta.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
+              if (tc.id) existing.id = tc.id;
+              if (tc.function?.name) existing.name = tc.function.name;
+              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+              pendingToolCalls.set(tc.index, existing);
+            }
+          }
+        }
+        clearTimeout(timeout);
+        streamSucceeded = true;
+        // If fallback succeeded, stay on fallback for 5 minutes
+        if (isRetry && fallbackLlm) {
+          usingFallback = true;
+          fallbackUntil = Date.now() + 5 * 60 * 1000;
+          console.log(`[Agent] Switched to fallback LLM (${FALLBACK_MODEL}) for 5 minutes`);
+        }
+        // If primary succeeded, clear fallback mode
+        if (!isRetry && !useFallback) {
+          usingFallback = false;
+        }
+        break;
+      } catch (err: any) {
+        clearTimeout(timeout);
+        if (textContent.length > 10) {
+          console.warn(`[Agent] LLM stream interrupted iter=${i}, using partial text (${textContent.length} chars)`);
+          streamSucceeded = true;
+          break;
+        }
+        if (!isRetry) {
+          console.warn(`[Agent] LLM timeout iter=${i} (${model}), ${fallbackLlm ? 'switching to fallback' : 'retrying'}...`);
+          continue;
+        }
+        console.error(`[Agent] LLM stream failed iter=${i} (${model}): ${err.message}`);
+        finalResponse = "I'm having trouble right now. Please try again in a moment.";
+      }
     }
-    clearTimeout(timeout);
+
+    if (!streamSucceeded) break;
 
     // Build assistant message for history
     const toolCallsArray = [...pendingToolCalls.values()];

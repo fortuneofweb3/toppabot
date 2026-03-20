@@ -583,7 +583,7 @@ Content-Type: application/json
           <p class="lead">Toppa uses a lightweight custom tool-calling loop with parallel execution — no heavy frameworks needed.</p>
 
           <h2>Core Engine</h2>
-          <p>At the center is a direct tool-calling loop that sends messages to the LLM (DeepSeek). If the model returns tool calls, they're executed in parallel via <code>Promise.all()</code>. Results are fed back until the model provides a final response.</p>
+          <p>At the center is a direct tool-calling loop that sends messages to the LLM. If the model returns tool calls, they're executed in parallel via <code>Promise.all()</code>. Results are fed back until the model provides a final response.</p>
           <p>This is simpler, faster, and more predictable than framework-based approaches like LangGraph.</p>
 
           <h2>Protocol Stack</h2>

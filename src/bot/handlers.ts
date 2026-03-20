@@ -55,7 +55,7 @@ function sanitizeToolArgs(toolName: string, args: Record<string, any>): Record<s
 /**
  * Execute a Reloadly service tool by name
  */
-async function executeServiceTool(
+export async function executeServiceTool(
   toolName: string,
   toolArgs: Record<string, any>,
 ): Promise<any> {
@@ -103,7 +103,7 @@ async function executeServiceTool(
 /**
  * Format the result of a service execution for display
  */
-function formatServiceResult(toolName: string, result: any, order?: { toolArgs?: Record<string, any>; totalAmount?: number }): string {
+export function formatServiceResult(toolName: string, result: any, order?: { toolArgs?: Record<string, any>; totalAmount?: number }): string {
   switch (toolName) {
     case 'send_airtime':
     case 'send_data': {
