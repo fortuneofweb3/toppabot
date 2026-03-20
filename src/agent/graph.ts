@@ -40,7 +40,7 @@ const fallbackLlm = process.env.FALLBACK_LLM_KEY
   : (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)
     ? new OpenAI({ apiKey: (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)!, baseURL: 'https://openrouter.ai/api/v1' })
     : null;
-const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free';
+const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'meta-llama/llama-3.3-70b-instruct';
 let usingFallback = false;
 let fallbackUntil = 0; // Timestamp — use fallback until this time
 
