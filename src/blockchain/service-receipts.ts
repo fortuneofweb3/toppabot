@@ -30,7 +30,7 @@ export interface ServiceReceipt {
 
   // Service info
   serviceType: 'airtime' | 'data' | 'bill_payment' | 'gift_card';
-  source: 'x402_api' | 'mcp' | 'telegram';
+  source: 'x402_api' | 'mcp' | 'telegram' | 'whatsapp';
   serviceArgs: Record<string, any>;  // Sanitized args (no secrets)
 
   // Execution result
