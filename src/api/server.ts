@@ -803,7 +803,7 @@ app.get('/gift-cards/search', async (req: Request, res: Response) => {
     const countryCode = req.query.country as string | undefined;
 
     if (!query) {
-      res.status(400).json({ error: 'Missing query parameter: q' });
+      res.json({ endpoint: 'GET /gift-cards/search?q=Steam', description: 'Search gift card brands by name', params: { q: 'Search query (required)', country: 'ISO country code (optional)' }, example: '/gift-cards/search?q=Netflix' });
       return;
     }
 

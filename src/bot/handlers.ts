@@ -16,6 +16,7 @@ import { reservePaymentHash } from '../blockchain/replay-guard';
 import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../shared/constants';
 import { invalidateReloadlyBalanceCache } from '../shared/balance-cache';
 import { sanitizePhone, sanitizeCountryCode, sanitizeAccountNumber } from '../shared/sanitize';
+import { saveConversation } from '../agent/memory';
 
 /**
  * Sanitize toolArgs before passing to Reloadly — defense in depth.
@@ -257,6 +258,8 @@ export async function handleCallback(
     if (quickActions[data]) {
       await answer();
       await sendMsg(quickActions[data]);
+      // Save to conversation history so the agent knows the intent when the user replies
+      saveConversation(userId, data.replace('quick_', ''), quickActions[data]).catch(() => {});
       return;
     }
 
@@ -752,8 +755,13 @@ export async function handleCallback(
           },
         );
       } catch (error: any) {
-        console.error('[Balance Error]', error.message);
-        await editMsg('❌ Could not fetch balance. Please try again.');
+        // "message is not modified" just means balance hasn't changed — not a real error
+        if (error.message?.includes('message is not modified')) {
+          await answer('Balance unchanged');
+        } else {
+          console.error('[Balance Error]', error.message);
+          await editMsg('❌ Could not fetch balance. Please try again.');
+        }
       }
       await answer();
       return;

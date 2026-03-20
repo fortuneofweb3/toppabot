@@ -143,7 +143,7 @@ export async function runHeartbeatForUser(
       ],
     });
 
-    const responseText = completion.choices[0]?.message?.content?.trim();
+    const responseText = completion?.choices?.[0]?.message?.content?.trim();
     if (!responseText) return;
 
     // Parse the LLM's decision
