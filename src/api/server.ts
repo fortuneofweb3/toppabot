@@ -1577,7 +1577,7 @@ app.get('/admin/receipts/stats', async (req: Request, res: Response) => {
 app.get('/admin/receipts/failed', async (req: Request, res: Response) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
     const receipts = await getFailedReceipts(limit);
     res.json({ receipts, total: receipts.length });
   } catch (error) {

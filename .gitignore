@@ -31,6 +31,15 @@ Thumbs.db
 *.db
 *.sqlite
 
+# Secrets & keys
+scripts/.reputation-keys.json
+*.key
+*.pem
+*.pk
+
+# WhatsApp auth state
+wa_auth_info/
+
 # Temp files
 temp/
 tmp/
