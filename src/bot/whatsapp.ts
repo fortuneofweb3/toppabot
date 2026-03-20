@@ -16,6 +16,7 @@ import { MongoWalletStore } from '../wallet/mongo-store';
 import { PendingOrderStore, generateOrderId } from './pending-orders';
 import { IS_TESTNET, TOKEN_SYMBOL, CELO_CAIP2, EXPLORER_BASE } from '../shared/constants';
 import { saveConversation, clearConversationHistory } from '../agent/memory';
+import { getFxRate } from '../apis/reloadly';
 
 const walletStore = process.env.MONGODB_URI
   ? new MongoWalletStore()
@@ -33,6 +34,151 @@ const userMessageLock = new Map<string, number>();
 // Reconnect backoff state
 let reconnectAttempts = 0;
 const MAX_RECONNECT_DELAY = 60_000; // Cap at 60s
+
+// ─────────────────────────────────────────────────
+// Rate Limiting (mirrors Telegram — 20 req/min, $50/day)
+// ─────────────────────────────────────────────────
+
+interface UserRateLimit {
+  requestCount: number;
+  lastReset: number;
+  totalSpent: number;
+  spendingResetDate: number;
+}
+
+const userRateLimits = new Map<string, UserRateLimit>();
+const RATE_LIMIT_WINDOW = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 20;
+const DAILY_SPENDING_LIMIT = 50;
+const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
+
+function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
+  const now = Date.now();
+  let userLimit = userRateLimits.get(userId);
+
+  if (!userLimit || now - userLimit.lastReset > RATE_LIMIT_WINDOW) {
+    userLimit = { requestCount: 0, lastReset: now, totalSpent: 0, spendingResetDate: userLimit?.spendingResetDate || now };
+    userRateLimits.set(userId, userLimit);
+  }
+
+  if (userLimit.requestCount >= MAX_REQUESTS_PER_WINDOW) {
+    return { allowed: false, reason: 'Slow down a bit! Try again in a few seconds.' };
+  }
+
+  if (now - userLimit.spendingResetDate > SPENDING_RESET_WINDOW) {
+    userLimit.totalSpent = 0;
+    userLimit.spendingResetDate = now;
+  }
+
+  if (userLimit.totalSpent >= DAILY_SPENDING_LIMIT) {
+    return { allowed: false, reason: `Daily spending limit of $${DAILY_SPENDING_LIMIT} reached. Try again tomorrow.` };
+  }
+
+  userLimit.requestCount++;
+  return { allowed: true };
+}
+
+function recordSpending(userId: string, amount: number) {
+  let userLimit = userRateLimits.get(userId);
+  if (!userLimit) {
+    userLimit = { requestCount: 0, lastReset: Date.now(), totalSpent: 0, spendingResetDate: Date.now() };
+    userRateLimits.set(userId, userLimit);
+  }
+  userLimit.totalSpent += amount;
+}
+
+// Cleanup stale entries every 5 minutes
+setInterval(() => {
+  pendingOrders.cleanup().catch(() => {});
+  const now = Date.now();
+  for (const [id, limit] of userRateLimits) {
+    if (now - limit.lastReset > 60 * 60 * 1000) userRateLimits.delete(id);
+  }
+}, 5 * 60 * 1000);
+
+// ─────────────────────────────────────────────────
+// Input Sanitization (mirrors Telegram)
+// ─────────────────────────────────────────────────
+
+function sanitizeInput(input: string): string {
+  if (input.length > 500) {
+    throw new Error('Message too long. Please keep it under 500 characters.');
+  }
+
+  const normalized = input
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
+    .replace(/[\u0400-\u04FF]/g, (c) => {
+      const map: Record<string, string> = { '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0455': 's', '\u0456': 'i', '\u0445': 'x' };
+      return map[c] || c;
+    });
+
+  const dangerous = [
+    'ignore previous', 'ignore all', 'new instructions', 'forget everything',
+    'system:', 'admin:', 'sudo', 'root:', '<script>', '<|im_end|>', '<|im_start|>',
+    'disregard', 'override', 'jailbreak', 'developer mode',
+    '\\[system\\]', '\\{system\\}', '<\\|system\\|>', '<\\|user\\|>',
+    'pretend you', 'act as if', 'roleplay as',
+    'ignore above', 'ignore the above', 'ignore your instructions',
+    'bypass', 'do anything now',
+  ];
+
+  for (const phrase of dangerous) {
+    if (new RegExp(phrase, 'gi').test(normalized)) {
+      throw new Error('Message contains potentially malicious content. Please rephrase.');
+    }
+  }
+
+  return input;
+}
+
+// ─────────────────────────────────────────────────
+// Markdown Stripping (comprehensive, mirrors Telegram)
+// ─────────────────────────────────────────────────
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/gs, '$1')
+    .replace(/__(.+?)__/gs, '$1')
+    .replace(/(?<!\w)\*(.+?)\*(?!\w)/gs, '$1')
+    .replace(/(?<!\w)_(.+?)_(?!\w)/gs, '$1')
+    .replace(/~~(.+?)~~/gs, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/```[\s\S]*?```/g, (match) => match.replace(/```\w*\n?/g, '').trim())
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^[\s]*[-*]\s+/gm, '• ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// ─────────────────────────────────────────────────
+// Message Splitting (WhatsApp ~65k limit, split at 4000 for readability)
+// ─────────────────────────────────────────────────
+
+const WA_MSG_LIMIT = 4000;
+
+async function sendLongMessage(sock: any, jid: string, text: string) {
+  if (text.length <= WA_MSG_LIMIT) {
+    await sock.sendMessage(jid, { text });
+    return;
+  }
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= WA_MSG_LIMIT) {
+      await sock.sendMessage(jid, { text: remaining });
+      break;
+    }
+    let cut = remaining.lastIndexOf('\n\n', WA_MSG_LIMIT);
+    if (cut < WA_MSG_LIMIT / 2) cut = remaining.lastIndexOf('\n', WA_MSG_LIMIT);
+    if (cut < WA_MSG_LIMIT / 2) cut = WA_MSG_LIMIT;
+    await sock.sendMessage(jid, { text: remaining.slice(0, cut) });
+    remaining = remaining.slice(cut).replace(/^\n+/, '');
+  }
+}
+
+// ─────────────────────────────────────────────────
+// Bot Entry Point
+// ─────────────────────────────────────────────────
 
 export async function startWhatsAppBot() {
   const { state, saveCreds } = await useMultiFileAuthState('wa_auth_info');
@@ -83,9 +229,25 @@ export async function startWhatsAppBot() {
 
     const phone = senderJid.split('@')[0];
     const userId = waUserId(phone);
-    const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+    const rawText = msg.message.conversation || msg.message.extendedTextMessage?.text;
 
-    if (!text) return;
+    if (!rawText) return;
+
+    // Rate limit check
+    const rateLimitCheck = checkRateLimit(userId);
+    if (!rateLimitCheck.allowed) {
+      await sock.sendMessage(senderJid, { text: rateLimitCheck.reason! }).catch(() => {});
+      return;
+    }
+
+    // Input sanitization
+    let text: string;
+    try {
+      text = sanitizeInput(rawText);
+    } catch (err: any) {
+      await sock.sendMessage(senderJid, { text: err.message }).catch(() => {});
+      return;
+    }
 
     // Processing lock — if already handling a message from this user, skip
     const lockTime = userMessageLock.get(userId);
@@ -106,6 +268,24 @@ export async function startWhatsAppBot() {
 
       // ── Pending order confirmation ────────────────────
       const activeOrder = await pendingOrders.getByUser(userId);
+
+      // Stale order recovery — if a processing order is >1 min old, mark it failed
+      if (activeOrder?.status === 'processing') {
+        const orderAge = Date.now() - activeOrder.createdAt;
+        const STALE_PROCESSING_MS = 60 * 1000;
+        if (orderAge > STALE_PROCESSING_MS) {
+          console.warn(`[WhatsApp][StaleOrder] Order ${activeOrder.orderId} stuck for ${Math.round(orderAge / 1000)}s — marking failed`);
+          await pendingOrders.updateStatus(activeOrder.orderId, 'failed', {
+            error: 'Order timed out (server may have restarted during processing)',
+          });
+        } else {
+          await sock.sendMessage(senderJid, {
+            text: 'You have an order being processed right now. Please wait for it to complete before placing a new one.',
+          });
+          return;
+        }
+      }
+
       if (activeOrder && activeOrder.status === 'pending_confirmation') {
         const lowerText = text.trim().toLowerCase();
 
@@ -113,7 +293,7 @@ export async function startWhatsAppBot() {
           await processOrderConfirmation(sock, senderJid, userId, address, balance, activeOrder);
           return;
         } else if (['no', 'n', '2', 'cancel'].includes(lowerText)) {
-          await pendingOrders.remove(activeOrder.orderId);
+          await pendingOrders.atomicTransition(activeOrder.orderId, ['pending_confirmation', 'pending_payment'], 'cancelled');
           await sock.sendMessage(senderJid, { text: '❌ Order cancelled.' });
           return;
         }
@@ -139,6 +319,15 @@ export async function startWhatsAppBot() {
       const orderData = extractOrderConfirmation(response);
 
       if (orderData) {
+        // Block new orders while another is processing
+        const existingOrder = await pendingOrders.getByUser(userId);
+        if (existingOrder?.status === 'processing') {
+          await sock.sendMessage(senderJid, {
+            text: 'You have an order being processed. Please wait for it to complete.',
+          });
+          return;
+        }
+
         const { total, serviceFee } = calculateTotalPayment(orderData.productAmount);
         const orderId = generateOrderId();
 
@@ -162,9 +351,8 @@ export async function startWhatsAppBot() {
 
         await sock.sendMessage(senderJid, { text: orderMsg });
       } else {
-        // Strip markdown links for plain WhatsApp text
-        const plain = response.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-        await sock.sendMessage(senderJid, { text: plain });
+        const plain = stripMarkdown(response);
+        await sendLongMessage(sock, senderJid, plain);
       }
 
     } catch (error: any) {
@@ -227,10 +415,43 @@ async function handleCommand(
       return;
     }
 
+    case '/rate': {
+      const parts = text.split(' ');
+      const countryCode = parts[1]?.toUpperCase();
+
+      if (!countryCode || countryCode.length < 2 || countryCode.length > 3) {
+        await sock.sendMessage(jid, {
+          text: `Usage: /rate <country_code>\n\nExamples:\n/rate NG - Nigeria (NGN)\n/rate KE - Kenya (KES)\n/rate GH - Ghana (GHS)\n/rate ZA - South Africa (ZAR)`
+        });
+        return;
+      }
+
+      try {
+        const fxData = await getFxRate(countryCode);
+        if (!fxData) {
+          await sock.sendMessage(jid, { text: `No rate available for ${countryCode}. Check the country code and try again.` });
+          return;
+        }
+
+        const { rate, currencyCode } = fxData;
+        const examples = [1, 5, 10, 25].map(usd => {
+          const local = Math.round(usd * rate);
+          return `${usd} ${TOKEN_SYMBOL} = ${local.toLocaleString('en-US')} ${currencyCode}`;
+        }).join('\n');
+
+        await sock.sendMessage(jid, {
+          text: `Rate for ${countryCode} (${currencyCode})\n\n1 ${TOKEN_SYMBOL} = ${rate.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currencyCode}\n\n${examples}`
+        });
+      } catch (err: any) {
+        await sock.sendMessage(jid, { text: `Couldn't fetch rate for ${countryCode}. Try again later.` });
+      }
+      return;
+    }
+
     case '/cancel': {
       const activeOrder = await pendingOrders.getByUser(userId);
       if (activeOrder && (activeOrder.status === 'pending_confirmation' || activeOrder.status === 'pending_payment')) {
-        await pendingOrders.remove(activeOrder.orderId);
+        await pendingOrders.atomicTransition(activeOrder.orderId, ['pending_confirmation', 'pending_payment'], 'cancelled');
         await sock.sendMessage(jid, { text: '❌ Pending order cancelled.' });
       } else {
         await sock.sendMessage(jid, { text: 'No pending order to cancel.' });
@@ -273,7 +494,7 @@ async function handleCommand(
 
     case '/help':
       await sock.sendMessage(jid, {
-        text: `Toppa — Airtime, Data, Bills & Gift Cards on Celo\n\nCommands:\n/start - Create wallet & get started\n/wallet - Check balance & address\n/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n/cancel - Cancel pending order\n/settings - View settings\n/togglereview - Toggle auto-review\n/export - Export private key\n/clear - Clear conversation memory\n/help - Show this message\n\nOr just type what you need:\n"Send 500 NGN airtime to 08012345678"\n"Buy 1GB data for +254712345678"\n"Pay my DSTV subscription"`
+        text: `Toppa — Airtime, Data, Bills & Gift Cards on Celo\n\nCommands:\n/start - Create wallet & get started\n/wallet - Check balance & address\n/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n/rate <country> - Check FX rate (e.g. /rate NG)\n/cancel - Cancel pending order\n/settings - View settings\n/togglereview - Toggle auto-review\n/export - Export private key\n/clear - Clear conversation memory\n/help - Show this message\n\nOr just type what you need:\n"Send 500 NGN airtime to 08012345678"\n"Buy 1GB data for +254712345678"\n"Pay my DSTV subscription"`
       });
       return;
 
@@ -288,6 +509,15 @@ async function handleCommand(
 async function processOrderConfirmation(
   sock: any, jid: string, userId: string, address: string, balance: string, activeOrder: any,
 ) {
+  // Atomic transition to prevent double-confirmation races
+  const transitioned = await pendingOrders.atomicTransition(
+    activeOrder.orderId, 'pending_confirmation', 'processing',
+  );
+  if (!transitioned) {
+    await sock.sendMessage(jid, { text: 'This order has already been processed.' });
+    return;
+  }
+
   const balanceNum = parseFloat(balance);
   const GAS_RESERVE = 0.05;
   const usableBalance = balanceNum - GAS_RESERVE;
@@ -301,7 +531,6 @@ async function processOrderConfirmation(
     return;
   }
 
-  await pendingOrders.updateStatus(activeOrder.orderId, 'processing');
   await sock.sendMessage(jid, { text: '⏳ Processing payment (1/4)...' });
 
   let receiptId = '';
@@ -345,12 +574,13 @@ async function processOrderConfirmation(
     });
 
     invalidateReloadlyBalanceCache();
+    recordSpending(userId, activeOrder.totalAmount);
     await pendingOrders.updateStatus(activeOrder.orderId, 'completed', { txHash, result });
 
     const formattedResult = formatServiceResult(activeOrder.toolName, result, activeOrder);
     const { balance: newBalance } = await walletManager.getBalance(userId);
 
-    const completionTitle = activeOrder.action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const completionTitle = activeOrder.action.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
     await sock.sendMessage(jid, {
       text: `✅ ${completionTitle} Complete!\n\n${formattedResult}\n\nBalance: ${parseFloat(newBalance).toFixed(2)} ${TOKEN_SYMBOL}\nTX: ${EXPLORER_BASE}/tx/${txHash}`
     });
