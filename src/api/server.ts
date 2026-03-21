@@ -24,6 +24,7 @@ import { generateAgentCard } from '../a2a/agent-card';
 import { handleA2ARequest } from '../a2a/handler';
 import { CELO_CAIP2 } from '../shared/constants';
 import { refundPayer } from '../shared/refund';
+import { getReputationMeta } from '../shared/reputation-meta';
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -1241,6 +1242,7 @@ app.post('/send-airtime', paymentLimiter, x402Middleware, async (req: X402Reques
         paymentTx: req.x402?.txHash,
         network: CELO_CAIP2,
       },
+      reputation: getReputationMeta('airtime'),
     });
   } catch (error) {
     await handleX402Error(error, req, res, receiptId, serviceSucceeded);
@@ -1341,6 +1343,7 @@ app.post('/send-data', paymentLimiter, x402Middleware, async (req: X402Request, 
         paymentTx: req.x402?.txHash,
         network: CELO_CAIP2,
       },
+      reputation: getReputationMeta('data'),
     });
   } catch (error) {
     await handleX402Error(error, req, res, receiptId, serviceSucceeded);
@@ -1428,6 +1431,7 @@ app.post('/pay-bill', paymentLimiter, x402Middleware, async (req: X402Request, r
         paymentTx: req.x402?.txHash,
         network: CELO_CAIP2,
       },
+      reputation: getReputationMeta('bill_payment'),
     });
   } catch (error) {
     await handleX402Error(error, req, res, receiptId, serviceSucceeded);
@@ -1537,6 +1541,7 @@ app.post('/buy-gift-card', paymentLimiter, x402Middleware, async (req: X402Reque
         paymentTx: req.x402?.txHash,
         network: CELO_CAIP2,
       },
+      reputation: getReputationMeta('gift_card'),
     });
   } catch (error) {
     await handleX402Error(error, req, res, receiptId, serviceSucceeded);

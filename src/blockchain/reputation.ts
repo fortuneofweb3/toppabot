@@ -39,7 +39,7 @@ export async function submitAutoReputation(feedback: ReputationFeedback): Promis
   const value = BigInt(feedback.rating); // 1-100 (integer)
   const valueDecimals = 0;
   const tag1 = feedback.serviceType;
-  const tag2 = feedback.success ? 'success' : 'failed';
+  const tag2 = feedback.success ? 'delivered' : 'failed';
   const feedbackURI = '';
   const feedbackHash = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
 

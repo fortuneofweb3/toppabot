@@ -16,6 +16,7 @@ import { CELO_CAIP2 } from '../shared/constants';
 import { getCachedReloadlyBalance } from '../shared/balance-cache';
 import { sanitizeCountryCode, sanitizePhone, sanitizeAccountNumber } from '../shared/sanitize';
 import { refundPayer } from '../shared/refund';
+import { getReputationMeta } from '../shared/reputation-meta';
 
 /**
  * Verify x402 payment for paid MCP tools.
@@ -516,6 +517,7 @@ export function registerMcpTools(server: McpServer) {
               deliveredCurrency: result.deliveredAmountCurrencyCode,
               transactionId: result.transactionId,
               pinDetail: result.pinDetail || null,
+              reputation: getReputationMeta('airtime'),
             }),
           }],
         };
@@ -588,6 +590,7 @@ export function registerMcpTools(server: McpServer) {
               deliveredCurrency: result.deliveredAmountCurrencyCode,
               transactionId: result.transactionId,
               pinDetail: result.pinDetail || null,
+              reputation: getReputationMeta('data'),
             }),
           }],
         };
@@ -645,7 +648,7 @@ export function registerMcpTools(server: McpServer) {
           status: billStatus === 'success' ? 'success' : 'failed',
           metadata: { source: 'mcp', billerId, accountNumber },
         });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ...result, reputation: getReputationMeta('bill_payment') }) }] };
       } catch (error: any) {
         return handlePaidToolError(error, receiptId, serviceSucceeded, paymentCheck.verification?.payer, amount, paymentTxHash);
       }
@@ -715,6 +718,7 @@ export function registerMcpTools(server: McpServer) {
               product: result.product.productName,
               status: result.status,
               note: 'Use get_gift_card_code with the transactionId to retrieve the redeem code.',
+              reputation: getReputationMeta('gift_card'),
             }),
           }],
         };
