@@ -2,9 +2,7 @@
 
 > AI agent for digital goods and utility payments across 170+ countries, powered by Celo.
 
-Built for the Celo **"Build Agents for the Real World V2"** hackathon.
-
-**Live now:** [toppa.cc](https://toppa.cc) | [Telegram Bot](https://t.me/ToppaBot) | [API Docs](https://toppa.cc/docs) | [agentscan #1870](https://8004scan.com/agent/1870)
+**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa)
 
 ## What Toppa Does
 
@@ -78,7 +76,7 @@ Toppa parses this into three parallel operations and executes them all. This is 
 | GET | `/reputation` | Agent reputation score |
 | POST | `/api/verify` | Self Protocol verification callback |
 
-### Paid (x402 — 0.5 cUSD per request)
+### Paid (x402 — product cost + 1.5% service fee)
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/send-airtime` | Send airtime top-up |
@@ -124,14 +122,14 @@ npm run register
 npm run dev
 ```
 
-## Hackathon Integrations
+## Integrations
 
 ### ERC-8004 — On-Chain Agent Identity
 On-chain identity and reputation on Celo's ERC-8004 registries. Toppa registers as an NFT-based agent identity and builds reputation through on-chain transaction feedback.
 
 - Identity Registry: `0x8004BAa17C55a88189AE136b182e5fdA19dE9b63` (Celo Mainnet)
 - Reputation Registry: `0x8004B663056A597Dffe9eCcC1965A193B7388713` (Celo Mainnet)
-- **Toppa Agent ID: #1870** — [View on 8004scan](https://8004scan.com/agent/1870)
+- **Toppa Agent ID: #1870** — [View on 8004scan](https://www.8004scan.io/agents/celo/1870)
 
 ### x402 — Payment Protocol
 Implements the x402 standard (HTTP 402 Payment Required). Other AI agents pay cUSD per API call. Payments verified on-chain by checking cUSD Transfer events on Celo.
@@ -143,13 +141,6 @@ ZK proof of humanity via passport NFC scanning. Users verify once in the Self ap
 - **REST + x402** — Pay-per-call HTTP API for any agent
 - **MCP** — 13 tools for Claude Desktop, Cursor, and other MCP clients
 - **A2A (Agent-to-Agent)** — Google's protocol for agent interoperability
-
-## Why Digital Goods?
-
-1. **Zero regulatory risk** — Gift cards and airtime are digital merchandise, not money transmission. No banking licenses needed.
-2. **170+ countries** — Single integration (Reloadly) covers the globe.
-3. **AI is genuinely necessary** — Multi-intent parsing of natural language into parallel API calls across services and countries.
-4. **Real demand** — This is how billions of people in emerging markets access digital services.
 
 ## License
 
