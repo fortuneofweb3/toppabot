@@ -43,6 +43,26 @@ wa_auth_info/
 # Scripts (local-only utilities)
 scripts/
 
+# Generated local assets (not served by API)
+public/toppa-pfp-dark.*
+public/toppa-gift-card.png
+
+# Local drafts & one-off files
+article.md
+hero-image.html
+hero-prompt.md
+telegram.html
+send-boost.js
+toppa-logo.svg
+AGENT_DESCRIPTION.md
+FINAL_IMPROVEMENTS.md
+LOGO_README.md
+TELEGRAM_FLOW_ANALYSIS.md
+TELEGRAM_SETUP.md
+TELEGRAM_UX_ENHANCEMENTS.md
+architecture_analysis.md
+docs/security/
+
 # Temp files
 temp/
 tmp/
