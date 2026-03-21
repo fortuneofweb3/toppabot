@@ -448,7 +448,10 @@ export async function handleCallback(
             const svcType = order.action === 'airtime' ? 'airtime' :
                             order.action === 'data' ? 'data' :
                             order.action === 'bill' ? 'bill_payment' : 'gift_card';
-            await submitAutoReputation({ rating: 100, serviceType: svcType, success: true, userPrivateKey });
+            const svcEndpoint = order.action === 'airtime' ? '/send-airtime' :
+                                order.action === 'data' ? '/send-data' :
+                                order.action === 'bill' ? '/pay-bill' : '/buy-gift-card';
+            await submitAutoReputation({ rating: 100, serviceType: svcType, success: true, userPrivateKey, endpoint: svcEndpoint });
             console.log(`[Auto-Review] User ${order.telegramId} auto-rated 100/100 (5★) for ${svcType}`);
           } catch (error: any) {
             console.error('[Auto-Review Error]', error.message);
@@ -838,7 +841,10 @@ export async function handleCallback(
         const serviceType = order.action === 'airtime' ? 'airtime' :
                            order.action === 'data' ? 'data' :
                            order.action === 'bill' ? 'bill_payment' : 'gift_card';
-        await submitAutoReputation({ rating: stars * 20, serviceType, success: true, userPrivateKey });
+        const svcEndpoint = order.action === 'airtime' ? '/send-airtime' :
+                            order.action === 'data' ? '/send-data' :
+                            order.action === 'bill' ? '/pay-bill' : '/buy-gift-card';
+        await submitAutoReputation({ rating: stars * 20, serviceType, success: true, userPrivateKey, endpoint: svcEndpoint });
         console.log(`[Manual-Review] User ${userId} rated ${stars * 20}/100 (${stars}★) for ${serviceType}`);
       } catch (error: any) {
         console.error('[Manual-Review Error]', error.message);

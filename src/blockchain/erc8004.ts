@@ -409,9 +409,15 @@ export async function recordTransaction(params: {
     // Rating: 100 = success (1.00 with 2 decimals), 0 = failed
     const value = params.status === 'success' ? BigInt(100) : BigInt(0);
     const valueDecimals = 2;
-    const tag1 = params.type.replace(/_api$|_mcp$/, ''); // normalize to service type
-    const tag2 = params.status === 'success' ? 'delivered' : 'failed';
-    const endpoint = process.env.API_URL || 'http://localhost:3000';
+    // tag1 = engagement signal (displayed prominently on 8004scan), tag2 = service type
+    const tag1 = params.status === 'success' ? 'delivered' : 'failed';
+    const tag2 = params.type.replace(/_api$|_mcp$/, ''); // normalize to service type
+    const baseUrl = process.env.API_URL || 'http://localhost:3000';
+    const serviceEndpoint = tag2 === 'airtime' ? '/send-airtime' :
+                            tag2 === 'data_plan' || tag2 === 'data' ? '/send-data' :
+                            tag2 === 'bill_payment' ? '/pay-bill' :
+                            tag2 === 'gift_card' ? '/buy-gift-card' : '';
+    const endpoint = `${baseUrl}${serviceEndpoint}`;
     const feedbackURI = ''; // Could point to detailed transaction data
     const feedbackHash = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
 

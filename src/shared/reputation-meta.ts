@@ -11,15 +11,19 @@ const GIVE_FEEDBACK_ABI =
  * Gives external callers everything they need to submit on-chain feedback.
  */
 export function getReputationMeta(serviceType: string) {
+  const serviceEndpoint = serviceType === 'airtime' ? '/send-airtime' :
+                          serviceType === 'data' ? '/send-data' :
+                          serviceType === 'bill_payment' ? '/pay-bill' :
+                          serviceType === 'gift_card' ? '/buy-gift-card' : '';
   return {
     agentId: AGENT_ID,
     chainId: CHAIN_ID,
     reputationRegistry: REPUTATION_REGISTRY,
-    endpoint: API_URL,
+    endpoint: `${API_URL}${serviceEndpoint}`,
     giveFeedbackABI: GIVE_FEEDBACK_ABI,
     suggestedTags: {
-      tag1: serviceType,
-      tag2Options: ['delivered', 'fast_delivery', 'value_received', 'reliable', 'failed', 'slow_delivery'],
+      tag1Options: ['delivered', 'fast_delivery', 'value_received', 'reliable', 'failed', 'slow_delivery'],
+      tag2: serviceType,
     },
   };
 }

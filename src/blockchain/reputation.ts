@@ -16,6 +16,7 @@ export interface ReputationFeedback {
   serviceType: 'airtime' | 'data' | 'bill_payment' | 'gift_card';
   success: boolean;
   userPrivateKey: string;
+  endpoint?: string; // specific service endpoint, e.g. /send-airtime
 }
 
 /**
@@ -38,8 +39,11 @@ export async function submitAutoReputation(feedback: ReputationFeedback): Promis
 
   const value = BigInt(feedback.rating); // 1-100 (integer)
   const valueDecimals = 0;
-  const tag1 = feedback.serviceType;
-  const tag2 = feedback.success ? 'delivered' : 'failed';
+  // tag1 = engagement signal (displayed prominently on 8004scan)
+  // tag2 = service type (context)
+  const tag1 = feedback.success ? 'delivered' : 'failed';
+  const tag2 = feedback.serviceType;
+  const endpoint = feedback.endpoint ? `${API_URL}${feedback.endpoint}` : API_URL;
   const feedbackURI = '';
   const feedbackHash = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`;
 
@@ -47,7 +51,7 @@ export async function submitAutoReputation(feedback: ReputationFeedback): Promis
     address: REPUTATION_REGISTRY,
     abi: reputationRegistryAbi,
     functionName: 'giveFeedback',
-    args: [AGENT_ID, value, valueDecimals, tag1, tag2, API_URL, feedbackURI, feedbackHash],
+    args: [AGENT_ID, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash],
     account: userAccount,
   });
 
