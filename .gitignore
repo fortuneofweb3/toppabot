@@ -40,6 +40,9 @@ scripts/.reputation-keys.json
 # WhatsApp auth state
 wa_auth_info/
 
+# Scripts (local-only utilities)
+scripts/
+
 # Temp files
 temp/
 tmp/
