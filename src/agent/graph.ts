@@ -31,7 +31,7 @@ const PRIMARY_MODEL = process.env.LLM_MODEL || 'deepseek-chat';
 const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'meta-llama/llama-3.3-70b-instruct';
 
 const primaryLlm = new ChatOpenAI({
-  openAIApiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
   configuration: {
     baseURL: process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
   },
@@ -44,7 +44,7 @@ const primaryLlm = new ChatOpenAI({
 
 const fallbackLlm = (process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)
   ? new ChatOpenAI({
-    openAIApiKey: process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+    apiKey: process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
     configuration: {
       baseURL: process.env.FALLBACK_LLM_BASE_URL || 'https://openrouter.ai/api/v1',
     },
