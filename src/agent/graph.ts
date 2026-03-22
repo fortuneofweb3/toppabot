@@ -223,9 +223,11 @@ function checkPaymentShortCircuit(
       const parsed = JSON.parse(content);
       if (parsed.status === 'payment_required' && parsed.service && parsed.details) {
         const totalNeeded = parsed.totalWithFee ?? parsed.productAmount;
+        const isGroupSpend = parsed.payFrom === 'group';
 
+        // Skip personal balance check for group spends — bot layer checks group balance
         const GAS_RESERVE = 0.05;
-        if (walletBalance && !isNaN(parseFloat(walletBalance))) {
+        if (!isGroupSpend && walletBalance && !isNaN(parseFloat(walletBalance))) {
           const usable = parseFloat(walletBalance) - GAS_RESERVE;
           if (usable < totalNeeded) {
             const shortage = (totalNeeded - usable).toFixed(2);
@@ -255,14 +257,23 @@ function checkPaymentShortCircuit(
           description = parsed.message?.split('.')[0] || `${action} service`;
         }
 
-        return JSON.stringify({
+        const orderConfirmation: Record<string, any> = {
           type: 'order_confirmation',
           action,
           description,
           productAmount: parsed.productAmount,
           toolName: parsed.service,
           toolArgs: parsed.details,
-        });
+        };
+
+        // Pass group wallet info through so bot layer uses group wallet
+        if (isGroupSpend && parsed.groupWalletId) {
+          orderConfirmation.payFrom = 'group';
+          orderConfirmation.groupWalletId = parsed.groupWalletId;
+          orderConfirmation.groupWalletAddress = parsed.groupWalletAddress;
+        }
+
+        return JSON.stringify(orderConfirmation);
       }
     } catch {
       // Not JSON or not payment_required — continue

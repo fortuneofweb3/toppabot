@@ -900,10 +900,24 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
       try {
         const { total, serviceFee } = calculateTotalPayment(orderData.productAmount);
 
+        // Use group wallet when payFrom === 'group'
+        const isGroupOrder = orderData.payFrom === 'group' && orderData.groupWalletId;
+        const walletId = isGroupOrder ? orderData.groupWalletId : userId;
+
+        let displayBalance = balance;
+        if (isGroupOrder) {
+          try {
+            const groupBal = await walletManager.getBalance(orderData.groupWalletId);
+            displayBalance = groupBal.balance;
+          } catch {
+            displayBalance = '0';
+          }
+        }
+
         const orderId = generateOrderId();
         const order: PendingOrder = {
           orderId,
-          telegramId: userId,
+          telegramId: walletId,
           chatId,
           action: orderData.action,
           description: orderData.description,
@@ -919,15 +933,16 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
 
         await pendingOrders.create(order);
 
+        const balanceLabel = isGroupOrder ? 'Group Balance' : 'Your Balance';
         await tg('sendMessage', {
           chat_id: chatId,
           text:
-            `📋 Order Summary\n\n` +
+            `📋 Order Summary${isGroupOrder ? ' (Group Wallet)' : ''}\n\n` +
             `${orderData.description}\n\n` +
             `Amount: ${orderData.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
             `Service Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\n` +
             `Total: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
-            `Your Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+            `${balanceLabel}: ${parseFloat(displayBalance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
             `Expires in 10 minutes`,
           reply_markup: { inline_keyboard: [
             [{ text: '✅ Confirm Order', callback_data: `order_confirm_${orderId}` }],
@@ -1084,14 +1099,17 @@ async function cmdContribute(chatId: number, userId: string, text: string, group
   try {
     await tg('sendMessage', { chat_id: chatId, text: `Contributing ${amount.toFixed(2)} ${TOKEN_SYMBOL} to group wallet...` });
     const result = await contributeToGroup(group, userId, amount, walletManager);
-    const { balance } = await getGroupBalance(group, walletManager);
+    const { balance: newGroupBalance } = await getGroupBalance(group, walletManager);
     await tg('sendMessage', {
       chat_id: chatId,
       text:
-        `Contribution complete!\n\n` +
+        `✅ Contribution Successful\n\n` +
+        `Group: ${group.name}\n` +
         `Amount: ${amount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
-        `Group balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
-        `TX: ${EXPLORER_BASE}/tx/${result.txHash}`,
+        `New Group Balance: ${parseFloat(newGroupBalance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+        `TX: \`${result.txHash}\`\n` +
+        `${EXPLORER_BASE}/tx/${result.txHash}`,
+      parse_mode: 'Markdown',
     });
   } catch (err: any) {
     await tg('sendMessage', { chat_id: chatId, text: `Contribution failed: ${err.message}` });

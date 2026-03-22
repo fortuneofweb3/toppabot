@@ -547,9 +547,23 @@ export async function startWhatsAppBot() {
         const { total, serviceFee } = calculateTotalPayment(orderData.productAmount);
         const orderId = generateOrderId();
 
+        // Use group wallet when payFrom === 'group'
+        const isGroupOrder = orderData.payFrom === 'group' && orderData.groupWalletId;
+        const walletId = isGroupOrder ? orderData.groupWalletId : userId;
+
+        let displayBalance = balance;
+        if (isGroupOrder) {
+          try {
+            const groupBal = await walletManager.getBalance(orderData.groupWalletId);
+            displayBalance = groupBal.balance;
+          } catch {
+            displayBalance = '0';
+          }
+        }
+
         await pendingOrders.create({
           orderId,
-          telegramId: userId,
+          telegramId: walletId,
           chatId: 0,
           action: orderData.action,
           description: orderData.description,
@@ -563,7 +577,8 @@ export async function startWhatsAppBot() {
           expiresAt: Date.now() + 10 * 60 * 1000,
         });
 
-        const orderMsg = `📋 Order Summary\n\n${orderData.description}\n\nAmount: ${orderData.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\nService Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\nTotal: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\nYour Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n\nReply YES to confirm, or NO to cancel.`;
+        const balanceLabel = isGroupOrder ? 'Group Balance' : 'Your Balance';
+        const orderMsg = `📋 Order Summary${isGroupOrder ? ' (Group Wallet)' : ''}\n\n${orderData.description}\n\nAmount: ${orderData.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\nService Fee (1.5%): ${serviceFee.toFixed(2)} ${TOKEN_SYMBOL}\nTotal: ${total.toFixed(2)} ${TOKEN_SYMBOL}\n\n${balanceLabel}: ${parseFloat(displayBalance).toFixed(2)} ${TOKEN_SYMBOL}\n\nReply YES to confirm, or NO to cancel.`;
 
         await sock.sendMessage(senderJid, { text: orderMsg });
       } else {
@@ -931,7 +946,13 @@ async function handleCommand(
         const result = await contributeToGroup(group, userId, cAmount, walletManager);
         const { balance: newGBal } = await getGroupBalance(group, walletManager);
         await sock.sendMessage(jid, {
-          text: `Contribution complete!\n\nAmount: ${cAmount.toFixed(2)} ${TOKEN_SYMBOL}\nGroup balance: ${parseFloat(newGBal).toFixed(2)} ${TOKEN_SYMBOL}\nTX: ${EXPLORER_BASE}/tx/${result.txHash}`
+          text:
+            `✅ Contribution Successful\n\n` +
+            `Group: ${group.name}\n` +
+            `Amount: ${cAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+            `New Group Balance: ${parseFloat(newGBal).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+            `TX: \`\`\`${result.txHash}\`\`\`\n` +
+            `${EXPLORER_BASE}/tx/${result.txHash}`
         });
       } catch (err: any) {
         await sock.sendMessage(jid, { text: `Contribution failed: ${err.message}` });
