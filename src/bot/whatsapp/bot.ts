@@ -19,7 +19,7 @@ import { IS_TESTNET, TOKEN_SYMBOL, CELO_CAIP2, EXPLORER_BASE } from '../../share
 import { saveConversation, clearConversationHistory } from '../../agent/memory';
 import { getFxRate } from '../../apis/reloadly';
 import { getAllBalances } from '../../blockchain/swap';
-import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, recordPollVote, getActivePolls, getPollById, closePoll, setPollingEnabled, getMostRecentActivePoll } from '../groups';
+import { enableGroup, getGroup, getUserGroups, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, recordPollVote, getActivePolls, getPollById, closePoll, setPollingEnabled, getMostRecentActivePoll } from '../groups';
 import { getUserScheduledTasks, getUserRecurringTasks, getScheduledTaskById, getRecurringTaskById, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
 import { recordGroupMsg, buildGroupContext as buildGroupCtx } from '../group-context';
 import { detectInjection } from '../../shared/sanitize';
@@ -788,6 +788,45 @@ async function handleCommand(
         await sock.sendMessage(jid, { text: '⚠️ For security, /export only works in private chats. Message me directly.' });
         return;
       }
+
+      const exportParts = text.split(/\s+/);
+      const exportSub = exportParts[1]?.toLowerCase();
+
+      if (exportSub === 'group') {
+        // /export group — list admin groups, or /export group <groupId>
+        const targetGroupId = exportParts[2];
+        if (targetGroupId) {
+          const grp = await getGroup(targetGroupId);
+          if (!grp || grp.adminUserId !== userId) {
+            await sock.sendMessage(jid, { text: 'Group not found or you are not the admin.' });
+            return;
+          }
+          try {
+            const gpk = await walletManager.exportPrivateKey(grp.walletId);
+            await sock.sendMessage(jid, {
+              text: `⚠️ GROUP WALLET KEY — ${grp.name}\n\n${gpk}\n\nAnyone with this key controls the group wallet.\nDelete this message after saving.`
+            });
+          } catch (err: any) {
+            await sock.sendMessage(jid, { text: '❌ Could not export group key.' });
+          }
+          return;
+        }
+        // List groups the user admins
+        const myGroups = await getUserGroups(userId);
+        const adminGrps = myGroups.filter(g => g.adminUserId === userId);
+        if (adminGrps.length === 0) {
+          await sock.sendMessage(jid, { text: 'You are not an admin of any group.' });
+          return;
+        }
+        let msg = `*Your Admin Groups*\n\nTo export a group key:\n/export group <groupId>\n\n`;
+        for (const g of adminGrps) {
+          msg += `${g.name}\nID: \`\`\`${g.groupId}\`\`\`\n\n`;
+        }
+        await sock.sendMessage(jid, { text: msg });
+        return;
+      }
+
+      // Default: export personal key
       try {
         const pk = await walletManager.exportPrivateKey(userId);
         await sock.sendMessage(jid, {

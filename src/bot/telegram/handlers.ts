@@ -13,7 +13,7 @@ import { reservePaymentHash } from '../../blockchain/replay-guard';
 import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../../shared/constants';
 import { invalidateReloadlyBalanceCache } from '../../shared/balance-cache';
 import { saveConversation } from '../../agent/memory';
-import { getGroup, isGroupAdmin } from '../groups';
+import { getGroup, isGroupAdmin, getUserGroups } from '../groups';
 import type { PendingOrder } from '../pending-orders';
 
 // Re-export shared service functions from service-executor
@@ -587,6 +587,71 @@ export async function handleCallback(
     if ((match = data.match(/^export_cancel_(\d+)$/))) {
       if (userId !== match[1]) { await answer('Unauthorized'); return; }
       await editMsg('Private key export cancelled.');
+      await answer();
+      return;
+    }
+
+    // ─── Group Key Export Warning ────────────────
+    if ((match = data.match(/^gexp_(.+)$/))) {
+      if (query.message?.chat.type !== 'private') {
+        await answer('Use this in a private chat for security.', true);
+        return;
+      }
+      const groupId = match[1];
+      const group = await getGroup(groupId);
+      if (!group || group.adminUserId !== userId) {
+        await answer('Only the group admin can export the group key.');
+        return;
+      }
+      await editMsg(
+        `⚠️ Export Group Wallet Key\n\n` +
+        `Group: ${group.name}\n\n` +
+        `This will reveal the group wallet's private key.\n` +
+        `Anyone with this key has full control of the group wallet funds.\n\n` +
+        `Only continue if you understand the risks.`,
+        {
+          reply_markup: { inline_keyboard: [
+            [{ text: 'Yes, show group key', callback_data: `gexpc_${groupId}` }],
+            [{ text: 'Cancel', callback_data: `gexpx_${userId}` }],
+          ]},
+        },
+      );
+      await answer();
+      return;
+    }
+
+    // ─── Group Key Export Confirm ────────────────
+    if ((match = data.match(/^gexpc_(.+)$/))) {
+      if (query.message?.chat.type !== 'private') {
+        await answer('Use this in a private chat for security.', true);
+        return;
+      }
+      const groupId = match[1];
+      const group = await getGroup(groupId);
+      if (!group || group.adminUserId !== userId) {
+        await answer('Unauthorized');
+        return;
+      }
+      try {
+        const privateKey = await walletManager.exportPrivateKey(group.walletId);
+        await editMsg(
+          `🔑 ${group.name} — Group Wallet Key\n\n` +
+          `${privateKey}\n\n` +
+          `WARNING: Anyone with this key controls the group wallet. Never share it.\n` +
+          `Delete this message after saving your key.`,
+        );
+      } catch (error: any) {
+        console.error('[Group Export Error]', error.message);
+        await editMsg('❌ Failed to export group key. Please try again.');
+      }
+      await answer();
+      return;
+    }
+
+    // ─── Group Key Export Cancel ─────────────────
+    if ((match = data.match(/^gexpx_(\d+)$/))) {
+      if (userId !== match[1]) { await answer('Unauthorized'); return; }
+      await editMsg('Group key export cancelled.');
       await answer();
       return;
     }

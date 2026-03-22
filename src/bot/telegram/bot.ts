@@ -17,7 +17,7 @@ import { trackActivity, setProactiveEnabled, getUserActivity } from '../../agent
 import { getUserGoals } from '../../agent/goals';
 import { getFxRate } from '../../apis/reloadly';
 import { startSellOrderPoller, stopSellOrderPoller } from '../sell-order-poller';
-import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, setPollMessageInfo, getPollByTgPollId, getPollById, recordPollVote, closePoll, setPollingEnabled, getMostRecentActivePoll, getActivePolls } from '../groups';
+import { enableGroup, getGroup, getUserGroups, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, setPollMessageInfo, getPollByTgPollId, getPollById, recordPollVote, closePoll, setPollingEnabled, getMostRecentActivePoll, getActivePolls } from '../groups';
 import { recordGroupMsg, buildGroupContext as buildGroupCtx, UserRateLimit, RATE_LIMIT_WINDOW, MAX_REQUESTS_PER_WINDOW, DAILY_SPENDING_LIMIT, VERIFIED_SPENDING_LIMIT, SPENDING_RESET_WINDOW } from '../group-context';
 import { getDailySpendingLimit, createVerificationSession, getUserVerificationStatus, formatVerificationMessage, formatAlreadyVerifiedMessage, VERIFIED_DAILY_LIMIT } from '../../blockchain/self-verification';
 
@@ -404,7 +404,8 @@ async function cmdHelp(chatId: number, isGroupChat = false) {
     `/wallet - Check balance & deposit address\n` +
     `/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n` +
     `/rate <country> - Check FX rate (e.g. /rate NG)\n` +
-    `/settings - Wallet settings & export key\n` +
+    `/settings - Wallet settings\n` +
+    `/export - Export private key (DM only)\n` +
     `/status - Your profile, instructions & tasks\n` +
     `/silent - Toggle proactive messages on/off\n` +
     `/clear - Clear conversation memory\n` +
@@ -489,16 +490,28 @@ async function cmdSettings(chatId: number, userId: string, chatType: string) {
   const settings = await userSettingsStore.get(userId);
   const autoReviewStatus = settings.autoReviewEnabled ? 'ON ✅' : 'OFF ❌';
 
+  const buttons: any[][] = [
+    [{ text: `⭐ Auto-Review: ${autoReviewStatus}`, callback_data: `toggle_autoreview_${userId}` }],
+    [{ text: '🔑 Export Personal Key', callback_data: `export_warning_${userId}` }],
+  ];
+
+  // Show group key export if user is admin of any group
+  const userGroups = await getUserGroups(userId);
+  const adminGroups = userGroups.filter(g => g.adminUserId === userId);
+  for (const g of adminGroups) {
+    buttons.push([{ text: `🔑 Export ${g.name} Group Key`, callback_data: `gexp_${g.groupId}` }]);
+  }
+
+  buttons.push(
+    [{ text: '📊 Transaction History', callback_data: `history_${userId}` }],
+    [{ text: '💰 Check Balance', callback_data: `balance_${userId}` }],
+    [{ text: '❌ Close', callback_data: `settings_close_${userId}` }],
+  );
+
   await tg('sendMessage', {
     chat_id: chatId,
     text: `⚙️ Wallet Settings\n\nChoose an option:`,
-    reply_markup: { inline_keyboard: [
-      [{ text: `⭐ Auto-Review: ${autoReviewStatus}`, callback_data: `toggle_autoreview_${userId}` }],
-      [{ text: '🔑 Export Private Key', callback_data: `export_warning_${userId}` }],
-      [{ text: '📊 Transaction History', callback_data: `history_${userId}` }],
-      [{ text: '💰 Check Balance', callback_data: `balance_${userId}` }],
-      [{ text: '❌ Close', callback_data: `settings_close_${userId}` }],
-    ]},
+    reply_markup: { inline_keyboard: buttons },
   });
 }
 
@@ -589,10 +602,29 @@ async function cmdStatus(chatId: number, userId: string) {
   await tg('sendMessage', { chat_id: chatId, text: msg });
 }
 
-async function cmdExport(chatId: number) {
+async function cmdExport(chatId: number, userId: string, chatType: string) {
+  if (chatType !== 'private') {
+    await tg('sendMessage', { chat_id: chatId, text: 'For security, use /export in a private chat with me.' });
+    return;
+  }
+
+  const buttons: any[][] = [
+    [{ text: '🔑 Export Personal Key', callback_data: `export_warning_${userId}` }],
+  ];
+
+  // Show group key export if user is admin of any group
+  const userGroups = await getUserGroups(userId);
+  const adminGroups = userGroups.filter(g => g.adminUserId === userId);
+  for (const g of adminGroups) {
+    buttons.push([{ text: `🔑 Export ${g.name} Group Key`, callback_data: `gexp_${g.groupId}` }]);
+  }
+
+  buttons.push([{ text: '❌ Cancel', callback_data: `export_cancel_${userId}` }]);
+
   await tg('sendMessage', {
     chat_id: chatId,
-    text: `To export your private key, use /settings\n\nThis must be done in a private chat for security.`,
+    text: `🔑 Export Private Key\n\nChoose which key to export:`,
+    reply_markup: { inline_keyboard: buttons },
   });
 }
 
@@ -1657,7 +1689,7 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
           case 'clear': return cmdClear(chatId, userId);
           case 'silent': return cmdSilent(chatId, userId);
           case 'status': return cmdStatus(chatId, userId);
-          case 'export': return cmdExport(chatId);
+          case 'export': return cmdExport(chatId, userId, chatType);
           case 'verify': return cmdVerify(chatId, userId);
           // Group commands
           case 'group': return cmdGroup(chatId, userId, text, groupId);
