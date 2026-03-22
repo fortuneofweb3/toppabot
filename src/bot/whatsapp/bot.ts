@@ -247,7 +247,6 @@ export async function startWhatsAppBot() {
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
     logger: pino({ level: 'silent' }) as any
   });
 
@@ -257,7 +256,8 @@ export async function startWhatsAppBot() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📱 Scan the QR code with WhatsApp to connect Toppa.\n');
+      console.log('\n📱 Scan this QR code with WhatsApp to connect Toppa:\n');
+      (QRCode as any).generate(qr, { small: true });
     }
 
     if (connection === 'close') {
