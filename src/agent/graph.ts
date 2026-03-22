@@ -73,10 +73,7 @@ Tool results are already formatted with names, prices, and local amounts. Presen
 CURRENCY: All amounts in cUSD. Show cUSD first, local equivalent in parentheses: "0.30 cUSD (~500 NGN)". Use "cUSD" not "$".
 NEVER do manual currency math — always call convert_currency for exchange rates.
 
-PAID SERVICES: Call the tool directly — the system handles payment flow. For order_confirmation JSON:
-  Airtime/Data: {"type":"order_confirmation","action":"airtime","description":"...","productAmount":5.00,"toolName":"send_airtime","toolArgs":{"phone":"+...","countryCode":"XX","amount":5.00}}
-  Gift card: {"type":"order_confirmation","action":"gift_card","description":"...","productAmount":10.00,"toolName":"buy_gift_card","toolArgs":{"productId":123,"unitPrice":10.00,"recipientEmail":"...","quantity":1}}
-  Bill: {"type":"order_confirmation","action":"bill","description":"...","productAmount":20.00,"toolName":"pay_bill","toolArgs":{"billerId":456,"accountNumber":"...","amount":20.00}}
+PAID SERVICES: Just call the tool (send_airtime, send_data, pay_bill, buy_gift_card) with the right arguments. The system automatically handles payment confirmation — do NOT generate order_confirmation JSON yourself. Never include operatorId in your text — the tool validates it server-side.
 Gift card toolArgs use "unitPrice" NOT "amount". All amounts in cUSD. One order at a time.
 
 BILLS: Call get_billers once with the relevant type (ELECTRICITY_BILL_PAYMENT, TV_BILL_PAYMENT, WATER_BILL_PAYMENT, INTERNET_BILL_PAYMENT). If it returns empty or no billers, tell the user that service isn't available for their country — do NOT retry with different types or loop. Move on.
@@ -412,22 +409,10 @@ function buildGraph(
     const toolNames = toolCalls.map((tc: any) => tc.name).join(', ') || 'none';
     console.log(`[Agent] iter=${iteration} tools=[${toolNames}] text=${textLen}chars`);
 
-    // Check if LLM generated order_confirmation as text alongside tool calls
-    if (useShortCircuit && toolCalls.length > 0 && typeof aiMessage.content === 'string' && aiMessage.content.trim()) {
-      try {
-        const parsed = JSON.parse(aiMessage.content.trim());
-        if (parsed?.type === 'order_confirmation') {
-          console.log(`[Agent] Short-circuit: extracted order_confirmation from text content`);
-          return {
-            messages: [aiMessage],
-            shortCircuitResponse: aiMessage.content.trim(),
-            iterations: iteration + 1,
-          };
-        }
-      } catch {
-        // Not pure JSON — continue normally
-      }
-    }
+    // NOTE: We intentionally do NOT short-circuit on LLM-generated order_confirmation text.
+    // The LLM must call tools → tools validate server-side → checkPaymentShortCircuit creates
+    // the order_confirmation from validated tool results. Letting the LLM generate its own
+    // order_confirmation bypasses all validation and causes hallucinated operatorIds.
 
     return {
       messages: [aiMessage],
@@ -608,6 +593,22 @@ export async function runToppaAgent(
 
   if (!finalResponse) {
     finalResponse = "Sorry, I couldn't complete that. Please try again.";
+  }
+
+  // Safety: if the LLM generated order_confirmation JSON directly (bypassing tools),
+  // strip it — only checkPaymentShortCircuit should produce order_confirmation.
+  if (!result.shortCircuitResponse && finalResponse.includes('"order_confirmation"')) {
+    try {
+      const parsed = JSON.parse(finalResponse.trim());
+      if (parsed?.type === 'order_confirmation') {
+        console.warn('[Agent] Blocked LLM-generated order_confirmation (bypassed tool validation)');
+        finalResponse = "Let me process that properly. One moment...";
+        // The LLM tried to skip validation — this shouldn't happen with the updated prompt,
+        // but if it does, the user can retry and the tool will handle it correctly.
+      }
+    } catch {
+      // Not pure JSON — leave it alone
+    }
   }
 
   // Post-response fidelity check: catch LLM misreading tool results

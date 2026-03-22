@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, getAggregateVotesInPollMessage, downloadMediaMessage, proto } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, getAggregateVotesInPollMessage, downloadMediaMessage, proto, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import * as QRCode from 'qrcode-terminal';
@@ -245,9 +245,22 @@ async function sendLongMessage(sock: any, jid: string, text: string) {
 export async function startWhatsAppBot() {
   const { state, saveCreds } = await useMultiFileAuthState('wa_auth_info');
 
+  // Fetch the correct WhatsApp Web version — stale versions cause 405 errors
+  let waVersion: [number, number, number] | undefined;
+  try {
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    waVersion = version;
+    console.log(`[WhatsApp] Using WA version ${version.join('.')} (latest: ${isLatest})`);
+  } catch (err: any) {
+    console.warn(`[WhatsApp] Could not fetch latest version: ${err.message}, using default`);
+  }
+
   const sock = makeWASocket({
     auth: state,
-    logger: pino({ level: 'silent' }) as any
+    printQRInTerminal: true,
+    ...(waVersion ? { version: waVersion } : {}),
+    browser: ['Toppa', 'Chrome', '22.0'],
+    logger: pino({ level: process.env.WA_DEBUG ? 'debug' : 'silent' }) as any,
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -261,15 +274,22 @@ export async function startWhatsAppBot() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('[WhatsApp] Connection closed:', lastDisconnect?.error?.message || 'unknown');
+      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      console.log(`[WhatsApp] Connection closed: ${lastDisconnect?.error?.message || 'unknown'} (code: ${statusCode || 'none'})`);
+
       if (shouldReconnect) {
+        // Cap reconnect attempts — don't loop forever if WhatsApp is unreachable
+        if (reconnectAttempts >= 10) {
+          console.error('[WhatsApp] Too many reconnect attempts. Giving up. Restart the bot to try again.');
+          return;
+        }
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
         reconnectAttempts++;
-        console.log(`[WhatsApp] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})...`);
+        console.log(`[WhatsApp] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts}/10)...`);
         setTimeout(() => startWhatsAppBot(), delay);
       } else {
-        console.log('[WhatsApp] Logged out — not reconnecting. Re-scan QR to reconnect.');
+        console.log('[WhatsApp] Logged out — not reconnecting. Delete wa_auth_info/ and restart to re-scan QR.');
       }
     } else if (connection === 'open') {
       reconnectAttempts = 0;

@@ -242,27 +242,66 @@ export const payBillTool: Tool = {
     billerId: z.number().describe("Biller ID from get_billers"),
     accountNumber: z.string().describe("Meter/smartcard/account number"),
     amount: z.number().describe("Amount in cUSD"),
+    countryCode: z.string().describe("Country ISO code"),
   }),
-  func: async ({ billerId, accountNumber, amount }, ctx) => {
-    // Server-side: validate billerId exists using the user's known country
+  func: async ({ billerId, accountNumber, amount, countryCode }, ctx) => {
+    countryCode = sanitizeCountryCode(countryCode);
+
+    // Server-side: validate billerId exists in the country
     let billerName: string | undefined;
-    if (ctx) {
-      try {
-        const { getUserActivity } = await import('./user-activity');
-        const activity = await getUserActivity(ctx.userId);
-        if (activity?.country) {
-          const cc = activity.country;
-          const billers = await getBillers({ countryCode: cc });
-          const match = billers.find(b => b.id === billerId);
-          if (match) {
-            billerName = match.name;
-          } else {
-            console.warn(`[pay_bill] billerId ${billerId} not found in ${cc}`);
+    let validatedCountry = countryCode;
+    try {
+      const billers = await getBillers({ countryCode });
+      const match = billers.find(b => b.id === billerId);
+      if (!match) {
+        // Try user's known country as fallback
+        let fallbackMatch: any = null;
+        if (ctx) {
+          const { getUserActivity } = await import('./user-activity');
+          const activity = await getUserActivity(ctx.userId);
+          if (activity?.country && activity.country !== countryCode) {
+            const fallbackBillers = await getBillers({ countryCode: activity.country });
+            fallbackMatch = fallbackBillers.find(b => b.id === billerId);
+            if (fallbackMatch) {
+              validatedCountry = activity.country;
+            }
           }
         }
-      } catch (e: any) {
-        console.warn(`[pay_bill] biller validation failed: ${e.message}`);
+        if (!fallbackMatch) {
+          return JSON.stringify({ status: 'error', error: `Biller ID ${billerId} not found in ${countryCode}. Use get_billers to find valid billers.` });
+        }
+        billerName = fallbackMatch.name;
+        // Validate amount against biller limits
+        const minCUSD = fallbackMatch.internationalAmountSupported
+          ? fallbackMatch.minInternationalTransactionAmount
+          : Math.round((fallbackMatch.minLocalTransactionAmount / (fallbackMatch.fx?.rate || 1)) * 100) / 100;
+        const maxCUSD = fallbackMatch.internationalAmountSupported
+          ? fallbackMatch.maxInternationalTransactionAmount
+          : Math.round((fallbackMatch.maxLocalTransactionAmount / (fallbackMatch.fx?.rate || 1)) * 100) / 100;
+        if (minCUSD && amount < minCUSD) {
+          return JSON.stringify({ status: 'error', error: `${billerName} requires at least ${minCUSD.toFixed(2)} cUSD. You requested ${amount.toFixed(2)} cUSD.` });
+        }
+        if (maxCUSD && amount > maxCUSD) {
+          return JSON.stringify({ status: 'error', error: `${billerName} allows max ${maxCUSD.toFixed(2)} cUSD. You requested ${amount.toFixed(2)} cUSD.` });
+        }
+      } else {
+        billerName = match.name;
+        // Validate amount against biller limits
+        const minCUSD = match.internationalAmountSupported
+          ? match.minInternationalTransactionAmount
+          : Math.round((match.minLocalTransactionAmount / (match.fx?.rate || 1)) * 100) / 100;
+        const maxCUSD = match.internationalAmountSupported
+          ? match.maxInternationalTransactionAmount
+          : Math.round((match.maxLocalTransactionAmount / (match.fx?.rate || 1)) * 100) / 100;
+        if (minCUSD && amount < minCUSD) {
+          return JSON.stringify({ status: 'error', error: `${billerName} requires at least ${minCUSD.toFixed(2)} cUSD. You requested ${amount.toFixed(2)} cUSD.` });
+        }
+        if (maxCUSD && amount > maxCUSD) {
+          return JSON.stringify({ status: 'error', error: `${billerName} allows max ${maxCUSD.toFixed(2)} cUSD. You requested ${amount.toFixed(2)} cUSD.` });
+        }
       }
+    } catch (e: any) {
+      return JSON.stringify({ status: 'error', error: `Could not validate biller: ${e.message}` });
     }
 
     const { total } = calculateTotalPayment(amount);
@@ -273,7 +312,7 @@ export const payBillTool: Tool = {
       totalWithFee: total,
       currency: 'cUSD',
       billerName,
-      details: { billerId, accountNumber, amount, useLocalAmount: false },
+      details: { billerId, accountNumber, amount, countryCode: validatedCountry, useLocalAmount: false },
       message: `Bill payment requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },

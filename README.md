@@ -2,7 +2,7 @@
 
 > AI agent for digital goods and utility payments across 170+ countries, powered by Celo.
 
-**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | [WhatsApp](https://wa.me/YOUR_NUMBER) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa) · [Self Agent ID](https://app.ai.self.xyz)
+**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | WhatsApp (self-hosted — see setup below) | **See it:** [toppa.cc](https://toppa.cc) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa) · [Self Agent ID](https://app.ai.self.xyz)
 
 ## What Toppa Does
 

@@ -104,21 +104,32 @@ export async function executeServiceTool(
     }
 
     case 'pay_bill': {
-      // Server-side: validate billerId exists
-      if (args.billerId) {
-        try {
-          // getBillers doesn't filter by ID, but we can at least verify the country has billers
-          const billers = await getBillers({ countryCode: args.countryCode || 'NG' });
-          const match = billers.find((b: any) => b.id === args.billerId);
-          if (!match) {
-            console.warn(`[Validate] pay_bill: billerId ${args.billerId} not found — proceeding (may be in different country)`);
-          } else {
-            console.log(`[Validate] pay_bill: billerId ${args.billerId} confirmed as ${match.name}`);
-          }
-        } catch (e: any) {
-          console.warn(`[Validate] pay_bill: biller validation failed: ${e.message}`);
-        }
+      // Server-side: validate billerId exists and amount is within range
+      if (!args.billerId) throw new Error('Missing billerId');
+      if (!args.countryCode) throw new Error('Missing countryCode for bill payment');
+
+      const billers = await getBillers({ countryCode: args.countryCode });
+      const match = billers.find((b: any) => b.id === args.billerId);
+      if (!match) {
+        throw new Error(`Biller ${args.billerId} not found in ${args.countryCode}. Use get_billers to find valid billers.`);
       }
+      console.log(`[Validate] pay_bill: billerId ${args.billerId} confirmed as ${match.name}`);
+
+      // Validate amount against biller's allowed range
+      const fxRate = match.fx?.rate || 1;
+      const minCUSD = match.internationalAmountSupported
+        ? match.minInternationalTransactionAmount
+        : Math.round((match.minLocalTransactionAmount / fxRate) * 100) / 100;
+      const maxCUSD = match.internationalAmountSupported
+        ? match.maxInternationalTransactionAmount
+        : Math.round((match.maxLocalTransactionAmount / fxRate) * 100) / 100;
+      if (minCUSD && args.amount < minCUSD) {
+        throw new Error(`${match.name} requires at least ${minCUSD.toFixed(2)} cUSD. You requested ${args.amount.toFixed(2)} cUSD.`);
+      }
+      if (maxCUSD && args.amount > maxCUSD) {
+        throw new Error(`${match.name} allows max ${maxCUSD.toFixed(2)} cUSD. You requested ${args.amount.toFixed(2)} cUSD.`);
+      }
+
       return payReloadlyBill(args as any);
     }
 
