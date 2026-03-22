@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "skills": {
+    "bridging": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "9d7d6374b3e41398604c456da1879300e1da8b9485563baed1d9d9e126874313"
+    },
+    "celo-composer": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "bbc4088e682cda4b3a650dca08ae941d8cd57305b240004b94823e7e98beecfa"
+    },
+    "celo-defi": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "52cd8d45345c1c1524494c891835f9409a0ce45b5b4595a039a04bd0ed13305f"
+    },
+    "celo-rpc": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "eb2649cec63982a82a486787d3d8ef50df58579e04b5bb89f909b0b67a8c178d"
+    },
+    "celo-stablecoins": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "beaf70ec6f1f603ec2aa6583779738eede60a4ca5218cd12a1213c0ce5f64864"
+    },
+    "configurator": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "251add1c645e4a3063a9f359b25c8da8fa31dc46be9a122dab253644f778cf45"
+    },
+    "contract-verification": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "48e2cabe6343fc9894de4f7f397e4fba14d3b6418ae5195c79ee426f41ea6624"
+    },
+    "deployer": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "73b54e9f79855c470fb2e8ea61ff21fab631e19d011c6fdedc27a41fc0c98f8d"
+    },
+    "evm-foundry": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "c34a14df75353a4b5b1680e884557c314301acf7f25fce26b3872b50818dd60d"
+    },
+    "evm-hardhat": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "7cf40288eb4135f185040bc04a0251188c8a19cad4b39e6f4f650a4d1b1e7aac"
+    },
+    "evm-wallet-integration": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "d8109114958c355ef3a2b9176f61c340ebf3133456f89b7178396dc5ec00813a"
+    },
+    "fee-abstraction": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "9aead9244c8e5ffc15f8687b88caa66db78a2b47ea5655a94494419b3128e86e"
+    },
+    "liquidity-planner": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "42facfb96be928b35effd960093b1b05ee34c9e5254ed3a2086bf25b4d379cae"
+    },
+    "minipay-integration": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "a1423fc1359ac0ddf965a9899def88caf420fdcd0804ad06e538ac1913f5ab07"
+    },
+    "pay-with-any-token": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "40b33a7fa9ce9b30fb366e334e28cba5a7d658e9ff02abb6f26bf5033d576579"
+    },
+    "swap-integration": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "3175d202669303732d7147934faedb4a81744e23e5db7c72fae61c2e7bfd7d2c"
+    },
+    "swap-planner": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "976029b4d6ffd2406ba2187e9401017535f88ab444d97e52f1f5b001d8d93b23"
+    },
+    "thirdweb": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "c47d29e50b96dc1d19e280b92766c98546aa054f914856e89686e721ee032dc9"
+    },
+    "v4-security-foundations": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "f4d5741e07fcb5e0efabb7700a44e8102b646645b3da2583b823acc9538acf61"
+    },
+    "viem": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "f9e5001573f9d5315738504855d670df50a2e3be9b02f0ff895e730b71740ec7"
+    },
+    "viem-integration": {
+      "source": "Uniswap/uniswap-ai",
+      "sourceType": "github",
+      "computedHash": "d4ed32df4663a883755039b76f64a85a9a1e4aab0e827ab477ae566c556b4bb6"
+    },
+    "wagmi": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "e182d13d7d9cd1b1364b8faaf9f823e82547abecee7c218c1add815e737dced4"
+    },
+    "x402": {
+      "source": "celo-org/agent-skills",
+      "sourceType": "github",
+      "computedHash": "a110636b878b88a0d16c93ce5b640002a091f2d91fd58873222ba56a341ee0a1"
+    }
+  }
+}

@@ -63,6 +63,11 @@ TELEGRAM_UX_ENHANCEMENTS.md
 architecture_analysis.md
 docs/security/
 
+# Claude Code
+.claude/
+.continue/
+
 # Temp files
 temp/
 tmp/
+tmp-celo-test/

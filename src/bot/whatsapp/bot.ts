@@ -127,7 +127,7 @@ const RATE_LIMIT_WINDOW = 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = 20;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
-function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
+async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reason?: string }> {
   const now = Date.now();
   let userLimit = userRateLimits.get(userId);
 
@@ -359,7 +359,7 @@ export async function startWhatsAppBot() {
     }
 
     // Rate limit check
-    const rateLimitCheck = checkRateLimit(userId);
+    const rateLimitCheck = await checkRateLimit(userId);
     if (!rateLimitCheck.allowed) {
       await sock.sendMessage(senderJid, { text: rateLimitCheck.reason! }).catch(() => {});
       return;
