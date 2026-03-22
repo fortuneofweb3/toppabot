@@ -117,22 +117,34 @@ async function getToken(product: 'airtime' | 'utilities' | 'giftcards'): Promise
 
 /**
  * Retry wrapper with exponential backoff for transient failures.
- * Retries on: network errors, timeouts, 429, 500, 502, 503, 504.
- * Does NOT retry on: 400, 401, 403, 404 (client errors).
+ *
+ * For GET requests (isTransaction=false): retries on network errors, timeouts, 429, 5xx.
+ * For POST transactions (isTransaction=true): only retries on 401 (token expired) and 429
+ *   (rate limited) — these clearly mean "not processed". Does NOT retry on timeout/network
+ *   errors because we can't tell if Reloadly processed the request before the connection
+ *   dropped. Retrying would risk double-delivery.
  */
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2, isTransaction = false): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (error: any) {
       const isLastAttempt = attempt === maxRetries;
-      const isRetryable = (
-        error.name === 'AbortError' ||
-        error.name === 'FetchError' ||
-        error.code === 'ECONNRESET' ||
-        error.code === 'ETIMEDOUT' ||
-        (error instanceof ReloadlyError && [401, 429, 500, 502, 503, 504].includes(error.httpStatus))
-      );
+
+      let isRetryable: boolean;
+      if (isTransaction) {
+        // Transactions: only retry on auth/rate-limit (clearly not processed)
+        isRetryable = (error instanceof ReloadlyError && [401, 429].includes(error.httpStatus));
+      } else {
+        // Reads: retry on network errors, timeouts, and server errors
+        isRetryable = (
+          error.name === 'AbortError' ||
+          error.name === 'FetchError' ||
+          error.code === 'ECONNRESET' ||
+          error.code === 'ETIMEDOUT' ||
+          (error instanceof ReloadlyError && [401, 429, 500, 502, 503, 504].includes(error.httpStatus))
+        );
+      }
 
       if (isLastAttempt || !isRetryable) throw error;
 
@@ -165,6 +177,8 @@ async function reloadlyRequest<T>(
   body?: any,
 ): Promise<T> {
   const { baseUrl, accept } = PRODUCT_CONFIG[product];
+  // POST requests with customIdentifier are transactions — restrict retries
+  const isTransaction = method === 'POST' && body?.customIdentifier;
 
   return withRetry(async () => {
     const token = await getToken(product);
@@ -188,14 +202,6 @@ async function reloadlyRequest<T>(
     if (!response.ok) {
       try {
         const err = await response.json();
-
-        // "customIdentifier already used" means a previous attempt succeeded.
-        // Treat it as a success — the service was delivered on the earlier try.
-        if (response.status === 400 && err?.message?.includes('already been used')) {
-          console.log(`[Reloadly] customIdentifier already used — previous attempt succeeded (idempotent OK)`);
-          return { status: 'SUCCESSFUL', customIdentifier: body?.customIdentifier, idempotent: true } as T;
-        }
-
         throw parseReloadlyError(response.status, err);
       } catch (e) {
         if (e instanceof ReloadlyError) throw e;
@@ -204,7 +210,7 @@ async function reloadlyRequest<T>(
     }
 
     return response.json() as Promise<T>;
-  });
+  }, 2, !!isTransaction);
 }
 
 // Convenience aliases
