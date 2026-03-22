@@ -244,9 +244,11 @@ function checkPaymentShortCircuit(
         } else if (parsed.service === 'send_data') {
           description = `Send ${parsed.productAmount} cUSD data to ${d.phone}${opName}`;
         } else if (parsed.service === 'pay_bill') {
-          description = `Pay ${parsed.productAmount} cUSD bill for account ${d.accountNumber}`;
+          const billerLabel = parsed.billerName ? ` (${parsed.billerName})` : '';
+          description = `Pay ${parsed.productAmount} cUSD bill for account ${d.accountNumber}${billerLabel}`;
         } else if (parsed.service === 'buy_gift_card') {
-          description = `Buy ${parsed.productAmount} cUSD gift card`;
+          const gcLabel = parsed.productName || 'gift card';
+          description = `Buy ${parsed.productAmount} cUSD ${gcLabel}`;
         } else {
           description = parsed.message?.split('.')[0] || `${action} service`;
         }

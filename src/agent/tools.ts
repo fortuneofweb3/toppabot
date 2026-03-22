@@ -4,7 +4,7 @@ import {
   getDataOperators,
   detectOperator,
   getBillers,
-  getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode,
+  getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode, getGiftCardProduct,
   getCountryServices, getPromotions,
   getFxRate,
 } from "../apis/reloadly";
@@ -104,15 +104,17 @@ export const sendAirtimeTool: Tool = {
     phone = sanitizePhone(phone);
     countryCode = sanitizeCountryCode(countryCode);
 
-    // Validate amount against operator constraints before generating payment
+    // Server-side: always auto-detect operator from phone — never trust LLM
     let operatorName: string | undefined;
+    let operatorId: number | undefined;
     try {
       const operator = await detectOperator(phone, countryCode);
       operatorName = operator.name;
+      operatorId = operator.operatorId;
       const amountError = validateOperatorAmount(operator, amount);
       if (amountError) return JSON.stringify({ status: 'error', error: amountError });
     } catch (e: any) {
-      // If operator detection fails, let it proceed — Reloadly will catch it later
+      return JSON.stringify({ status: 'error', error: `Could not detect operator for ${phone} in ${countryCode}. Check the phone number and country.` });
     }
 
     const { total } = calculateTotalPayment(amount);
@@ -123,7 +125,7 @@ export const sendAirtimeTool: Tool = {
       totalWithFee: total,
       currency: 'cUSD',
       operatorName,
-      details: { phone, countryCode, amount, useLocalAmount: false },
+      details: { phone, countryCode, amount, operatorId, useLocalAmount: false },
       message: `Airtime top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -192,7 +194,7 @@ export const sendDataTool: Tool = {
     phone = sanitizePhone(phone);
     countryCode = sanitizeCountryCode(countryCode);
 
-    // Validate operatorId belongs to this country and check amount constraints
+    // Server-side: validate operatorId belongs to this country, fallback to auto-detect
     let operatorName: string | undefined;
     let validatedOperatorId = operatorId;
     try {
@@ -212,7 +214,7 @@ export const sendDataTool: Tool = {
         if (amountError) return JSON.stringify({ status: 'error', error: amountError });
       }
     } catch (e: any) {
-      // If operator lookup fails, let it proceed with original operatorId
+      return JSON.stringify({ status: 'error', error: `Could not validate operator for ${phone} in ${countryCode}. Check the phone number and country.` });
     }
 
     const { total } = calculateTotalPayment(amount);
@@ -241,7 +243,28 @@ export const payBillTool: Tool = {
     accountNumber: z.string().describe("Meter/smartcard/account number"),
     amount: z.number().describe("Amount in cUSD"),
   }),
-  func: async ({ billerId, accountNumber, amount }) => {
+  func: async ({ billerId, accountNumber, amount }, ctx) => {
+    // Server-side: validate billerId exists using the user's known country
+    let billerName: string | undefined;
+    if (ctx) {
+      try {
+        const { getUserActivity } = await import('./user-activity');
+        const activity = await getUserActivity(ctx.userId);
+        if (activity?.country) {
+          const cc = activity.country;
+          const billers = await getBillers({ countryCode: cc });
+          const match = billers.find(b => b.id === billerId);
+          if (match) {
+            billerName = match.name;
+          } else {
+            console.warn(`[pay_bill] billerId ${billerId} not found in ${cc}`);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[pay_bill] biller validation failed: ${e.message}`);
+      }
+    }
+
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -249,6 +272,7 @@ export const payBillTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
+      billerName,
       details: { billerId, accountNumber, amount, useLocalAmount: false },
       message: `Bill payment requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
@@ -377,14 +401,45 @@ export const buyGiftCardTool: Tool = {
     recipientUserId: z.string().optional().nullable().describe("In groups: Telegram/WhatsApp user ID of the gift card recipient. Omit for general/giveaway."),
   }),
   func: async ({ productId, amount, recipientEmail, quantity, recipientUserId }) => {
-    const { total } = calculateTotalPayment(amount);
+    // Server-side: validate productId exists and amount is valid
+    let productName: string | undefined;
+    let validatedAmount = amount;
+    try {
+      const product = await getGiftCardProduct(productId);
+      if (!product) {
+        return JSON.stringify({ status: 'error', error: `Gift card product ${productId} not found. Use search_gift_cards to find valid products.` });
+      }
+      productName = product.productName;
+
+      if (product.denominationType === 'FIXED') {
+        const fixedAmounts = product.fixedSenderDenominations || [];
+        if (fixedAmounts.length > 0 && !fixedAmounts.includes(amount)) {
+          const closest = fixedAmounts.reduce((prev: number, curr: number) =>
+            Math.abs(curr - amount) < Math.abs(prev - amount) ? curr : prev
+          );
+          console.warn(`[buy_gift_card] ${amount} cUSD not in fixed amounts for ${productName}, using closest: ${closest}`);
+          validatedAmount = closest;
+        }
+      } else if (product.denominationType === 'RANGE') {
+        const min = product.minSenderDenomination || 0;
+        const max = product.maxSenderDenomination || Infinity;
+        if (amount < min || amount > max) {
+          return JSON.stringify({ status: 'error', error: `Amount ${amount} cUSD is outside the range ${min}-${max} cUSD for ${productName}.` });
+        }
+      }
+    } catch (e: any) {
+      return JSON.stringify({ status: 'error', error: `Could not validate gift card product: ${e.message}` });
+    }
+
+    const { total } = calculateTotalPayment(validatedAmount);
     return JSON.stringify({
       status: 'payment_required',
       service: 'buy_gift_card',
-      productAmount: amount,
+      productAmount: validatedAmount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { productId, unitPrice: amount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
+      productName,
+      details: { productId, unitPrice: validatedAmount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
