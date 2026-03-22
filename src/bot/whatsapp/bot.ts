@@ -20,7 +20,7 @@ import { saveConversation, clearConversationHistory } from '../../agent/memory';
 import { getFxRate } from '../../apis/reloadly';
 import { getAllBalances } from '../../blockchain/swap';
 import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, recordPollVote, getActivePolls, getPollById, closePoll, setPollingEnabled, getMostRecentActivePoll } from '../groups';
-import { getScheduledTasksByChatId, getRecurringTasksByChatId, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
+import { getUserScheduledTasks, getUserRecurringTasks, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
 import { recordGroupMsg, buildGroupContext as buildGroupCtx } from '../group-context';
 import { detectInjection } from '../../shared/sanitize';
 
@@ -392,7 +392,15 @@ export async function startWhatsAppBot() {
       }
 
       // ── Pending order confirmation ────────────────────
-      const activeOrder = await pendingOrders.getByUser(userId);
+      let activeOrder = await pendingOrders.getByUser(userId);
+
+      // Also check for group orders — admin can confirm group wallet spends
+      if (!activeOrder && groupId) {
+        const grp = await getGroup(groupId);
+        if (grp && isGroupAdmin(grp, userId)) {
+          activeOrder = await pendingOrders.getByUser(grp.walletId);
+        }
+      }
 
       // Stale order recovery — if a processing order is >1 min old, mark it failed
       if (activeOrder?.status === 'processing') {
@@ -415,7 +423,15 @@ export async function startWhatsAppBot() {
         const lowerText = text.trim().toLowerCase();
 
         if (['yes', 'y', '1', 'confirm'].includes(lowerText)) {
-          await processOrderConfirmation(sock, senderJid, userId, address, balance, activeOrder);
+          // For group orders, use group wallet balance instead of personal
+          const isGroupOrder = activeOrder.telegramId.startsWith('group_');
+          const orderBalance = isGroupOrder
+            ? (await walletManager.getBalance(activeOrder.telegramId)).balance
+            : balance;
+          const orderAddress = isGroupOrder
+            ? (await walletManager.getBalance(activeOrder.telegramId)).address
+            : address;
+          await processOrderConfirmation(sock, senderJid, userId, orderAddress, orderBalance, activeOrder);
           return;
         } else if (['no', 'n', '2', 'cancel'].includes(lowerText)) {
           await pendingOrders.atomicTransition(activeOrder.orderId, ['pending_confirmation', 'pending_payment'], 'cancelled');
@@ -1155,10 +1171,10 @@ async function handleCommand(
         await sock.sendMessage(jid, { text: 'Admin only.' });
         return;
       }
-      // WhatsApp doesn't have numeric chatId — use 0 as stored
+      // Filter tasks by the admin's userId (WhatsApp doesn't use numeric chatId)
       const [scheduled, recurring] = await Promise.all([
-        getScheduledTasksByChatId(0),
-        getRecurringTasksByChatId(0),
+        getUserScheduledTasks(userId),
+        getUserRecurringTasks(userId),
       ]);
       if (scheduled.length === 0 && recurring.length === 0) {
         await sock.sendMessage(jid, { text: 'No scheduled or recurring tasks for this group.' });
@@ -1263,7 +1279,9 @@ async function processOrderConfirmation(
   let serviceSucceeded = false;
 
   try {
-    const { txHash } = await walletManager.transferToAgent(userId, activeOrder.totalAmount);
+    // Use the correct wallet for payment: group wallet for group orders, personal wallet otherwise
+    const payerWalletId = activeOrder.telegramId.startsWith('group_') ? activeOrder.telegramId : userId;
+    const { txHash } = await walletManager.transferToAgent(payerWalletId, activeOrder.totalAmount);
     paymentTxHash = txHash;
 
     await sock.sendMessage(jid, { text: '⏳ Verifying on-chain (2/4)...' });
@@ -1314,7 +1332,7 @@ async function processOrderConfirmation(
       });
 
       const brand = result.product?.brand?.brandName || 'Gift Card';
-      const { balance: newBalance } = await walletManager.getBalance(userId);
+      const { balance: newBalance } = await walletManager.getBalance(payerWalletId);
       await sock.sendMessage(jid, {
         text: `✅ Gift Card Purchased!\n\n${brand}\n${activeOrder.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\nRef: ${result.transactionId}\n\nThis gift card is for ${recipientId}. They can DM me /claim ${claimId} to get their code.\n\nBalance: ${parseFloat(newBalance).toFixed(2)} ${TOKEN_SYMBOL}`,
       });
@@ -1353,7 +1371,7 @@ async function processOrderConfirmation(
     }
 
     const formattedResult = formatServiceResult(activeOrder.toolName, result, activeOrder);
-    const { balance: newBalance } = await walletManager.getBalance(userId);
+    const { balance: newBalance } = await walletManager.getBalance(payerWalletId);
 
     const completionTitle = activeOrder.action.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
     await sock.sendMessage(jid, {
@@ -1372,7 +1390,7 @@ async function processOrderConfirmation(
     let refunded = false;
     if (paymentTxHash && !serviceSucceeded) {
       try {
-        const refundResult = await walletManager.refundUser(userId, activeOrder.totalAmount, paymentTxHash);
+        const refundResult = await walletManager.refundUser(payerWalletId, activeOrder.totalAmount, paymentTxHash);
         if (receiptId) await updateReceipt(receiptId, { refundTxHash: refundResult.txHash });
         refunded = true;
       } catch (e: any) { }

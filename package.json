@@ -7,8 +7,6 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "echo 'Skipping build - using tsx runtime'",
-    "register": "tsx scripts/register-agent.ts",
-    "generate-wallet": "tsx scripts/generate-wallet.ts",
     "test": "jest"
   },
   "keywords": [

@@ -13,6 +13,8 @@ import { reservePaymentHash } from '../../blockchain/replay-guard';
 import { IS_TESTNET, CELO_CAIP2, TOKEN_SYMBOL, EXPLORER_BASE } from '../../shared/constants';
 import { invalidateReloadlyBalanceCache } from '../../shared/balance-cache';
 import { saveConversation } from '../../agent/memory';
+import { getGroup, isGroupAdmin } from '../groups';
+import type { PendingOrder } from '../pending-orders';
 
 // Re-export shared service functions from service-executor
 export { executeServiceTool, formatServiceResult } from '../service-executor';
@@ -60,6 +62,21 @@ export function storePendingWithdrawal(userId: string, amount: number, toAddress
   const wdId = crypto.randomBytes(4).toString('hex');
   pendingWithdrawals.set(wdId, { userId, amount, toAddress, expiresAt: now + WITHDRAWAL_TTL_MS });
   return wdId;
+}
+
+/**
+ * Check if a user is authorized for an order.
+ * For personal orders: telegramId must match userId.
+ * For group orders (telegramId starts with "group_"): user must be the group admin.
+ */
+async function isOrderAuthorized(order: PendingOrder, userId: string): Promise<boolean> {
+  if (order.telegramId === userId) return true;
+  if (order.telegramId.startsWith('group_')) {
+    const groupId = order.telegramId.replace('group_', '');
+    const group = await getGroup(groupId);
+    return group ? isGroupAdmin(group, userId) : false;
+  }
+  return false;
 }
 
 // Quick action button prompts
@@ -118,7 +135,7 @@ export async function handleCallback(
       const order = await pendingOrders.atomicTransition(orderId, 'pending_confirmation', 'pending_payment');
       if (!order) { await answer('Order expired or already confirmed.'); return; }
 
-      if (order.telegramId !== userId) {
+      if (!(await isOrderAuthorized(order, userId))) {
         await pendingOrders.updateStatus(orderId, 'pending_confirmation');
         await answer('Unauthorized.');
         return;
@@ -174,7 +191,7 @@ export async function handleCallback(
         await answer('Order already cancelled or expired.');
         return;
       }
-      if (existing.telegramId !== userId) {
+      if (!(await isOrderAuthorized(existing, userId))) {
         await answer('Unauthorized.');
         return;
       }
@@ -198,7 +215,7 @@ export async function handleCallback(
       const order = await pendingOrders.atomicTransition(orderId, 'pending_payment', 'processing');
       if (!order) { await answer('Order expired or already processing.'); return; }
 
-      if (order.telegramId !== userId) {
+      if (!(await isOrderAuthorized(order, userId))) {
         await pendingOrders.updateStatus(orderId, 'pending_payment');
         await answer('Unauthorized.');
         return;
@@ -434,7 +451,7 @@ export async function handleCallback(
         await answer('Order expired or already processed.');
         return;
       }
-      if (existing.telegramId !== userId) {
+      if (!(await isOrderAuthorized(existing, userId))) {
         await answer('Unauthorized.');
         return;
       }
