@@ -331,9 +331,11 @@ export async function createGroupPoll(params: {
   details: Record<string, any>;
   threshold: number;
   totalMembers: number;
+  expiresInHours?: number;
 }): Promise<GroupPoll> {
   const col = await getPollCollection();
 
+  const expiryHours = Math.max(1, params.expiresInHours ?? 24);
   const poll: GroupPoll = {
     pollId: generatePollId(),
     groupId: params.groupId,
@@ -351,7 +353,7 @@ export async function createGroupPoll(params: {
     noVotes: [],
     status: 'active',
     createdAt: new Date(),
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+    expiresAt: new Date(Date.now() + expiryHours * 60 * 60 * 1000),
   };
 
   await col.insertOne(poll);

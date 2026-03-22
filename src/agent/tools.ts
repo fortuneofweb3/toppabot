@@ -1228,8 +1228,9 @@ export const groupCreatePollTool: Tool = {
     service: z.enum(['send_airtime', 'send_data', 'pay_bill', 'buy_gift_card']).describe("Service to spend on if approved"),
     amount: z.number().describe("Amount in cUSD"),
     details: z.record(z.any()).describe("Service details (phone, countryCode, operatorId, etc.)"),
+    expiresInHours: z.number().optional().describe("Poll expiry in hours (default 24, min 1). If user says 'in 2 hours', set to 2."),
   }),
-  func: async ({ description, service, amount, details }, ctx) => {
+  func: async ({ description, service, amount, details, expiresInHours }, ctx) => {
     if (!ctx?.groupId) {
       return JSON.stringify({ error: 'Polls only work in group chats.' });
     }
@@ -1246,6 +1247,9 @@ export const groupCreatePollTool: Tool = {
         return JSON.stringify({ error: 'Too many active polls. Wait for existing polls to resolve.' });
       }
 
+      // Clamp expiry: minimum 1 hour, default 24 hours
+      const expiry = Math.max(1, expiresInHours ?? 24);
+
       // Return poll creation request — the bot layer (Telegram/WhatsApp) handles actual poll sending
       return JSON.stringify({
         type: 'create_poll',
@@ -1254,9 +1258,10 @@ export const groupCreatePollTool: Tool = {
         service,
         amount,
         details,
+        expiresInHours: expiry,
         threshold: Math.round((group.pollThreshold ?? 0.7) * 100),
         members: group.members.length,
-        message: `Poll will be created for the group to vote. ${Math.round((group.pollThreshold ?? 0.7) * 100)}% approval needed (${Math.ceil(group.members.length * (group.pollThreshold ?? 0.7))} of ${group.members.length} members).`,
+        message: `Poll will be created for the group to vote. ${Math.round((group.pollThreshold ?? 0.7) * 100)}% approval needed (${Math.ceil(group.members.length * (group.pollThreshold ?? 0.7))} of ${group.members.length} members). Expires in ${expiry} hour${expiry !== 1 ? 's' : ''}.`,
       });
     } catch (error: any) {
       return JSON.stringify({ error: error.message });

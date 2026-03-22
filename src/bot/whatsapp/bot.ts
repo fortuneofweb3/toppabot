@@ -1618,7 +1618,8 @@ async function processOrderConfirmation(
     }
 
     if (refunded) {
-      userMsg += `\n\n${activeOrder.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} has been refunded to your wallet.`;
+      const refundDest = activeOrder.telegramId.startsWith('group_') ? 'the group wallet' : 'your wallet';
+      userMsg += `\n\n${activeOrder.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} has been refunded to ${refundDest}.`;
     } else if (paymentTxHash && !serviceSucceeded) {
       userMsg += `\n\nYour payment is being reviewed for a refund.`;
     }

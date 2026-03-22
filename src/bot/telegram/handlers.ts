@@ -150,23 +150,29 @@ export async function handleCallback(
         await pendingOrders.updateStatus(orderId, 'pending_confirmation');
         const address = await walletManager.getAddress(order.telegramId);
         const shortage = order.totalAmount - usableBalance;
+        const isGroupInsuf = order.telegramId.startsWith('group_');
+        const depositHint = isGroupInsuf
+          ? `Use /contribute to add funds to the group wallet.`
+          : `Deposit ${TOKEN_SYMBOL} to:\n\`${address}\``;
         await editMsg(
-          `❌ Insufficient Balance\n\n` +
+          `❌ Insufficient ${isGroupInsuf ? 'Group ' : ''}Balance\n\n` +
           `Required: ${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
           `Available: ${usableBalance > 0 ? usableBalance.toFixed(2) : '0.00'} ${TOKEN_SYMBOL} (after gas)\n` +
           `Short by: ${shortage.toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
-          `Deposit ${TOKEN_SYMBOL} to:\n\`${address}\``,
+          depositHint,
           { parse_mode: 'Markdown' },
         );
         await answer('Insufficient balance');
         return;
       }
 
+      const isGroupWallet = order.telegramId.startsWith('group_');
+      const walletLabel = isGroupWallet ? 'group wallet' : 'your wallet';
       const balanceRounded = parseFloat(balance).toFixed(2);
       const remaining = (balanceNum - order.totalAmount).toFixed(2);
       await editMsg(
         `Payment Request\n\n` +
-        `${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} from your wallet\n` +
+        `${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} from ${walletLabel}\n` +
         `(+ ~$0.001 gas fee)\n\n` +
         `Balance: ${balanceRounded} ${TOKEN_SYMBOL}\n` +
         `Remaining: ~${remaining} ${TOKEN_SYMBOL}`,
@@ -435,7 +441,8 @@ export async function handleCallback(
         }
 
         if (refunded) {
-          userMsg += `\n\n${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} has been refunded to your wallet.`;
+          const refundDest = order.telegramId.startsWith('group_') ? 'the group wallet' : 'your wallet';
+          userMsg += `\n\n${order.totalAmount.toFixed(2)} ${TOKEN_SYMBOL} has been refunded to ${refundDest}.`;
         } else if (paymentTxHash && !serviceSucceeded) {
           userMsg += `\n\nYour payment is being reviewed for a refund. Contact support if not resolved.`;
         }

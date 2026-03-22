@@ -854,6 +854,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
           service: pollData.service,
           amount: pollData.amount,
           details: pollData.details,
+          expiresInHours: pollData.expiresInHours,
         });
       } catch (err: any) {
         await tg('sendMessage', { chat_id: chatId, text: `Failed to create poll: ${err.message}` });
@@ -1235,10 +1236,12 @@ export async function sendGroupPoll(params: {
   service: string;
   amount: number;
   details: Record<string, any>;
+  expiresInHours?: number;
 }): Promise<{ pollId: string }> {
   const group = await getGroup(params.groupId);
   if (!group) throw new Error('No group wallet set up.');
 
+  const expiryHours = Math.max(1, params.expiresInHours ?? 24);
   const poll = await createGroupPoll({
     groupId: params.groupId,
     chatId: params.chatId,
@@ -1249,6 +1252,7 @@ export async function sendGroupPoll(params: {
     details: params.details,
     threshold: group.pollThreshold ?? 0.7,
     totalMembers: group.members.length,
+    expiresInHours: expiryHours,
   });
 
   const thresholdPct = Math.round((group.pollThreshold ?? 0.7) * 100);
@@ -1256,7 +1260,7 @@ export async function sendGroupPoll(params: {
   // Send Telegram native poll (non-anonymous so we track who voted)
   const pollMsg = await tg<{ message_id: number; poll: { id: string } }>('sendPoll', {
     chat_id: params.chatId,
-    question: `Spend ${params.amount.toFixed(2)} cUSD? ${params.description}`,
+    question: `Spend ${params.amount.toFixed(2)} cUSD from group wallet? ${params.description}`,
     options: ['Yes', 'No'],
     is_anonymous: false,
     allows_multiple_answers: false,
@@ -1273,12 +1277,13 @@ export async function sendGroupPoll(params: {
   });
 
   // Send context message
+  const expiryText = expiryHours >= 24 ? '24 hours' : `${expiryHours} hour${expiryHours !== 1 ? 's' : ''}`;
   await tg('sendMessage', {
     chat_id: params.chatId,
     text:
       `Poll created! ${thresholdPct}% approval needed (${Math.ceil(group.members.length * (group.pollThreshold ?? 0.7))} of ${group.members.length} members).\n\n` +
       `Vote above to approve or reject this group spend.\n` +
-      `Poll expires in 24 hours.`,
+      `Poll expires in ${expiryText}.`,
   });
 
   return { pollId: poll.pollId };
