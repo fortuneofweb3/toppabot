@@ -11,10 +11,14 @@ import {
 import { calculateTotalPayment } from "../blockchain/x402";
 import { getCachedReloadlyBalance } from "../shared/balance-cache";
 import { getReceiptByReloadlyId } from "../blockchain/service-receipts";
-import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask } from "./scheduler";
+import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask, createRecurringTask, getUserRecurringTasks, cancelRecurringTask } from "./scheduler";
 import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
 import { setUserCountry } from "./user-activity";
 import { sanitizeCountryCode, sanitizePhone } from "../shared/sanitize";
+import { userSettingsStore } from "../bot/user-settings";
+import { getReadableQuote, getAllBalances, SUPPORTED_TOKENS, getTokenBySymbol } from "../blockchain/swap";
+// Prestmit/Relay imports kept for sell_order_status (existing order lookup) — disabled for new sells
+import { getSellOrderByOrderId } from "../bot/sell-orders";
 
 /**
  * Tool definition — lightweight replacement for LangChain DynamicStructuredTool.
@@ -355,8 +359,9 @@ export const buyGiftCardTool: Tool = {
     amount: z.number().describe("Amount in cUSD"),
     recipientEmail: z.string().describe("Delivery email"),
     quantity: z.number().optional().nullable().describe("Number of cards (default 1)"),
+    recipientUserId: z.string().optional().nullable().describe("In groups: Telegram/WhatsApp user ID of the gift card recipient. Omit for general/giveaway."),
   }),
-  func: async ({ productId, amount, recipientEmail, quantity }) => {
+  func: async ({ productId, amount, recipientEmail, quantity, recipientUserId }) => {
     const { total } = calculateTotalPayment(amount);
     return JSON.stringify({
       status: 'payment_required',
@@ -364,7 +369,7 @@ export const buyGiftCardTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
-      details: { productId, unitPrice: amount, recipientEmail, quantity: quantity || 1 },
+      details: { productId, unitPrice: amount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
@@ -469,10 +474,14 @@ export const detectOperatorTool: Tool = {
     phone: z.string().describe("Phone number to look up"),
     countryCode: z.string().describe("Country ISO code"),
   }),
-  func: async ({ phone, countryCode }) => {
+  func: async ({ phone, countryCode }, ctx) => {
     try {
       phone = sanitizePhone(phone);
       countryCode = sanitizeCountryCode(countryCode);
+      // Infer timezone from phone number on first use (fire-and-forget)
+      if (ctx?.userId) {
+        userSettingsStore.inferTimezoneIfNeeded(ctx.userId, phone).catch(() => {});
+      }
       const op = await detectOperator(phone, countryCode);
       const balance = await getCachedReloadlyBalance();
       // Return structured JSON for detect_operator — fidelity check in graph.ts parses it
@@ -706,13 +715,602 @@ export const convertCurrencyTool: Tool = {
   },
 };
 
+/**
+ * Tool 20: Schedule a recurring payment
+ */
+export const scheduleRecurringTool: Tool = {
+  name: "schedule_recurring",
+  description: "Set up a recurring payment (daily, weekly, or monthly). Example: 'recharge 500 NGN airtime every Friday at 9am'.",
+  schema: z.object({
+    description: z.string().describe("Task description"),
+    toolName: z.string().describe("Tool to execute: send_airtime, send_data, pay_bill, or buy_gift_card"),
+    toolArgs: z.record(z.any()).describe("Tool arguments"),
+    productAmount: z.number().describe("Amount in cUSD"),
+    frequency: z.enum(['daily', 'weekly', 'monthly']).describe("How often to execute"),
+    dayOfWeek: z.number().optional().nullable().describe("Day of week (0=Sun to 6=Sat) for weekly"),
+    dayOfMonth: z.number().optional().nullable().describe("Day of month (1-31) for monthly"),
+    time: z.string().describe("Time in HH:MM format (user's timezone)"),
+  }),
+  func: async ({ description, toolName, toolArgs, productAmount, frequency, dayOfWeek, dayOfMonth, time }, ctx) => {
+    if (!ctx) {
+      return JSON.stringify({ error: 'Recurring payments are only available in Telegram' });
+    }
+
+    const validTools = ['send_airtime', 'send_data', 'pay_bill', 'buy_gift_card'];
+    if (!validTools.includes(toolName)) {
+      return JSON.stringify({ error: `Invalid toolName. Must be one of: ${validTools.join(', ')}` });
+    }
+
+    if (!/^\d{2}:\d{2}$/.test(time)) {
+      return JSON.stringify({ error: 'time must be in HH:MM format (e.g. "09:00")' });
+    }
+
+    if (frequency === 'weekly' && (dayOfWeek === undefined || dayOfWeek === null)) {
+      return JSON.stringify({ error: 'dayOfWeek is required for weekly frequency (0=Sun to 6=Sat)' });
+    }
+
+    if (frequency === 'monthly' && (dayOfMonth === undefined || dayOfMonth === null)) {
+      return JSON.stringify({ error: 'dayOfMonth is required for monthly frequency (1-31)' });
+    }
+
+    const timezone = await userSettingsStore.getTimezone(ctx.userId);
+
+    const taskId = await createRecurringTask({
+      userId: ctx.userId,
+      chatId: ctx.chatId,
+      description,
+      toolName,
+      toolArgs,
+      productAmount,
+      recurrence: {
+        frequency,
+        ...(dayOfWeek !== undefined && dayOfWeek !== null ? { dayOfWeek } : {}),
+        ...(dayOfMonth !== undefined && dayOfMonth !== null ? { dayOfMonth } : {}),
+        time,
+      },
+      timezone,
+      maxFailures: 3,
+    });
+
+    const { total } = calculateTotalPayment(productAmount);
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    let scheduleDesc = `${frequency} at ${time}`;
+    if (frequency === 'weekly' && dayOfWeek !== undefined && dayOfWeek !== null) {
+      scheduleDesc = `every ${dayNames[dayOfWeek]} at ${time}`;
+    } else if (frequency === 'monthly' && dayOfMonth !== undefined && dayOfMonth !== null) {
+      scheduleDesc = `monthly on day ${dayOfMonth} at ${time}`;
+    }
+
+    return JSON.stringify({
+      status: 'recurring_scheduled',
+      taskId,
+      description,
+      schedule: scheduleDesc,
+      timezone,
+      totalPerExecution: total,
+      message: `Recurring payment set up: ${description}. Runs ${scheduleDesc} (${timezone}). ${total} cUSD per execution. You'll be asked to confirm each time.`,
+    });
+  },
+};
+
+/**
+ * Tool 21: List recurring tasks
+ */
+export const listRecurringTool: Tool = {
+  name: "list_recurring",
+  description: "Show all active recurring payments.",
+  schema: z.object({}),
+  func: async (_args, ctx) => {
+    if (!ctx) {
+      return JSON.stringify({ error: 'Recurring payments are only available in Telegram' });
+    }
+
+    const tasks = await getUserRecurringTasks(ctx.userId);
+    if (tasks.length === 0) {
+      return JSON.stringify({ message: 'No active recurring payments.' });
+    }
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return JSON.stringify(tasks.map(t => {
+      let schedule = `${t.recurrence.frequency} at ${t.recurrence.time}`;
+      if (t.recurrence.frequency === 'weekly' && t.recurrence.dayOfWeek !== undefined) {
+        schedule = `every ${dayNames[t.recurrence.dayOfWeek]} at ${t.recurrence.time}`;
+      } else if (t.recurrence.frequency === 'monthly' && t.recurrence.dayOfMonth !== undefined) {
+        schedule = `monthly on day ${t.recurrence.dayOfMonth} at ${t.recurrence.time}`;
+      }
+      return {
+        taskId: t._id?.toString(),
+        description: t.description,
+        schedule,
+        timezone: t.timezone,
+        productAmount: t.productAmount,
+        nextDueAt: t.nextDueAt,
+        lastExecutedAt: t.lastExecutedAt,
+      };
+    }));
+  },
+};
+
+/**
+ * Tool 22: Cancel a recurring task
+ */
+export const cancelRecurringTool: Tool = {
+  name: "cancel_recurring",
+  description: "Cancel a recurring payment by ID.",
+  schema: z.object({
+    taskId: z.string().describe("Recurring task ID (from list_recurring)"),
+  }),
+  func: async ({ taskId }, ctx) => {
+    if (!ctx) {
+      return JSON.stringify({ error: 'Recurring payments are only available in Telegram' });
+    }
+
+    const cancelled = await cancelRecurringTask(taskId, ctx.userId);
+    return JSON.stringify({
+      success: cancelled,
+      message: cancelled ? 'Recurring payment cancelled.' : 'Task not found or already cancelled.',
+    });
+  },
+};
+
+/**
+ * Tool 23: Check all token balances
+ */
+export const checkAllBalancesTool: Tool = {
+  name: "check_all_balances",
+  description: "Show balances for all supported tokens (cUSD, CELO, USDC, USDT, cEUR) in the user's wallet.",
+  schema: z.object({}),
+  func: async (_args, ctx) => {
+    if (!ctx?.walletAddress) {
+      return JSON.stringify({ error: 'Wallet not available. Use /wallet to set up.' });
+    }
+
+    try {
+      const balances = await getAllBalances(ctx.walletAddress as `0x${string}`);
+      if (balances.length === 0) {
+        return 'No tokens found in wallet.';
+      }
+
+      return balances
+        .map(b => `${b.symbol}: ${parseFloat(b.balance).toFixed(4)}`)
+        .join('\n');
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 24: Get swap quote
+ */
+export const swapQuoteTool: Tool = {
+  name: "swap_quote",
+  description: "Get a price quote for swapping between tokens (e.g. CELO → cUSD). Supported: cUSD, CELO, USDC, USDT, cEUR.",
+  schema: z.object({
+    tokenIn: z.string().describe("Token to swap from (e.g. CELO, USDC)"),
+    tokenOut: z.string().describe("Token to swap to (e.g. cUSD)"),
+    amount: z.number().describe("Amount of input token"),
+  }),
+  func: async ({ tokenIn, tokenOut, amount }) => {
+    try {
+      const quote = await getReadableQuote(tokenIn, tokenOut, amount);
+      return `Swap ${quote.amountIn} ${quote.tokenIn} → ${quote.amountOut} ${quote.tokenOut} (rate: 1 ${quote.tokenIn} = ${quote.rate.toFixed(4)} ${quote.tokenOut})`;
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 25: Check sell rates for gift cards (Prestmit)
+ */
+export const checkSellRatesTool: Tool = {
+  name: "check_sell_rates",
+  description: "Check current buyback rates for selling gift cards for crypto.",
+  schema: z.object({
+    query: z.string().optional().nullable().describe("Search by brand name (optional)"),
+  }),
+  func: async () => {
+    return JSON.stringify({
+      status: 'coming_soon',
+      message: 'Gift card selling is coming soon! We are integrating Cardtonic for direct crypto payouts. Check back later.',
+    });
+  },
+};
+
+/**
+ * Tool 26: Sell a gift card
+ */
+export const sellGiftCardTool: Tool = {
+  name: "sell_gift_card",
+  description: "Sell a gift card for crypto (cUSD). Provide the card ID, amount, and card code/PIN.",
+  schema: z.object({
+    cardId: z.number().describe("Gift card subcategory ID from check_sell_rates"),
+    amount: z.number().describe("Card face value"),
+    cardNumber: z.string().describe("Gift card code/number"),
+    cardPin: z.string().optional().nullable().describe("Gift card PIN (if applicable)"),
+  }),
+  func: async () => {
+    return JSON.stringify({
+      status: 'coming_soon',
+      message: 'Gift card selling is coming soon! We are integrating Cardtonic for direct crypto payouts. Check back later.',
+    });
+  },
+};
+
+/**
+ * Tool 27: Check sell order status
+ */
+export const sellOrderStatusTool: Tool = {
+  name: "sell_order_status",
+  description: "Check the status of a gift card sell order.",
+  schema: z.object({
+    orderId: z.string().describe("Sell order ID from sell_gift_card (e.g. sell_xxx)"),
+  }),
+  func: async ({ orderId }) => {
+    try {
+      // Check existing orders (users with pending orders can still check status)
+      const order = await getSellOrderByOrderId(orderId);
+      if (order) {
+        return JSON.stringify({
+          orderId: order.orderId,
+          card: order.cardName,
+          status: order.status,
+          estimatedPayout: `~${order.estimatedCusd} cUSD (₦${order.payoutAmountLocal})`,
+          ...(order.creditAmountCusd ? { creditedAmount: `${order.creditAmountCusd} cUSD` } : {}),
+          ...(order.creditTxHash ? { txHash: order.creditTxHash } : {}),
+          ...(order.rejectionReason ? { reason: order.rejectionReason } : {}),
+          createdAt: order.createdAt,
+          note: 'New sell orders are temporarily disabled. Cardtonic integration coming soon.',
+        });
+      }
+
+      return JSON.stringify({
+        status: 'coming_soon',
+        message: 'Gift card selling is coming soon with our new Cardtonic integration. No active sell orders found.',
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 28: Get bridge quote (USDT Tron → USDC Celo)
+ */
+export const bridgeQuoteTool: Tool = {
+  name: "bridge_quote",
+  description: "Get a quote for bridging USDT from Tron to USDC on Celo via Relay Protocol.",
+  schema: z.object({
+    tronAddress: z.string().describe("Sender's Tron address (base58 format)"),
+    celoAddress: z.string().describe("Recipient's Celo address (0x format)"),
+    amountUsdt: z.string().describe("Amount in USDT (e.g. '10.5')"),
+  }),
+  func: async () => {
+    return JSON.stringify({
+      status: 'coming_soon',
+      message: 'Cross-chain bridging is coming soon as part of our Cardtonic gift card integration.',
+    });
+  },
+};
+
+/**
+ * Tool 29: Check bridge status
+ */
+export const bridgeStatusTool: Tool = {
+  name: "bridge_status",
+  description: "Check the status of a Relay cross-chain bridge request.",
+  schema: z.object({
+    requestId: z.string().describe("Bridge request ID from bridge_quote"),
+  }),
+  func: async () => {
+    return JSON.stringify({
+      status: 'coming_soon',
+      message: 'Cross-chain bridging is coming soon as part of our Cardtonic gift card integration.',
+    });
+  },
+};
+
 // Scheduling context — passed as second arg to tool.func() by executeToolCalls.
 // Previously was a module-level global that could be overwritten by concurrent requests.
 export interface SchedulingContext {
   userId: string;
   chatId: number;
   walletAddress?: string;
+  groupId?: string;
 }
+
+// ─── Group Tools ─────────────────────────────────────────────
+
+/**
+ * Tool 30: Get group wallet info
+ */
+export const groupInfoTool: Tool = {
+  name: "group_info",
+  description: "Get group wallet balance, member list, and recent activity. Only works in group chats.",
+  schema: z.object({}),
+  func: async (_args, ctx) => {
+    if (!ctx?.groupId) {
+      return JSON.stringify({ error: 'This command only works in group chats. Use /group in a group.' });
+    }
+    try {
+      const { getGroup, getGroupBalance, getMemberContributions, getGroupTransactions } = await import('../bot/groups');
+      const { WalletManager } = await import('../wallet/manager');
+      const { MongoWalletStore } = await import('../wallet/mongo-store');
+      const wm = new WalletManager(new MongoWalletStore());
+
+      const group = await getGroup(ctx.groupId);
+      if (!group) {
+        return JSON.stringify({ error: 'No group wallet set up. Admin can run /group enable.' });
+      }
+
+      const { balance } = await getGroupBalance(group, wm);
+      const contributions = await getMemberContributions(ctx.groupId);
+      const recentTxs = await getGroupTransactions(ctx.groupId, 5);
+
+      return JSON.stringify({
+        name: group.name,
+        walletAddress: group.walletAddress,
+        balance: `${parseFloat(balance).toFixed(2)} cUSD`,
+        members: group.members.length,
+        admin: group.adminUserId,
+        contributions: contributions.slice(0, 10).map(c => ({ user: c.userId, total: c.total.toFixed(2) })),
+        recentActivity: recentTxs.map(tx => ({
+          date: tx.createdAt.toLocaleDateString(),
+          type: tx.type,
+          amount: tx.amount.toFixed(2),
+          description: tx.description,
+        })),
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 31: Contribute to group wallet
+ */
+export const groupContributeTool: Tool = {
+  name: "group_contribute",
+  description: "Transfer cUSD from your personal wallet to the group wallet.",
+  schema: z.object({
+    amount: z.number().describe("Amount in cUSD to contribute to the group"),
+  }),
+  func: async ({ amount }, ctx) => {
+    if (!ctx?.groupId) {
+      return JSON.stringify({ error: 'This only works in group chats.' });
+    }
+    try {
+      const { getGroup, contributeToGroup, getGroupBalance } = await import('../bot/groups');
+      const { WalletManager } = await import('../wallet/manager');
+      const { MongoWalletStore } = await import('../wallet/mongo-store');
+      const wm = new WalletManager(new MongoWalletStore());
+
+      const group = await getGroup(ctx.groupId);
+      if (!group) {
+        return JSON.stringify({ error: 'No group wallet set up. Admin can run /group enable.' });
+      }
+
+      const result = await contributeToGroup(group, ctx.userId, amount, wm);
+      const { balance } = await getGroupBalance(group, wm);
+
+      return JSON.stringify({
+        status: 'success',
+        contributed: `${amount.toFixed(2)} cUSD`,
+        groupBalance: `${parseFloat(balance).toFixed(2)} cUSD`,
+        txHash: result.txHash,
+        message: `Successfully contributed ${amount.toFixed(2)} cUSD to the group wallet.`,
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 32: Create a group poll for spending decisions
+ */
+export const groupCreatePollTool: Tool = {
+  name: "group_create_poll",
+  description: "Create a poll for the group to vote on a spending decision. Members vote yes/no, and the action executes when the approval threshold is met.",
+  schema: z.object({
+    description: z.string().describe("What the group is voting on (e.g. 'Buy $5 airtime for +234...')"),
+    service: z.enum(['send_airtime', 'send_data', 'pay_bill', 'buy_gift_card']).describe("Service to spend on if approved"),
+    amount: z.number().describe("Amount in cUSD"),
+    details: z.record(z.any()).describe("Service details (phone, countryCode, operatorId, etc.)"),
+  }),
+  func: async ({ description, service, amount, details }, ctx) => {
+    if (!ctx?.groupId) {
+      return JSON.stringify({ error: 'Polls only work in group chats.' });
+    }
+    try {
+      const { getGroup, getActivePolls } = await import('../bot/groups');
+      const group = await getGroup(ctx.groupId);
+      if (!group) {
+        return JSON.stringify({ error: 'No group wallet set up. Admin can run /group enable.' });
+      }
+
+      // Check for existing active polls (limit to 3 concurrent)
+      const active = await getActivePolls(ctx.groupId);
+      if (active.length >= 3) {
+        return JSON.stringify({ error: 'Too many active polls. Wait for existing polls to resolve.' });
+      }
+
+      // Return poll creation request — the bot layer (Telegram/WhatsApp) handles actual poll sending
+      return JSON.stringify({
+        type: 'create_poll',
+        groupId: ctx.groupId,
+        description,
+        service,
+        amount,
+        details,
+        threshold: Math.round((group.pollThreshold ?? 0.7) * 100),
+        members: group.members.length,
+        message: `Poll will be created for the group to vote. ${Math.round((group.pollThreshold ?? 0.7) * 100)}% approval needed (${Math.ceil(group.members.length * (group.pollThreshold ?? 0.7))} of ${group.members.length} members).`,
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 33: Generate transaction statement (PDF/Excel)
+ */
+export const generateStatementTool: Tool = {
+  name: "generate_statement",
+  description: "Generate a transaction statement as PDF or Excel. Works for personal wallet and group wallets.",
+  schema: z.object({
+    format: z.enum(['pdf', 'xlsx']).describe("Report format: pdf or xlsx"),
+    startDate: z.string().optional().nullable().describe("Start date (ISO 8601 or natural, e.g. '2025-01-01')"),
+    endDate: z.string().optional().nullable().describe("End date (ISO 8601 or natural)"),
+    groupId: z.string().optional().nullable().describe("Group ID for group statement (omit for personal)"),
+  }),
+  func: async ({ format, startDate, endDate, groupId }, ctx) => {
+    if (!ctx?.walletAddress) {
+      return JSON.stringify({ error: 'Wallet not available. Use /wallet to set up.' });
+    }
+    try {
+      const { generateReport } = await import('../reports/generator');
+
+      const start = startDate ? new Date(startDate) : undefined;
+      const end = endDate ? new Date(endDate) : undefined;
+      if (start && isNaN(start.getTime())) return JSON.stringify({ error: 'Invalid startDate.' });
+      if (end && isNaN(end.getTime())) return JSON.stringify({ error: 'Invalid endDate.' });
+
+      let title = 'Personal Statement';
+      let reportGroupId = groupId || (ctx.groupId ? ctx.groupId : undefined);
+      if (reportGroupId) {
+        const { getGroup } = await import('../bot/groups');
+        const group = await getGroup(reportGroupId);
+        title = group ? `Group: ${group.name}` : 'Group Statement';
+      }
+
+      const report = await generateReport({
+        walletAddress: ctx.walletAddress,
+        startDate: start,
+        endDate: end,
+        format,
+        title,
+        groupId: reportGroupId || undefined,
+      });
+
+      // Store in report cache for bot to retrieve and send as file
+      const reportId = `rpt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      reportCache.set(reportId, {
+        buffer: report.buffer,
+        filename: report.filename,
+        mimeType: report.mimeType,
+        expiresAt: Date.now() + 5 * 60 * 1000, // 5 min TTL
+      });
+
+      return JSON.stringify({
+        type: 'statement_report',
+        reportId,
+        filename: report.filename,
+        format,
+        message: `Your ${format.toUpperCase()} statement is ready. Sending the file now...`,
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+// ─── Report Cache ─────────────────────────────────────────────
+
+interface CachedReport {
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+  expiresAt: number;
+}
+
+const reportCache = new Map<string, CachedReport>();
+
+// Cleanup expired reports every 2 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, report] of reportCache) {
+    if (now > report.expiresAt) reportCache.delete(id);
+  }
+}, 2 * 60 * 1000);
+
+/**
+ * Retrieve a generated report from cache (used by bot layer to send as file).
+ */
+export function getReportFromCache(reportId: string): CachedReport | null {
+  const report = reportCache.get(reportId);
+  if (!report) return null;
+  if (Date.now() > report.expiresAt) {
+    reportCache.delete(reportId);
+    return null;
+  }
+  return report;
+}
+
+/**
+ * Tool 34: Spend from group wallet on services
+ *
+ * Admin can execute immediately (bypass polls).
+ * Non-admin members trigger a poll — action only executes when threshold is met.
+ */
+export const groupSpendTool: Tool = {
+  name: "group_spend",
+  description: "Spend from group wallet on airtime/data/bills/gift cards. Admin executes immediately; non-admin creates a poll for group approval.",
+  schema: z.object({
+    service: z.enum(['send_airtime', 'send_data', 'pay_bill', 'buy_gift_card']).describe("Service to spend on"),
+    amount: z.number().describe("Amount in cUSD"),
+    details: z.record(z.any()).describe("Service details (phone, countryCode, operatorId, etc.)"),
+    description: z.string().optional().nullable().describe("Human-readable description of the spend"),
+  }),
+  func: async ({ service, amount, details, description }, ctx) => {
+    if (!ctx?.groupId) {
+      return JSON.stringify({ error: 'This only works in group chats.' });
+    }
+    try {
+      const { getGroup, isGroupAdmin } = await import('../bot/groups');
+      const group = await getGroup(ctx.groupId);
+      if (!group) {
+        return JSON.stringify({ error: 'No group wallet set up. Admin can run /group enable.' });
+      }
+
+      // Admin bypasses polls; non-admin bypasses if pollingEnabled === false
+      if (isGroupAdmin(group, ctx.userId) || !(group.pollingEnabled ?? true)) {
+        const { total } = calculateTotalPayment(amount);
+        return JSON.stringify({
+          status: 'payment_required',
+          service,
+          productAmount: amount,
+          totalWithFee: total,
+          currency: 'cUSD',
+          payFrom: 'group',
+          groupWalletId: group.walletId,
+          groupWalletAddress: group.walletAddress,
+          details: { ...details, amount, useLocalAmount: false },
+          message: `Group spend: ${total} cUSD from group wallet for ${service} (includes service fee).`,
+        });
+      }
+
+      // Non-admin with polling enabled: create a poll for group approval
+      const desc = description || `${service.replace(/_/g, ' ')} — ${amount.toFixed(2)} cUSD`;
+      return JSON.stringify({
+        type: 'create_poll',
+        groupId: ctx.groupId,
+        description: desc,
+        service,
+        amount,
+        details,
+        threshold: Math.round((group.pollThreshold ?? 0.7) * 100),
+        members: group.members.length,
+        message: `This spend requires group approval. A poll will be created — ${Math.round((group.pollThreshold ?? 0.7) * 100)}% of members must vote yes.`,
+      });
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
 
 // Paid tools — execute real transactions via Reloadly (cost money)
 export const paidTools = [
@@ -736,10 +1334,25 @@ export const freeTools = [
   scheduleTaskTool,
   myTasksTool,
   cancelTaskTool,
+  scheduleRecurringTool,
+  listRecurringTool,
+  cancelRecurringTool,
   saveInstructionTool,
   getInstructionsTool,
   removeInstructionTool,
   convertCurrencyTool,
+  checkAllBalancesTool,
+  swapQuoteTool,
+  checkSellRatesTool,
+  sellGiftCardTool,
+  sellOrderStatusTool,
+  bridgeQuoteTool,
+  bridgeStatusTool,
+  groupInfoTool,
+  groupContributeTool,
+  groupSpendTool,
+  groupCreatePollTool,
+  generateStatementTool,
 ];
 
 // Paid tool names for fast lookup

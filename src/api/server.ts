@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -25,6 +26,7 @@ import { handleA2ARequest } from '../a2a/handler';
 import { CELO_CAIP2 } from '../shared/constants';
 import { refundPayer } from '../shared/refund';
 import { getReputationMeta } from '../shared/reputation-meta';
+import { handlePrestmitWebhook } from '../bot/telegram/webhook';
 
 export const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -115,6 +117,15 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // ─────────────────────────────────────────────────
 // Security Middleware
 // ─────────────────────────────────────────────────
+
+// Prestmit webhook — disabled, Cardtonic integration coming soon.
+// Kept as endpoint to avoid 404s if Prestmit still sends events.
+app.post('/webhooks/prestmit',
+  express.raw({ type: 'application/json', limit: '1mb' }),
+  (_req: Request, res: Response) => {
+    res.sendStatus(200); // Webhook disabled — integration paused
+  },
+);
 
 // Request body size limit (prevent memory exhaustion)
 app.use(express.json({ limit: '1mb' }));
@@ -1560,7 +1571,14 @@ function requireAdmin(req: Request, res: Response): boolean {
     return false;
   }
   const key = req.headers['x-admin-key'];
-  if (!key || key !== ADMIN_API_KEY) {
+  if (!key || typeof key !== 'string') {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  // Timing-safe comparison — hash both to fixed length to avoid leaking key length
+  const a = crypto.createHash('sha256').update(key).digest();
+  const b = crypto.createHash('sha256').update(ADMIN_API_KEY).digest();
+  if (!crypto.timingSafeEqual(a, b)) {
     res.status(401).json({ error: 'Unauthorized' });
     return false;
   }
@@ -1659,6 +1677,7 @@ export function startApiServer() {
     console.log(`   Paid:    POST /buy-gift-card                 - Buy a gift card (includes codes)`);
     console.log(`   Admin:   GET  /gift-card-code/:id            - Retrieve gift card codes (API key required)`);
     console.log(`   Admin:   GET  /admin/receipts/*              - Receipt management (API key required)`);
+    console.log(`   Webhook: POST /webhooks/prestmit             - Prestmit sell order notifications`);
     console.log(`   MCP:     POST /mcp                          - MCP Streamable HTTP (13 tools)`);
     console.log(`   A2A:     GET  /.well-known/agent-card.json  - A2A Agent Card`);
     console.log(`   A2A:     POST /a2a                          - A2A JSON-RPC endpoint`);

@@ -1,7 +1,7 @@
 // Load environment variables FIRST (before any other imports)
 import 'dotenv/config';
 
-import { startTelegramBot } from './bot/telegram';
+import { startTelegramBot } from './bot/telegram/bot';
 import { startApiServer, app } from './api/server';
 import { closeMongoConnection } from './wallet/mongo-store';
 
@@ -44,7 +44,7 @@ async function main() {
 
   // Start WhatsApp bot if enabled
   if (process.env.ENABLE_WHATSAPP === 'true') {
-    const { startWhatsAppBot } = await import('./bot/whatsapp');
+    const { startWhatsAppBot } = await import('./bot/whatsapp/bot');
     await startWhatsAppBot();
   }
 

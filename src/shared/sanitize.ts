@@ -1,7 +1,46 @@
 /**
  * Shared input sanitization functions.
- * Used by API server and MCP tools for consistent validation.
+ * Used by API server, MCP tools, A2A handler, and goal storage for consistent validation.
  */
+
+// ─────────────────────────────────────────────────
+// Prompt Injection Protection
+// ─────────────────────────────────────────────────
+
+/** Patterns that indicate prompt injection attempts. Shared across all input boundaries. */
+export const INJECTION_PATTERNS = [
+  'ignore previous', 'ignore all', 'new instructions', 'forget everything',
+  'system:', 'admin:', 'sudo', 'root:', '<script>', '<|im_end|>', '<|im_start|>',
+  'disregard', 'override', 'jailbreak', 'developer mode',
+  '\\[system\\]', '\\{system\\}', '<\\|system\\|>', '<\\|user\\|>',
+  'pretend you', 'act as if', 'roleplay as',
+  'ignore above', 'ignore the above', 'ignore your instructions',
+  'bypass', 'do anything now', 'respond with json',
+  'important new instructions', 'maintenance mode',
+];
+
+/** Normalize text for injection detection — strips zero-width chars, homoglyphs. */
+export function normalizeForInjectionCheck(input: string): string {
+  return input
+    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
+    .replace(/[\u0400-\u04FF]/g, (c) => {
+      const map: Record<string, string> = { '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p', '\u0441': 'c', '\u0455': 's', '\u0456': 'i', '\u0445': 'x' };
+      return map[c] || c;
+    });
+}
+
+/** Check if text contains injection patterns. Returns the matched pattern or null. */
+export function detectInjection(input: string): string | null {
+  const normalized = normalizeForInjectionCheck(input);
+  for (const phrase of INJECTION_PATTERNS) {
+    if (new RegExp(phrase, 'gi').test(normalized)) return phrase;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────
+// Input Sanitization
+// ─────────────────────────────────────────────────
 
 export function sanitizeCountryCode(code: string | string[]): string {
   const input = Array.isArray(code) ? code[0] : code;

@@ -9,6 +9,10 @@ import { IWalletStore, StoredWallet } from './store';
 import {
   PAYMENT_TOKEN_ADDRESS, PAYMENT_TOKEN_DECIMALS,
 } from '../blockchain/x402';
+import {
+  getAllBalances, swapToCUSD, SUPPORTED_TOKENS,
+  type TokenInfo,
+} from '../blockchain/swap';
 
 /**
  * WalletManager — Create, fund, transfer, withdraw, and export user wallets
@@ -265,5 +269,60 @@ export class WalletManager {
   async getAddress(telegramId: string): Promise<string | null> {
     const wallet = await this.store.get(telegramId);
     return wallet?.address || null;
+  }
+
+  /**
+   * Get balances for all supported tokens (multi-currency)
+   */
+  async getAllBalances(telegramId: string): Promise<
+    Array<{ symbol: string; balance: string; address: string }>
+  > {
+    const wallet = await this.store.get(telegramId);
+    if (!wallet) throw new Error('No wallet found. Send /start first.');
+
+    const balances = await getAllBalances(wallet.address as `0x${string}`);
+    return balances.map(b => ({
+      symbol: b.symbol,
+      balance: b.balance,
+      address: b.address,
+    }));
+  }
+
+  /**
+   * Auto-swap all non-cUSD tokens to cUSD via Uniswap V3
+   */
+  async autoSwapToCUSD(telegramId: string): Promise<
+    Array<{ symbol: string; amountSwapped: string; cUSDReceived: string; txHash: string }>
+  > {
+    const wallet = await this.store.get(telegramId);
+    if (!wallet) throw new Error('No wallet found');
+
+    const privateKey = decryptPrivateKey(wallet.encryptedPrivateKey, wallet.iv, wallet.authTag);
+    const balances = await getAllBalances(wallet.address as `0x${string}`);
+
+    const results: Array<{ symbol: string; amountSwapped: string; cUSDReceived: string; txHash: string }> = [];
+
+    for (const bal of balances) {
+      if (bal.symbol === 'cUSD' || bal.raw === 0n) continue;
+
+      try {
+        const result = await swapToCUSD(
+          privateKey as `0x${string}`,
+          bal.address,
+        );
+        if (result) {
+          results.push({
+            symbol: bal.symbol,
+            amountSwapped: bal.balance,
+            cUSDReceived: result.amountOut,
+            txHash: result.txHash,
+          });
+        }
+      } catch (err: any) {
+        console.error(`[Wallet] Failed to swap ${bal.symbol} to cUSD:`, err.message);
+      }
+    }
+
+    return results;
   }
 }

@@ -18,4 +18,11 @@ export interface AgentState {
   // Telegram Wallet Context
   walletAddress?: string;
   walletBalance?: string;
+
+  // User Context
+  timezone?: string; // IANA timezone e.g. "Africa/Lagos"
+  chatId?: number;
+
+  // Group Context
+  groupId?: string;  // Telegram chat ID or WhatsApp group JID (set when in group chat)
 }

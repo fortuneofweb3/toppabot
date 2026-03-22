@@ -75,7 +75,8 @@ export class MongoWalletStore implements IWalletStore {
       // E11000 duplicate key error → wallet already exists, return existing
       if (err.code === 11000) {
         const existing = await col.findOne({ telegramId });
-        return existing!;
+        if (!existing) throw new Error(`Wallet for ${telegramId} disappeared after duplicate key conflict`);
+        return existing;
       }
       throw err;
     }

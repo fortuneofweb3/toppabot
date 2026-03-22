@@ -205,6 +205,31 @@ export async function getReceiptsByPayer(payer: string, limit: number = 20): Pro
 }
 
 /**
+ * Get receipts for a payer within a date range (for statements/reports).
+ */
+export async function getReceiptsByDateRange(
+  payer: string, startDate?: Date, endDate?: Date, limit = 500,
+): Promise<ServiceReceipt[]> {
+  try {
+    const col = await getCollection();
+    const query: any = { payer: payer.toLowerCase() };
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = startDate;
+      if (endDate) query.createdAt.$lte = endDate;
+    }
+    return await col
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(Math.min(limit, 500))
+      .toArray();
+  } catch (err: any) {
+    console.error('[ServiceReceipts] Failed to get receipts by date range:', err.message);
+    return [];
+  }
+}
+
+/**
  * Get failed receipts where payment was taken but service failed.
  * These are candidates for manual review/refund.
  */

@@ -12,6 +12,7 @@ export interface TgUser {
   first_name: string;
   last_name?: string;
   username?: string;
+  language_code?: string;
 }
 
 export interface TgChat {
@@ -40,6 +41,7 @@ export interface TgMessage {
   text?: string;
   entities?: TgEntity[];
   voice?: TgVoice;
+  reply_to_message?: TgMessage;
 }
 
 export interface TgCallbackQuery {
@@ -49,10 +51,17 @@ export interface TgCallbackQuery {
   data?: string;
 }
 
+export interface TgPollAnswer {
+  poll_id: string;
+  user: TgUser;
+  option_ids: number[];      // Which options the user selected (0-indexed)
+}
+
 export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
   callback_query?: TgCallbackQuery;
+  poll_answer?: TgPollAnswer;
 }
 
 export interface InlineButton {

@@ -41,6 +41,9 @@
         <a href="#send-airtime" class="sidebar-link">Airtime & Data</a>
         <a href="#pay-bills" class="sidebar-link">Utility Bills</a>
         <a href="#gift-cards" class="sidebar-link">Gift Cards</a>
+        <a href="#group-wallets" class="sidebar-link">Group Wallets</a>
+        <a href="#multi-currency" class="sidebar-link">Multi-Currency</a>
+        <a href="#reports" class="sidebar-link">Reports & Statements</a>
         <a href="#smart-memory" class="sidebar-link">Smart Memory</a>
         <a href="#scheduled" class="sidebar-link">Scheduled Payments</a>
       </div>
@@ -73,14 +76,15 @@
 
         <section id="getting-started">
           <h1>Getting Started</h1>
-          <p class="lead">Toppa is an AI agent on Telegram that lets you buy airtime, data, pay utility bills, and purchase gift cards using cUSD on the Celo blockchain. No sign-up, no KYC.</p>
+          <p class="lead">Toppa is an AI agent on <strong>Telegram</strong> and <strong>WhatsApp</strong> that lets you buy airtime, data, pay utility bills, and purchase gift cards using cUSD on the Celo blockchain. No sign-up, no KYC.</p>
 
           <h2>1. Open the Bot</h2>
-          <p>Search for <strong>@toppa402Bot</strong> on Telegram or click <a href="https://t.me/toppa402Bot" target="_blank">this link</a>. Press <strong>Start</strong> to begin.</p>
+          <p><strong>Telegram:</strong> Search for <strong>@toppa402Bot</strong> on Telegram or click <a href="https://t.me/toppa402Bot" target="_blank">this link</a>. Press <strong>Start</strong> to begin.</p>
+          <p><strong>WhatsApp:</strong> Message the Toppa WhatsApp number and send <code>/start</code> to begin.</p>
           <p>A cUSD wallet is automatically created for you. You'll see your wallet address in the welcome message.</p>
 
           <h2>2. Fund Your Wallet</h2>
-          <p>Send cUSD (Celo Dollar) to your wallet address. You can get cUSD from:</p>
+          <p>Send cUSD (Celo Dollar) to your wallet address. You can also deposit CELO, USDC, USDT, or cEUR and use <code>/swap</code> to convert to cUSD. Get tokens from:</p>
           <ul>
             <li><strong>Valora</strong> — mobile-first Celo wallet</li>
             <li><strong>MiniPay</strong> — Opera's embedded Celo wallet</li>
@@ -88,7 +92,7 @@
             <li><strong>Exchanges</strong> — Binance, Coinbase (withdraw to Celo network)</li>
           </ul>
           <div class="callout">
-            <strong>Tip:</strong> You can also ask Toppa for your wallet address anytime by typing "what's my wallet address?" or "balance".
+            <strong>Tip:</strong> You can ask Toppa for your wallet address anytime by typing "what's my wallet address?" or "balance". Use <code>/wallet</code> to see all token balances.
           </div>
 
           <h2>3. Start Using Toppa</h2>
@@ -100,8 +104,17 @@
             <code>"Check my balance"</code>
           </div>
           <div class="callout">
-            <strong>Voice notes:</strong> Record a voice message on Telegram and Toppa will transcribe and act on it — no typing needed.
+            <strong>Voice notes:</strong> Record a voice message on Telegram or WhatsApp and Toppa will transcribe and act on it — no typing needed.
           </div>
+
+          <h2>4. Using Toppa in Groups</h2>
+          <p>Add Toppa to a Telegram or WhatsApp group. In groups, Toppa only responds when:</p>
+          <ul>
+            <li>You <strong>@mention</strong> the bot (e.g., <code>@toppa402bot send airtime</code>)</li>
+            <li>You <strong>reply</strong> to one of the bot's messages</li>
+            <li>You use a <strong>command</strong> (e.g., <code>/wallet</code>, <code>/group</code>)</li>
+          </ul>
+          <p>Commands like <code>/help</code>, <code>/wallet</code>, and <code>/group</code> always work without @mentioning.</p>
         </section>
 
         <section id="send-airtime">
@@ -172,6 +185,102 @@
           </div>
         </section>
 
+        <section id="group-wallets">
+          <h1>Group Wallets</h1>
+          <p class="lead">Create a shared wallet for your Telegram or WhatsApp group. Pool funds, vote on spending, and track contributions — all on-chain.</p>
+
+          <h2>Enabling a Group Wallet</h2>
+          <p>Add Toppa to your group and run:</p>
+          <div class="code-block">
+            <code>/group enable</code>
+          </div>
+          <p>The first person to run this becomes the group admin. A unique Celo wallet is created for the group.</p>
+
+          <h2>Contributing Funds</h2>
+          <p>Any member can transfer cUSD from their personal wallet to the group wallet:</p>
+          <div class="code-block">
+            <code>/contribute 5</code>
+            <code>/contribute 10.50</code>
+          </div>
+          <p>Contributors are automatically tracked. View contributions with <code>/group</code>.</p>
+
+          <h2>Spending from the Group Wallet</h2>
+          <p>When someone asks to spend from the group wallet (e.g., "buy airtime from the group wallet"), Toppa creates a poll for members to vote on. The action executes automatically when the approval threshold is reached.</p>
+          <ul>
+            <li><strong>Telegram:</strong> Native Telegram polls — vote directly in the chat</li>
+            <li><strong>WhatsApp:</strong> Native WhatsApp polls — same experience</li>
+          </ul>
+
+          <h2>Group Commands</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Command</th><th>Who</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>/group enable</code></td><td>Anyone (first = admin)</td><td>Create the group wallet</td></tr>
+                <tr><td><code>/group</code></td><td>Anyone</td><td>View balance, address, members, recent activity</td></tr>
+                <tr><td><code>/contribute &lt;amount&gt;</code></td><td>Anyone</td><td>Transfer cUSD from personal to group wallet</td></tr>
+                <tr><td><code>/group_withdraw &lt;addr&gt; &lt;amt&gt;</code></td><td>Admin only</td><td>Withdraw from group to external address</td></tr>
+                <tr><td><code>/threshold &lt;0-100&gt;</code></td><td>Admin only</td><td>Set poll approval percentage (default 70%)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Poll Governance</h2>
+          <p>All group spending goes through democratic polls:</p>
+          <ul>
+            <li>Default threshold: <strong>70%</strong> approval needed</li>
+            <li>Polls auto-expire after <strong>24 hours</strong></li>
+            <li>If enough "No" votes make approval impossible, the poll is rejected immediately</li>
+            <li>Admin can bypass polls for urgent withdrawals via <code>/group_withdraw</code></li>
+          </ul>
+        </section>
+
+        <section id="multi-currency">
+          <h1>Multi-Currency Deposits</h1>
+          <p class="lead">Deposit any supported Celo token and auto-swap to cUSD. No need to hold only cUSD.</p>
+
+          <h2>Supported Tokens</h2>
+          <ul>
+            <li><strong>cUSD</strong> — Celo Dollar (primary currency, no swap needed)</li>
+            <li><strong>CELO</strong> — Native Celo token</li>
+            <li><strong>USDC</strong> — USD Coin on Celo</li>
+            <li><strong>USDT</strong> — Tether on Celo</li>
+            <li><strong>cEUR</strong> — Celo Euro</li>
+          </ul>
+
+          <h2>How to Swap</h2>
+          <p>After depositing any token, run:</p>
+          <div class="code-block">
+            <code>/swap</code>
+          </div>
+          <p>Toppa will automatically convert all non-cUSD tokens to cUSD using Uniswap V3 on Celo. You'll see a summary of what was swapped and your new cUSD balance.</p>
+
+          <h2>Viewing All Balances</h2>
+          <p>Use <code>/wallet</code> to see balances for all supported tokens, not just cUSD.</p>
+        </section>
+
+        <section id="reports">
+          <h1>Reports & Statements</h1>
+          <p class="lead">Generate PDF or Excel expenditure reports for your personal transactions or group activity.</p>
+
+          <h2>Generating a Report</h2>
+          <p>Ask Toppa in natural language:</p>
+          <div class="code-block">
+            <code>"Generate my statement as PDF"</code>
+            <code>"Send me an Excel report for this month"</code>
+            <code>"Group spending report as PDF"</code>
+          </div>
+          <p>Toppa generates the report and delivers it as a document right in the chat.</p>
+
+          <h2>What's Included</h2>
+          <ul>
+            <li><strong>Transaction list</strong> — Date, type, description, amount, status, TX hash</li>
+            <li><strong>Summary</strong> — Total spent, breakdown by category (airtime/data/bills/gift cards)</li>
+            <li><strong>Date range</strong> — Filter by start/end date, or get all transactions</li>
+            <li><strong>Group reports</strong> — Shows group contributions, withdrawals, and poll outcomes</li>
+          </ul>
+        </section>
+
         <section id="smart-memory">
           <h1>Smart Memory</h1>
           <p class="lead">Toppa remembers your contacts, preferences, and transaction history across sessions. No manual setup needed.</p>
@@ -236,7 +345,7 @@
 
         <section id="api-overview">
           <h1>API Overview</h1>
-          <p class="lead">Toppa exposes its capabilities through five integration layers. Choose the one that fits your use case.</p>
+          <p class="lead">Toppa exposes its capabilities through six integration layers. Choose the one that fits your use case.</p>
 
           <div class="table-wrap">
             <table>
@@ -277,6 +386,12 @@
                   <td><span class="badge">Telegram</span></td>
                   <td><code>t.me/toppa402Bot</code></td>
                   <td>Telegram account</td>
+                  <td>Human end-users</td>
+                </tr>
+                <tr>
+                  <td><span class="badge">WhatsApp</span></td>
+                  <td>WhatsApp number</td>
+                  <td>WhatsApp account</td>
                   <td>Human end-users</td>
                 </tr>
               </tbody>
@@ -568,30 +683,34 @@ Content-Type: application/json
           <p>Billions of people use mobile money and prepaid services daily. But buying airtime across borders, paying bills in different countries, or purchasing international gift cards requires navigating fragmented systems, currency exchanges, and KYC barriers.</p>
 
           <h2>The Solution</h2>
-          <p>Toppa eliminates all of that. One chat interface, one currency (cUSD), zero paperwork. Tell Toppa what you need in plain language — it figures out the operator, calculates the cost, and executes the transaction.</p>
+          <p>Toppa eliminates all of that. Two chat interfaces (Telegram + WhatsApp), one currency (cUSD), zero paperwork. Tell Toppa what you need in plain language — it figures out the operator, calculates the cost, and executes the transaction.</p>
 
           <h2>Key Differentiators</h2>
           <ul>
-            <li><strong>AI-first, not form-first</strong> — No dropdowns, no forms. Just natural language.</li>
+            <li><strong>AI-first, not form-first</strong> — No dropdowns, no forms. Just natural language or voice notes.</li>
             <li><strong>Borderless by default</strong> — 170+ countries, 800+ operators, one interface.</li>
             <li><strong>Agent-native</strong> — Built from day one for both humans and AI agents.</li>
             <li><strong>Crypto-native payments</strong> — cUSD on Celo. Fast, cheap, global.</li>
+            <li><strong>Multi-currency</strong> — Deposit CELO, USDC, USDT, or cEUR and auto-swap to cUSD.</li>
+            <li><strong>Group wallets</strong> — Shared wallets with democratic poll-based governance.</li>
             <li><strong>Memory & personality</strong> — Learns your contacts, habits, and preferences.</li>
             <li><strong>Open protocols</strong> — x402, MCP, A2A. Any agent can integrate.</li>
+            <li><strong>Open source</strong> — MIT licensed, fully transparent.</li>
           </ul>
         </section>
 
         <section id="architecture">
           <h1>Architecture</h1>
-          <p class="lead">Toppa uses a lightweight custom tool-calling loop with parallel execution — no heavy frameworks needed.</p>
+          <p class="lead">Toppa uses LangGraph (StateGraph) for its AI agent loop — a structured agent ↔ tools cycle with conditional routing, payment short-circuits, and fidelity checks.</p>
 
           <h2>Core Engine</h2>
-          <p>At the center is a direct tool-calling loop that sends messages to the LLM. If the model returns tool calls, they're executed in parallel via <code>Promise.all()</code>. Results are fed back until the model provides a final response.</p>
-          <p>This is simpler, faster, and more predictable than framework-based approaches like LangGraph.</p>
+          <p>At the center is a LangGraph <code>StateGraph</code> with two nodes: <strong>Agent</strong> (LLM call) and <strong>Tools</strong> (execute tool calls). The agent node decides whether to call tools or return a final response. When a paid tool returns a <code>payment_required</code> payload, the loop short-circuits immediately — no extra LLM call needed.</p>
+          <p>The system includes automatic fallback (Gemini 2.0 Flash → Llama 3.3 70B), post-response fidelity checks, and an iteration cap to prevent runaway loops.</p>
 
           <h2>Protocol Stack</h2>
           <div class="stack">
             <div class="stack-layer"><span class="badge">Telegram</span> Direct human users</div>
+            <div class="stack-layer"><span class="badge">WhatsApp</span> Direct human users</div>
             <div class="stack-layer"><span class="badge">A2A</span> Agent-to-Agent (JSON-RPC)</div>
             <div class="stack-layer"><span class="badge">MCP</span> 13 tools via Streamable HTTP</div>
             <div class="stack-layer"><span class="badge">x402</span> Pay-per-call REST API</div>
@@ -601,9 +720,19 @@ Content-Type: application/json
           <h2>Safety Model</h2>
           <p>Paid tools (airtime, data, bills, gift cards) never execute actual purchases inside the LLM loop. Instead, they return a <code>payment_required</code> JSON payload with an order confirmation. The actual payment and fulfillment happen externally:</p>
           <ul>
-            <li><strong>Telegram</strong> — wallet deduction after user confirms</li>
+            <li><strong>Telegram</strong> — wallet deduction after user confirms via inline buttons</li>
+            <li><strong>WhatsApp</strong> — wallet deduction after user confirms</li>
             <li><strong>x402</strong> — on-chain payment verification before fulfillment</li>
             <li><strong>MCP/A2A</strong> — order confirmation artifact returned for approval</li>
+          </ul>
+
+          <h2>Group Governance</h2>
+          <p>Group wallet spending uses a poll-based governance model:</p>
+          <ul>
+            <li>AI agent creates a spending proposal via <code>group_create_poll</code> tool</li>
+            <li>Native platform polls (Telegram or WhatsApp) are sent to the group</li>
+            <li>Members vote; action executes when threshold is met</li>
+            <li>Polls auto-expire after 24 hours</li>
           </ul>
         </section>
 
@@ -614,30 +743,36 @@ Content-Type: application/json
           <h2>Shipped</h2>
           <ul class="roadmap-list done">
             <li>Telegram bot with natural language processing</li>
+            <li>WhatsApp bot with full feature parity</li>
             <li>Airtime, data, bills, and gift card fulfillment</li>
+            <li>LangGraph-powered AI agent with 36 tools</li>
+            <li>Group wallets with democratic poll governance</li>
+            <li>Multi-currency deposits (cUSD, CELO, USDC, USDT, cEUR) + auto-swap</li>
+            <li>PDF and Excel expenditure reports/statements</li>
             <li>Smart memory (contacts, preferences, history)</li>
             <li>Heartbeat engine with proactive alerts</li>
+            <li>Scheduled/recurring payments</li>
             <li>x402 payment protocol for all paid endpoints</li>
             <li>MCP server with 13 tools</li>
             <li>A2A protocol support</li>
             <li>ERC-8004 on-chain registration (Agent #1870)</li>
             <li>Free discovery APIs</li>
-            <li>Voice note support</li>
+            <li>Voice note transcription (Deepgram)</li>
+            <li>@mention filtering in groups (context-aware)</li>
+            <li>AES-256-GCM wallet encryption</li>
             <li>Multilingual (English, French, Yoruba, Swahili)</li>
           </ul>
 
           <h2>In Progress</h2>
           <ul class="roadmap-list progress">
-            <li>Reputation system with peer reviews</li>
-            <li>Scheduled payments (heartbeat-driven)</li>
-            <li>Operator promotions and deals</li>
+            <li>Gift card sell pipeline (Cardtonic integration)</li>
+            <li>Cross-chain bridge for multi-network deposits</li>
           </ul>
 
           <h2>Planned</h2>
           <ul class="roadmap-list planned">
+            <li>Celo MiniPay deep integration</li>
             <li>Multi-agent orchestration (Toppa as a sub-agent)</li>
-            <li>Additional payment tokens beyond cUSD</li>
-            <li>WhatsApp integration</li>
             <li>Merchant tools and bulk airtime</li>
             <li>SDK for third-party developers</li>
           </ul>
@@ -668,9 +803,9 @@ Content-Type: application/json
               <strong>8004scan</strong>
               <span>ERC-8004 profile</span>
             </a>
-            <a href="https://github.com/fortuneofweb3/toppabot" target="_blank" class="link-card">
+            <a href="https://github.com/toppa-agent/toppa" target="_blank" class="link-card">
               <strong>GitHub</strong>
-              <span>Source code</span>
+              <span>Open source</span>
             </a>
             <a href="../" class="link-card">
               <strong>Landing Page</strong>

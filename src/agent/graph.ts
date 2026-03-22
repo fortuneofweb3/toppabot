@@ -1,123 +1,66 @@
-import OpenAI from 'openai';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { StateGraph, Annotation, END, START } from '@langchain/langgraph';
+import { ChatOpenAI } from '@langchain/openai';
+import { BaseMessage, HumanMessage, SystemMessage, AIMessage, ToolMessage } from '@langchain/core/messages';
+import { DynamicStructuredTool } from '@langchain/core/tools';
 import { AgentState } from './state';
-import { tools, SchedulingContext } from './tools';
+import { tools as toppaTools, SchedulingContext, PAID_TOOL_NAMES } from './tools';
 import { getConversationHistory, saveConversation } from './memory';
 import { formatUserContext } from './goals';
 
 /**
- * Toppa Agent — LLM tool-calling loop (DeepSeek via OpenAI-compatible SDK)
+ * Toppa Agent — LangGraph StateGraph with tool-calling loop
  *
- * The LLM receives ALL tools and decides what to call. No keyword routing —
- * the model is smart enough to pick the right tools from context.
+ * Migrated from custom OpenAI SDK loop to LangGraph for:
+ * - Graph-based control flow (agent → tools → payment check → fidelity → end)
+ * - Built-in state management and message accumulation
+ * - Extensibility for future multi-step flows
  *
- * Performance wins (kept):
- * - Strict mode schemas for constrained decoding (faster tool args)
- * - Pre-formatted text tool results (less tokens for the LLM)
- * - 30s timeout prevents silent hangs
- * - Payment short-circuit skips a round trip for paid tool calls
- * - Post-response fidelity check catches operator name mismatches
- *
- * The LLM has access to ALL tools (free + paid). Paid tools are safe to call —
- * they return payment_required responses instead of executing Reloadly directly.
- *
- * Actual paid execution only happens through payment-gated paths:
- * - x402 REST API: payment verified at HTTP middleware layer (server.ts)
- * - MCP tools: payment verified via paymentTxHash param (mcp/tools.ts)
- * - Telegram bot: wallet transfer + on-chain verification (bot/handlers.ts)
+ * Preserved from original:
+ * - Streaming support (onStream callback)
+ * - Fallback LLM with 5-min cooldown
+ * - Payment short-circuit (skips LLM round trip for paid tools)
+ * - Post-response fidelity check (catches operator name mismatches)
+ * - Per-request context isolation (no module-level state leaks)
+ * - System prompt with wallet context, user preferences, current datetime
+ * - Same export signature: runToppaAgent(userMessage, state, options)
  */
 
-// Primary LLM — OpenRouter (or custom via LLM_BASE_URL)
-const llm = new OpenAI({
-  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
-  baseURL: process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+// ── LLM Setup ──────────────────────────────────────────────────────────────
+
+const PRIMARY_MODEL = process.env.LLM_MODEL || 'deepseek-chat';
+const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+
+const primaryLlm = new ChatOpenAI({
+  openAIApiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+  configuration: {
+    baseURL: process.env.LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+  },
+  modelName: PRIMARY_MODEL,
+  temperature: 0,
+  maxTokens: 800,
+  streaming: true,
+  timeout: 30_000,
 });
 
-// Fallback LLM — kicks in when primary times out or gets rate limited
-// Uses same OpenRouter key by default (routes to paid DeepSeek ~$0.0003/req)
-const fallbackLlm = process.env.FALLBACK_LLM_KEY
-  ? new OpenAI({ apiKey: process.env.FALLBACK_LLM_KEY, baseURL: process.env.FALLBACK_LLM_BASE_URL || 'https://openrouter.ai/api/v1' })
-  : (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)
-    ? new OpenAI({ apiKey: (process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)!, baseURL: 'https://openrouter.ai/api/v1' })
-    : null;
-const FALLBACK_MODEL = process.env.FALLBACK_LLM_MODEL || 'meta-llama/llama-3.3-70b-instruct';
+const fallbackLlm = (process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY)
+  ? new ChatOpenAI({
+    openAIApiKey: process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
+    configuration: {
+      baseURL: process.env.FALLBACK_LLM_BASE_URL || 'https://openrouter.ai/api/v1',
+    },
+    modelName: FALLBACK_MODEL,
+    temperature: 0,
+    maxTokens: 800,
+    streaming: true,
+    timeout: 30_000,
+  })
+  : null;
+
 let usingFallback = false;
-let fallbackUntil = 0; // Timestamp — use fallback until this time
+let fallbackUntil = 0;
 
-/**
- * Prepare JSON Schema for DeepSeek strict mode (constrained decoding).
- *
- * Strict mode requires:
- * - All properties in `required`, `additionalProperties: false`
- * - Only supported constructs: object, string, number, integer, boolean, array, enum, anyOf
- *
- * zodToJsonSchema produces `{ not: {} }` for optional fields which strict mode
- * doesn't support. We simplify: optional fields become `anyOf: [type, null]`.
- */
-function simplifyOptional(prop: any): any {
-  if (!prop || typeof prop !== 'object' || !Array.isArray(prop.anyOf)) return prop;
-  // Flatten nested anyOf and collect real types (strip `not` and `$ref`)
-  const realTypes: any[] = [];
-  let hasNull = false;
-  const flatten = (items: any[]) => {
-    for (const item of items) {
-      if (item.type === 'null') { hasNull = true; continue; }
-      if (item.not !== undefined || item.$ref !== undefined) continue;
-      if (Array.isArray(item.anyOf)) { flatten(item.anyOf); continue; }
-      realTypes.push(item);
-    }
-  };
-  flatten(prop.anyOf);
-  const desc = prop.description ? { description: prop.description } : {};
-  if (realTypes.length === 1 && hasNull) return { anyOf: [realTypes[0], { type: 'null' }], ...desc };
-  if (realTypes.length === 1) return { ...realTypes[0], ...desc };
-  return { anyOf: hasNull ? [...realTypes, { type: 'null' }] : realTypes, ...desc };
-}
+// ── System Prompt ──────────────────────────────────────────────────────────
 
-function prepareSchema(schema: any): any {
-  if (typeof schema !== 'object' || !schema) return schema;
-  delete schema.$schema;
-  delete schema.definitions;
-  if (schema.type === 'object') {
-    // Record types (z.record) already have additionalProperties set to a schema — preserve them.
-    // Only force additionalProperties:false on structured objects (those with explicit properties).
-    if (schema.additionalProperties === undefined || schema.additionalProperties === true) {
-      schema.additionalProperties = false;
-    }
-    if (schema.properties) {
-      schema.required = Object.keys(schema.properties);
-      for (const key of Object.keys(schema.properties)) {
-        schema.properties[key] = simplifyOptional(schema.properties[key]);
-      }
-    }
-  }
-  for (const key of Object.keys(schema)) {
-    if (typeof schema[key] === 'object') schema[key] = prepareSchema(schema[key]);
-  }
-  return schema;
-}
-
-
-// Convert tool Zod schemas to LLM function definitions (done once at module load)
-// prepareSchema cleans up zodToJsonSchema output for cleaner schemas
-const llmTools: OpenAI.ChatCompletionTool[] = tools.map(tool => ({
-  type: 'function',
-  function: {
-    name: tool.name,
-    description: tool.description,
-    parameters: prepareSchema(zodToJsonSchema(tool.schema) as Record<string, unknown>),
-  },
-}));
-
-// Fast lookup: tool name → tool function
-const toolMap = new Map(tools.map(t => [t.name, t]));
-
-// Max tool-calling iterations — most queries complete in 2-3, cap at 6 to prevent runaway
-const MAX_ITERATIONS = 6;
-
-/**
- * System prompt — defines agent behavior
- */
 const SYSTEM_PROMPT = `You are Toppa — a personal AI agent for airtime, data, bills, and gift cards across 170+ countries. Powered by Celo (cUSD).
 
 STYLE: Plain text only, no markdown. Keep replies SHORT — 1-3 sentences max. No filler, no extra explanations. Talk like a helpful friend. Reply in the user's language. If someone says "hey", just say hi naturally.
@@ -145,21 +88,57 @@ BE PROACTIVE: Use your tools to figure things out instead of asking the user unn
 - Only ask when you truly can't infer: e.g. no phone number at all, or no indication of service type AND no prior context.
 - Clear request (e.g. "send 500 NGN airtime to 08012345678") → go straight to tool, no questions.
 
+GIFT CARD SELL: Gift card selling is COMING SOON — we're integrating a new provider with direct crypto payouts. If a user asks to sell a gift card, tell them this feature is coming soon and they should check back later. Do NOT use check_sell_rates, sell_gift_card, sell_order_status, bridge_quote, or bridge_status tools.
+
+GROUP WALLETS: Groups have shared wallets. Admin enables via /group enable (first user to enable = admin). Members can /contribute cUSD from their personal wallet to the group wallet. Admin can spend from the group wallet or /group_withdraw. Use group_info, group_contribute, group_spend tools when in a group context. In private chats, always use the user's personal wallet.
+
+GROUP GOVERNANCE: ALL group spending decisions require a poll — airtime, data, bills, gift cards, recurring payments, scheduled tasks, and cancellations. Any member can request a spend, but it goes to a vote. The action only executes when enough members approve (default 70%, admin-customizable via /threshold). Polls expire after 24 hours.
+EXCEPTION: The group admin can bypass polls and execute spending immediately. If the admin requests a group spend, use group_spend directly (it handles admin bypass automatically). For non-admin members, group_spend auto-creates a poll. If the admin has disabled polling (/poll off), all members can spend directly without polls.
+
+GIFT CARD GIFTING: In groups, users can buy gift cards for a specific member. Ask who it's for. If they name someone, set recipientUserId in buy_gift_card. If it's general/a giveaway, omit recipientUserId — code will be shown publicly in the group.
+
+REPORTS: Users can request transaction statements as PDF or Excel. Use generate_statement tool with format (pdf/xlsx) and optional date range. Works for both personal and group wallets.
+
 RULES: Confirm amount and recipient before executing. Show transaction details after. For gift cards, retrieve and show redeem codes.
 `;
 
-/**
- * Build system prompt with wallet context and current time
- */
 async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
   let prompt = SYSTEM_PROMPT;
-  prompt += `\nCurrent datetime: ${new Date().toISOString()}`;
+
+  // Include timezone-aware datetime
+  const tz = state.timezone || 'UTC';
+  const now = new Date();
+  try {
+    const localTime = now.toLocaleString('en-US', {
+      timeZone: tz,
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const tzAbbrev = now.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'short' }).split(' ').pop();
+    prompt += `\nCurrent datetime: ${localTime} (${tz}, ${tzAbbrev})`;
+    if (tz === 'UTC') {
+      prompt += `\nNote: User's timezone is unknown (defaulting to UTC). If they want to schedule something, ask what timezone they're in first.`;
+    }
+  } catch {
+    prompt += `\nCurrent datetime: ${now.toISOString()}`;
+  }
+
   if ((state.source === 'telegram' || state.source === 'whatsapp') && state.walletAddress) {
     prompt += `\nUser's wallet: ${state.walletAddress}`;
     prompt += `\nUser's cUSD balance: ${state.walletBalance || 'unknown'}`;
   }
 
-  // Load user's standing instructions/goals for autonomous context
+  if (state.groupId) {
+    prompt += `\nCONTEXT: You are in a GROUP CHAT (groupId: ${state.groupId}). Group commands are available. For spending requests, use group_create_poll to let the group vote before spending. The poll system handles threshold-based approval automatically.`;
+  } else {
+    prompt += `\nCONTEXT: You are in a PRIVATE CHAT. Use the user's personal wallet for all operations.`;
+  }
+
   if (state.userAddress) {
     const userContext = await formatUserContext(state.userAddress);
     if (userContext) {
@@ -170,58 +149,68 @@ async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
   return prompt;
 }
 
-/**
- * Execute tool calls in parallel and return results.
- * Shared between streaming and non-streaming paths.
- */
-async function executeToolCalls(
-  toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
-  ctx?: SchedulingContext | null,
-): Promise<Array<{ role: 'tool'; tool_call_id: string; content: string }>> {
-  return Promise.all(
-    toolCalls.map(async (toolCall) => {
-      const tool = toolMap.get(toolCall.function.name);
-      let result: string;
+// ── Convert Toppa Tools to LangChain Tools ─────────────────────────────────
 
-      // Log tool name only — arguments may contain PII (phone, email, account numbers)
-      console.log(`[Tool Call] ${toolCall.function.name}`);
+// Per-request context holder — set before each graph invocation.
+// Isolated per call because runToppaAgent creates a new closure each time.
+let _requestCtx: SchedulingContext | null = null;
 
-      if (!tool) {
-        result = JSON.stringify({ error: `Tool ${toolCall.function.name} not found` });
-      } else {
+const langchainTools: DynamicStructuredTool[] = toppaTools.map(
+  (tool) =>
+    new DynamicStructuredTool({
+      name: tool.name,
+      description: tool.description,
+      schema: tool.schema,
+      func: async (args: any) => {
+        console.log(`[Tool Call] ${tool.name}`);
         try {
-          result = await tool.func(JSON.parse(toolCall.function.arguments), ctx);
+          const result = await tool.func(args, _requestCtx);
+          console.log(`[Tool Result] ${tool.name} → ${result.length} chars`);
+          return result;
         } catch (err: any) {
-          result = JSON.stringify({ error: err.message });
+          const errResult = JSON.stringify({ error: err.message });
+          console.log(`[Tool Result] ${tool.name} → ERROR: ${err.message}`);
+          return errResult;
         }
-      }
-
-      // Log result length only — result may contain redeem codes, PII
-      console.log(`[Tool Result] ${toolCall.function.name} → ${result.length} chars`);
-
-      return { role: 'tool' as const, tool_call_id: toolCall.id, content: result };
+      },
     }),
-  );
-}
+);
 
-/**
- * Check tool results for payment_required short-circuit.
- * Returns order_confirmation JSON string if found, null otherwise.
- * If user balance is too low, returns a plain-text insufficient balance message instead.
- */
+// ── LangGraph State Annotation ─────────────────────────────────────────────
+
+const GraphState = Annotation.Root({
+  messages: Annotation<BaseMessage[]>({
+    reducer: (prev, next) => [...prev, ...next],
+    default: () => [],
+  }),
+  // Short-circuit result — set when payment_required is detected
+  shortCircuitResponse: Annotation<string | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
+  // Iteration counter to prevent runaway loops
+  iterations: Annotation<number>({
+    reducer: (_prev, next) => next,
+    default: () => 0,
+  }),
+});
+
+// Max tool-calling iterations — most queries complete in 2-3, cap at 6
+const MAX_ITERATIONS = 6;
+
+// ── Payment Short-Circuit ──────────────────────────────────────────────────
+
 function checkPaymentShortCircuit(
-  toolResults: Array<{ content: string }>,
+  toolMessages: ToolMessage[],
   walletBalance?: string,
 ): string | null {
-  for (const tr of toolResults) {
+  for (const tm of toolMessages) {
     try {
-      const parsed = JSON.parse(tr.content);
+      const content = typeof tm.content === 'string' ? tm.content : JSON.stringify(tm.content);
+      const parsed = JSON.parse(content);
       if (parsed.status === 'payment_required' && parsed.service && parsed.details) {
         const totalNeeded = parsed.totalWithFee ?? parsed.productAmount;
 
-        // Early balance check — reject before showing order confirmation
-        // Reserve 0.05 cUSD for gas — Celo feeCurrency pre-charges gasLimit * maxFeePerGas
-        // from the cUSD balance BEFORE the transfer executes. 0.01 is insufficient.
         const GAS_RESERVE = 0.05;
         if (walletBalance && !isNaN(parseFloat(walletBalance))) {
           const usable = parseFloat(walletBalance) - GAS_RESERVE;
@@ -266,11 +255,8 @@ function checkPaymentShortCircuit(
   return null;
 }
 
-/**
- * Verify that the LLM's response doesn't contradict tool results.
- * Catches the DeepSeek bug where it receives "MTN Nigeria" but says "Airtel Nigeria".
- * Returns a corrected response if a contradiction is found, null otherwise.
- */
+// ── Fidelity Check ─────────────────────────────────────────────────────────
+
 const KNOWN_OPERATORS = [
   'mtn', 'airtel', 'glo', '9mobile', 'etisalat', 'safaricom',
   'vodafone', 'orange', 'tigo', 'telkom', 'cell c', 'vodacom',
@@ -278,31 +264,31 @@ const KNOWN_OPERATORS = [
 ];
 
 function matchesOperator(text: string, op: string): boolean {
-  // Use word boundary matching to avoid false positives (e.g., "orange" in "orange data plan")
   const escaped = op.replace(/[.*+?^${}()|[\]\\&]/g, '\\$&');
   return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
 }
 
 function checkToolResultFidelity(
   response: string,
-  toolResults: Array<{ content: string; toolName?: string }>,
+  messages: BaseMessage[],
 ): string | null {
-  for (const tr of toolResults) {
-    if (tr.toolName !== 'detect_operator') continue;
+  // Find detect_operator tool results in message history
+  for (const msg of messages) {
+    if (!(msg instanceof ToolMessage)) continue;
+    if (msg.name !== 'detect_operator') continue;
     try {
-      const parsed = JSON.parse(tr.content);
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      const parsed = JSON.parse(content);
       if (!parsed.valid || !parsed.name) continue;
 
       const correctName = parsed.name.toLowerCase();
 
-      // Check if the response mentions a DIFFERENT known operator
       for (const op of KNOWN_OPERATORS) {
         if (matchesOperator(response, op) && !correctName.includes(op)) {
-          // Model mentioned wrong operator — check the correct one ISN'T also there
           const correctFirst = correctName.split(' ')[0];
           if (!matchesOperator(response, correctFirst)) {
             console.warn(
-              `[Fidelity Fix] LLM said "${op}" but detect_operator returned "${parsed.name}". Overriding response.`
+              `[Fidelity Fix] LLM said "${op}" but detect_operator returned "${parsed.name}". Overriding response.`,
             );
             let corrected = `That number is on ${parsed.name} (${parsed.country}).`;
             if (parsed.denominationType === 'RANGE') {
@@ -322,10 +308,218 @@ function checkToolResultFidelity(
   return null;
 }
 
+// ── Graph Builder ──────────────────────────────────────────────────────────
+
+function buildGraph(
+  agentState: Partial<AgentState>,
+  options?: { onStream?: (chunk: string) => void },
+) {
+  const useShortCircuit =
+    agentState.source === 'telegram' ||
+    agentState.source === 'a2a' ||
+    agentState.source === 'whatsapp';
+
+  // ── Agent Node: calls the LLM ──────────────────────────────────────────
+
+  async function agentNode(
+    state: typeof GraphState.State,
+  ): Promise<Partial<typeof GraphState.State>> {
+    const iteration = state.iterations;
+    if (iteration >= MAX_ITERATIONS) {
+      return {
+        messages: [new AIMessage("Sorry, I couldn't complete that. Please try again.")],
+        iterations: iteration,
+      };
+    }
+
+    const useFallback = usingFallback && fallbackLlm && Date.now() < fallbackUntil;
+    let activeLlm = useFallback ? fallbackLlm! : primaryLlm;
+
+    // Bind tools to the LLM
+    const llmWithTools = activeLlm.bindTools(langchainTools);
+
+    let aiMessage: AIMessage;
+    try {
+      if (options?.onStream) {
+        // Stream mode — collect chunks and emit via callback
+        let fullContent = '';
+        const stream = await llmWithTools.stream(state.messages);
+        let chunks: any[] = [];
+        for await (const chunk of stream) {
+          if (chunk.content && typeof chunk.content === 'string') {
+            fullContent += chunk.content;
+            options.onStream(chunk.content);
+          }
+          chunks.push(chunk);
+        }
+
+        // Concatenate all chunks into a single AIMessage
+        if (chunks.length > 0) {
+          aiMessage = chunks.reduce((acc, chunk) => acc.concat(chunk));
+        } else {
+          aiMessage = new AIMessage(fullContent);
+        }
+
+        // If primary succeeded, clear fallback
+        if (!useFallback) usingFallback = false;
+      } else {
+        aiMessage = (await llmWithTools.invoke(state.messages)) as AIMessage;
+        if (!useFallback) usingFallback = false;
+      }
+    } catch (err: any) {
+      // Try fallback on failure
+      if (!useFallback && fallbackLlm) {
+        console.warn(`[Agent] Primary LLM failed iter=${iteration}, switching to fallback: ${err.message}`);
+        const fallbackWithTools = fallbackLlm.bindTools(langchainTools);
+        try {
+          aiMessage = (await fallbackWithTools.invoke(state.messages)) as AIMessage;
+          usingFallback = true;
+          fallbackUntil = Date.now() + 5 * 60 * 1000;
+          console.log(`[Agent] Switched to fallback LLM (${FALLBACK_MODEL}) for 5 minutes`);
+        } catch (fallbackErr: any) {
+          console.error(`[Agent] Fallback LLM also failed: ${fallbackErr.message}`);
+          return {
+            messages: [new AIMessage("I'm having trouble right now. Please try again in a moment.")],
+            iterations: iteration + 1,
+          };
+        }
+      } else {
+        console.error(`[Agent] LLM failed iter=${iteration}: ${err.message}`);
+        return {
+          messages: [new AIMessage("I'm having trouble right now. Please try again in a moment.")],
+          iterations: iteration + 1,
+        };
+      }
+    }
+
+    // Log iteration details
+    const toolCalls = aiMessage.tool_calls || [];
+    const textLen = typeof aiMessage.content === 'string' ? aiMessage.content.length : 0;
+    const toolNames = toolCalls.map((tc: any) => tc.name).join(', ') || 'none';
+    console.log(`[Agent] iter=${iteration} tools=[${toolNames}] text=${textLen}chars`);
+
+    // Check if LLM generated order_confirmation as text alongside tool calls
+    if (useShortCircuit && toolCalls.length > 0 && typeof aiMessage.content === 'string' && aiMessage.content.trim()) {
+      try {
+        const parsed = JSON.parse(aiMessage.content.trim());
+        if (parsed?.type === 'order_confirmation') {
+          console.log(`[Agent] Short-circuit: extracted order_confirmation from text content`);
+          return {
+            messages: [aiMessage],
+            shortCircuitResponse: aiMessage.content.trim(),
+            iterations: iteration + 1,
+          };
+        }
+      } catch {
+        // Not pure JSON — continue normally
+      }
+    }
+
+    return {
+      messages: [aiMessage],
+      iterations: iteration + 1,
+    };
+  }
+
+  // ── Tool Execution Node ────────────────────────────────────────────────
+
+  // Fast lookup: tool name → DynamicStructuredTool
+  const toolMap = new Map(langchainTools.map((t) => [t.name, t]));
+
+  async function toolsNode(
+    state: typeof GraphState.State,
+  ): Promise<Partial<typeof GraphState.State>> {
+    // Get the last AI message with tool calls
+    const lastMessage = state.messages[state.messages.length - 1] as AIMessage;
+    const toolCalls = lastMessage.tool_calls || [];
+
+    // Execute all tool calls in parallel
+    const toolMessages: ToolMessage[] = await Promise.all(
+      toolCalls.map(async (tc) => {
+        const tool = toolMap.get(tc.name);
+        let result: string;
+        if (!tool) {
+          result = JSON.stringify({ error: `Tool ${tc.name} not found` });
+        } else {
+          try {
+            result = await tool.invoke(tc.args);
+          } catch (err: any) {
+            result = JSON.stringify({ error: err.message });
+          }
+        }
+        return new ToolMessage({
+          content: result,
+          tool_call_id: tc.id!,
+          name: tc.name,
+        });
+      }),
+    );
+
+    // Check for payment short-circuit
+    if (useShortCircuit) {
+      const orderJson = checkPaymentShortCircuit(toolMessages, agentState.walletBalance);
+      if (orderJson) {
+        return {
+          messages: toolMessages,
+          shortCircuitResponse: orderJson,
+        };
+      }
+    }
+
+    return {
+      messages: toolMessages,
+    };
+  }
+
+  // ── Routing Logic ──────────────────────────────────────────────────────
+
+  function shouldContinue(state: typeof GraphState.State): 'tools' | 'end' {
+    // Short-circuit already triggered
+    if (state.shortCircuitResponse) return 'end';
+
+    // Hit max iterations
+    if (state.iterations >= MAX_ITERATIONS) return 'end';
+
+    // Check the last message for tool calls
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (lastMessage instanceof AIMessage && lastMessage.tool_calls && lastMessage.tool_calls.length > 0) {
+      return 'tools';
+    }
+
+    return 'end';
+  }
+
+  function afterTools(state: typeof GraphState.State): 'agent' | 'end' {
+    // Short-circuit triggered by payment check
+    if (state.shortCircuitResponse) return 'end';
+    // Continue to agent for next iteration
+    return 'agent';
+  }
+
+  // ── Build the Graph ────────────────────────────────────────────────────
+
+  const graph = new StateGraph(GraphState)
+    .addNode('agent', agentNode)
+    .addNode('tools', toolsNode)
+    .addEdge(START, 'agent')
+    .addConditionalEdges('agent', shouldContinue, {
+      tools: 'tools',
+      end: END,
+    })
+    .addConditionalEdges('tools', afterTools, {
+      agent: 'agent',
+      end: END,
+    });
+
+  return graph.compile();
+}
+
+// ── Main Entry Point ───────────────────────────────────────────────────────
+
 /**
  * Run the Toppa agent with LLM streaming support.
  *
- * Each call gets its own messages array — fully isolated between concurrent users.
+ * Each call gets its own graph invocation — fully isolated between concurrent users.
  * Loads conversation history from MongoDB for context continuity.
  *
  * When onStream is provided, text chunks are emitted as the LLM generates them,
@@ -336,234 +530,94 @@ export async function runToppaAgent(
   state: Partial<AgentState> = {},
   options?: { onStream?: (chunk: string) => void },
 ): Promise<{ response: string }> {
-  // Build per-request context — passed directly to tool functions via executeToolCalls.
-  // Previously this was a module-level global that could be overwritten by concurrent requests.
-  // Build ctx for any source that has a userAddress — not just Telegram.
-  // A2A and future sources get tool access when they provide user identity.
+  // Build per-request context for tool functions
   const requestCtx: SchedulingContext | null = state.userAddress
-    ? { userId: state.userAddress, chatId: (state as any).chatId || 0, walletAddress: state.walletAddress }
+    ? { userId: state.userAddress, chatId: state.chatId || 0, walletAddress: state.walletAddress, groupId: state.groupId }
     : null;
 
-  // Build system prompt and load conversation history in parallel (independent I/O)
+  // Set request context for tool closures
+  _requestCtx = requestCtx;
+
+  // Build system prompt and load conversation history in parallel
   const [systemPrompt, history] = await Promise.all([
     buildSystemPrompt(state),
     state.userAddress ? getConversationHistory(state.userAddress) : Promise.resolve([]),
   ]);
 
-  const messages: OpenAI.ChatCompletionMessageParam[] = [
-    { role: 'system', content: systemPrompt },
-    ...history,
-    { role: 'user', content: userMessage },
+  // Convert OpenAI-format history to LangChain messages
+  const historyMessages: BaseMessage[] = history.map((msg) => {
+    if (msg.role === 'user') return new HumanMessage(msg.content as string);
+    return new AIMessage(msg.content as string);
+  });
+
+  const messages: BaseMessage[] = [
+    new SystemMessage(systemPrompt),
+    ...historyMessages,
+    new HumanMessage(userMessage),
   ];
 
-  const useShortCircuit = state.source === 'telegram' || state.source === 'a2a' || state.source === 'whatsapp';
+  // Log context size
+  const totalChars = messages.reduce(
+    (sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0),
+    0,
+  );
+  console.log(`[Agent] Context: ${messages.length} msgs, ~${totalChars} chars, ${langchainTools.length} tools`);
+
+  // Build and invoke the graph
+  const app = buildGraph(state, options);
+
+  const result = await app.invoke({
+    messages,
+    shortCircuitResponse: null,
+    iterations: 0,
+  });
+
+  // Extract final response
   let finalResponse = '';
-  // Accumulate detect_operator results across ALL iterations for fidelity check.
-  let allDetectResults: Array<{ content: string; toolName?: string }> = [];
 
-  // Log context size before first LLM call — helps diagnose slow responses
-  const totalChars = messages.reduce((sum, m) => sum + (typeof m.content === 'string' ? m.content.length : 0), 0);
-  console.log(`[Agent] Context: ${messages.length} msgs, ~${totalChars} chars, ${llmTools.length} tools`);
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const iterStart = Date.now();
-
-    // Pick LLM client — use fallback if primary recently failed
-    const useFallback = usingFallback && fallbackLlm && Date.now() < fallbackUntil;
-    const activeLlm = useFallback ? fallbackLlm : llm;
-    const activeModel = useFallback ? FALLBACK_MODEL : (process.env.LLM_MODEL || 'deepseek-chat');
-
-    // Stream the LLM response — retry with fallback on timeout
-    let textContent = '';
-    let pendingToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
-    let streamSucceeded = false;
-
-    // attempts: 0 = primary, 1 = fallback (or retry primary if no fallback)
-    const maxAttempts = 2;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const isRetry = attempt > 0;
-      const client = (isRetry && fallbackLlm) ? fallbackLlm : activeLlm;
-      const model = (isRetry && fallbackLlm) ? FALLBACK_MODEL : activeModel;
-
-      const abortController = new AbortController();
-      const timeout = setTimeout(() => abortController.abort(), 30_000);
-
-      let stream;
-      try {
-        stream = await client.chat.completions.create({
-          model,
-          temperature: 0,
-          max_tokens: 800,
-          messages,
-          tools: llmTools,
-          tool_choice: 'auto',
-          stream: true,
-        }, { signal: abortController.signal });
-      } catch (err: any) {
-        clearTimeout(timeout);
-        if (!isRetry) {
-          console.warn(`[Agent] LLM failed iter=${i} (${model}), ${fallbackLlm ? 'switching to fallback' : 'retrying'}...`);
-          continue;
-        }
-        console.error(`[Agent] LLM failed iter=${i} (${model}): ${err.message}`);
-        finalResponse = "I'm having trouble right now. Please try again in a moment.";
-        break;
-      }
-
-      textContent = '';
-      pendingToolCalls = new Map();
-
-      try {
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta;
-          if (!delta) continue;
-
-          if (delta.content) {
-            textContent += delta.content;
-            options?.onStream?.(delta.content);
-          }
-
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const existing = pendingToolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
-              if (tc.id) existing.id = tc.id;
-              if (tc.function?.name) existing.name = tc.function.name;
-              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-              pendingToolCalls.set(tc.index, existing);
-            }
-          }
-        }
-        clearTimeout(timeout);
-        streamSucceeded = true;
-        // If fallback succeeded, stay on fallback for 5 minutes
-        if (isRetry && fallbackLlm) {
-          usingFallback = true;
-          fallbackUntil = Date.now() + 5 * 60 * 1000;
-          console.log(`[Agent] Switched to fallback LLM (${FALLBACK_MODEL}) for 5 minutes`);
-        }
-        // If primary succeeded, clear fallback mode
-        if (!isRetry && !useFallback) {
-          usingFallback = false;
-        }
-        break;
-      } catch (err: any) {
-        clearTimeout(timeout);
-        if (textContent.length > 10) {
-          console.warn(`[Agent] LLM stream interrupted iter=${i}, using partial text (${textContent.length} chars)`);
-          streamSucceeded = true;
+  if (result.shortCircuitResponse) {
+    // Payment short-circuit or order confirmation from text
+    finalResponse = result.shortCircuitResponse;
+  } else {
+    // Find the last AI message
+    const allMessages: BaseMessage[] = result.messages;
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      if (allMessages[i] instanceof AIMessage) {
+        const content = allMessages[i].content;
+        if (typeof content === 'string' && content.trim()) {
+          finalResponse = content;
           break;
         }
-        if (!isRetry) {
-          console.warn(`[Agent] LLM timeout iter=${i} (${model}), ${fallbackLlm ? 'switching to fallback' : 'retrying'}...`);
-          continue;
-        }
-        console.error(`[Agent] LLM stream failed iter=${i} (${model}): ${err.message}`);
-        finalResponse = "I'm having trouble right now. Please try again in a moment.";
       }
     }
-
-    if (!streamSucceeded) break;
-
-    // Build assistant message for history
-    const toolCallsArray = [...pendingToolCalls.values()];
-    const llmMs = Date.now() - iterStart;
-    const toolNames = toolCallsArray.map(tc => tc.name).join(', ') || 'none';
-    const textLen = textContent.length;
-    console.log(`[Agent] iter=${i} llm=${llmMs}ms tools=[${toolNames}] text=${textLen}chars`);
-
-    const assistantMessage: OpenAI.ChatCompletionMessageParam = {
-      role: 'assistant',
-      content: textContent || null,
-      ...(toolCallsArray.length > 0 && {
-        tool_calls: toolCallsArray.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        })),
-      }),
-    };
-    messages.push(assistantMessage);
-
-    // No tool calls → final text response
-    if (toolCallsArray.length === 0) {
-      finalResponse = textContent;
-      break;
-    }
-
-    // If LLM generated order_confirmation as text alongside tool calls, extract it
-    // instead of continuing the loop. DeepSeek sometimes generates both simultaneously.
-    if (useShortCircuit && textContent) {
-      try {
-        const parsed = JSON.parse(textContent.trim());
-        if (parsed?.type === 'order_confirmation') {
-          console.log(`[Agent] Short-circuit: extracted order_confirmation from text content`);
-          finalResponse = textContent.trim();
-          break;
-        }
-      } catch {
-        // Not pure JSON — continue with tool execution
-      }
-    }
-
-    // Execute all tool calls in parallel
-    const toolResults = await executeToolCalls(
-      toolCallsArray.map(tc => ({
-        id: tc.id,
-        function: { name: tc.name, arguments: tc.arguments },
-      })),
-      requestCtx,
-    );
-
-    // Accumulate detect_operator results for post-response fidelity check
-    for (let idx = 0; idx < toolResults.length; idx++) {
-      if (toolCallsArray[idx]?.name === 'detect_operator') {
-        allDetectResults.push({
-          content: toolResults[idx].content,
-          toolName: 'detect_operator',
-        });
-      }
-    }
-
-    // Short-circuit: payment_required → order_confirmation (saves LLM round trip)
-    // Also checks balance — returns insufficient-balance message if user can't afford it.
-    if (useShortCircuit) {
-      const orderJson = checkPaymentShortCircuit(toolResults, state.walletBalance);
-      if (orderJson) {
-        finalResponse = orderJson;
-        break;
-      }
-    }
-
-    // Add tool results to messages for next iteration
-    messages.push(...toolResults);
-
   }
 
   if (!finalResponse) {
     finalResponse = "Sorry, I couldn't complete that. Please try again.";
   }
 
-  // Post-response fidelity check: catch DeepSeek misreading tool results
-  // (e.g., tool returns "MTN Nigeria" but LLM says "Airtel Nigeria")
-  if (finalResponse && allDetectResults.length > 0) {
-    const correction = checkToolResultFidelity(finalResponse, allDetectResults);
-    if (correction) {
-      finalResponse = correction;
-    }
+  // Post-response fidelity check: catch LLM misreading tool results
+  const correction = checkToolResultFidelity(finalResponse, result.messages);
+  if (correction) {
+    finalResponse = correction;
   }
 
-  // Save conversation to memory (non-blocking — don't slow down the response)
-  // Skip: errors (poison history), order confirmations (cause DeepSeek to replay old orders),
-  // and empty responses. Only save conversational messages that provide useful context.
-  const shouldSkipMemory = !finalResponse
-    || finalResponse.startsWith('I ran into a processing limit')
-    || finalResponse.startsWith("I'm having trouble")
-    || finalResponse.includes('"order_confirmation"')
-    || finalResponse.includes('"payment_required"');
+  // Save conversation to memory (non-blocking)
+  const shouldSkipMemory =
+    !finalResponse ||
+    finalResponse.startsWith('I ran into a processing limit') ||
+    finalResponse.startsWith("I'm having trouble") ||
+    finalResponse.includes('"order_confirmation"') ||
+    finalResponse.includes('"payment_required"');
 
   if (state.userAddress && !shouldSkipMemory) {
-    saveConversation(state.userAddress, userMessage, finalResponse).catch((err: any) => console.error('[Memory Save Error]', err.message));
+    saveConversation(state.userAddress, userMessage, finalResponse).catch((err: any) =>
+      console.error('[Memory Save Error]', err.message),
+    );
   }
+
+  // Clean up request context
+  _requestCtx = null;
 
   return { response: finalResponse };
 }

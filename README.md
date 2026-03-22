@@ -2,11 +2,11 @@
 
 > AI agent for digital goods and utility payments across 170+ countries, powered by Celo.
 
-**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa)
+**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | [WhatsApp](https://wa.me/YOUR_NUMBER) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa)
 
 ## What Toppa Does
 
-Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language.
+Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on Celo — no bank account, no KYC, no fiat offramp complexity. Just tell it what you need in plain language or send a voice note.
 
 **Services:**
 - **Airtime** — Mobile top-ups across 170+ countries, 800+ operators. Auto-detects operator from phone number.
@@ -17,7 +17,60 @@ Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on
 **Key capability — Multi-intent resolution:**
 > "Get my brother 500 naira airtime in Nigeria, pay mom's DStv bill in Lagos, and buy me a $25 Steam gift card"
 
-Toppa parses this into three parallel operations and executes them all. This is where AI makes a genuine difference — not just a wrapper around an API.
+Toppa parses this into three parallel operations and executes them all.
+
+## Platforms
+
+### Telegram Bot
+- Personal wallets with deposit/withdraw
+- Voice note transcription (Deepgram)
+- @mention filtering in groups (responds only when tagged)
+- Group wallets with democratic poll-based governance
+- Inline buttons for order confirmation
+- Scheduled payments via heartbeat engine
+
+### WhatsApp Bot
+- Same personal wallet system (Baileys)
+- Multi-currency deposits (cUSD, CELO, USDC, USDT, cEUR) with `/swap`
+- @mention filtering in groups
+- Group wallets and polls (native WhatsApp polls)
+- Voice note transcription
+- QR code pairing for self-hosted setup
+
+## Features
+
+### Group Wallets
+Groups (Telegram or WhatsApp) can enable a shared wallet. One admin, democratic spending via polls.
+
+- `/group enable` — Create a group wallet (first user becomes admin)
+- `/group` — View group balance, address, members, recent activity
+- `/contribute <amount>` — Transfer cUSD from personal wallet to group
+- `/group_withdraw <address> <amount>` — Admin withdraws from group wallet
+- `/threshold <0-100>` — Set poll approval percentage (default 70%)
+
+All group spending goes through a poll — members vote, and the action executes when the threshold is reached (or is rejected if impossible to reach).
+
+### Multi-Currency Deposits
+Deposit any supported Celo token and auto-swap to cUSD:
+- **Supported:** cUSD, CELO, USDC, USDT, cEUR
+- `/swap` — Convert all non-cUSD tokens to cUSD via Uniswap V3
+
+### Expenditure Reports
+Generate PDF or Excel statements of your transaction history:
+- Personal statements or group statements
+- Filter by date range
+- Delivered as a document right in chat
+
+### Voice Notes
+Send a voice message on Telegram or WhatsApp — Toppa transcribes it via Deepgram and processes the request. Supports English, French, Yoruba, Swahili, and more.
+
+### Smart Memory
+Toppa remembers contacts, preferences, and transaction history across sessions (MongoDB-backed, 24h TTL).
+
+### Scheduled Payments
+Set up recurring payments — the heartbeat engine checks every 15 minutes:
+- "Send mom airtime every Friday"
+- "Pay my DStv on the 15th of every month"
 
 ## Architecture
 
@@ -31,8 +84,8 @@ Toppa parses this into three parallel operations and executes them all. This is 
 │                           Toppa Agent                                 │
 │                                                                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐  │
-│  │ HTTP API │  │ Telegram │  │   MCP    │  │   OpenAI-compatible   │  │
-│  │ (x402)   │  │ WhatsApp │  │  Server  │  │   Tool-Calling Loop   │  │
+│  │ HTTP API │  │ Telegram │  │   MCP    │  │   LangGraph Agent     │  │
+│  │ (x402)   │  │ WhatsApp │  │  Server  │  │   (StateGraph loop)   │  │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └───────────┬───────────┘  │
 │       └─────────────┼─────────────┘                    │              │
 │                     │                                  │              │
@@ -40,10 +93,15 @@ Toppa parses this into three parallel operations and executes them all. This is 
 │  │ ERC-8004 │  │  Reloadly  │  │    Self    │          │              │
 │  │ Identity │  │ 170+ ctry  │  │  Protocol  │          │              │
 │  └──────────┘  └────────────┘  └────────────┘          │              │
+│                                                        │              │
+│  ┌──────────┐  ┌────────────┐  ┌────────────┐          │              │
+│  │  Wallet  │  │   Group    │  │  Reports   │          │              │
+│  │ Manager  │  │  Wallets   │  │  (PDF/XLS) │          │              │
+│  └──────────┘  └────────────┘  └────────────┘          │              │
 └────────────────────────────────────────────────────────┼──────────────┘
                        │                                 │
               ┌────────┴─────────────────────────────────┴┐
-              │                Celo Network               │
+              │           Celo Network + MongoDB           │
               └───────────────────────────────────────────┘
 ```
 
@@ -51,15 +109,96 @@ Toppa parses this into three parallel operations and executes them all. This is 
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Agent** | OpenAI SDK | Direct, lightweight tool-calling loop with multi-intent execution |
+| **Agent** | LangGraph (StateGraph) | Agent ↔ tools loop with conditional edges, payment short-circuit, fidelity checks |
 | **LLM** | Gemini 2.0 Flash (via OpenRouter) | Fast, reliable, with automatic fallback to Llama 3.3 70B |
 | **Identity** | ERC-8004 | On-chain agent identity and reputation (Agent #1870 on Celo) |
 | **Payments** | x402 | HTTP 402 Payment Required for agent micropayments |
 | **Verification** | Self Protocol | ZK proof of humanity (passport-based, no data disclosed) |
 | **Digital Goods** | Reloadly | Airtime, data, bills, gift cards across 170+ countries |
 | **Blockchain** | Celo + viem | Low-cost L2, cUSD stablecoin, feeCurrency gas abstraction |
-| **Bot** | Telegram + WhatsApp (Baileys) | Chat interfaces with in-app wallets, rate limiting, input sanitization |
+| **Swaps** | Uniswap V3 (on Celo) | Multi-currency token swaps to cUSD |
+| **Wallets** | AES-256-GCM encrypted | MongoDB-backed wallet store with encrypted private keys |
+| **Bot** | Telegram (raw API) + WhatsApp (Baileys) | Chat interfaces with in-app wallets, rate limiting, input sanitization |
+| **Groups** | MongoDB | Group wallets, polls, contributions, transaction history |
+| **Reports** | pdfkit + exceljs | PDF and Excel expenditure statements |
+| **Voice** | Deepgram | Speech-to-text for voice note transcription |
 | **API** | Express | HTTP API with x402, MCP, and A2A protocol support |
+| **Storage** | MongoDB | Wallets, conversations, groups, receipts, user activity |
+
+## Project Structure
+
+```
+src/
+├── agent/                     # AI Agent (LangGraph)
+│   ├── graph.ts               # LangGraph StateGraph — agent ↔ tools loop
+│   ├── state.ts               # Agent state annotation
+│   ├── tools.ts               # 36 tools (32 free + 4 paid)
+│   ├── memory.ts              # Conversation history (MongoDB)
+│   ├── heartbeat.ts           # Proactive check-ins and alerts
+│   ├── scheduler.ts           # Scheduled/recurring payments
+│   ├── goals.ts               # User goals and contact storage
+│   └── user-activity.ts       # Activity tracking for heartbeat
+│
+├── api/                       # HTTP API Server
+│   └── server.ts              # Express (x402, MCP, A2A, admin routes)
+│
+├── apis/                      # External Service Clients
+│   ├── reloadly.ts            # Reloadly API (airtime, data, bills, gift cards)
+│   ├── prestmit.ts            # Prestmit API (gift card sell — coming soon)
+│   └── selfclaw.ts            # Self Protocol ZK verification (in reloadly.ts)
+│
+├── blockchain/                # On-Chain Interactions
+│   ├── x402.ts                # x402 payment verification
+│   ├── erc8004.ts             # ERC-8004 agent identity
+│   ├── reputation.ts          # On-chain reputation tracking
+│   ├── service-receipts.ts    # Payment → service binding receipts
+│   ├── swap.ts                # Uniswap V3 token swaps (multi-currency)
+│   ├── relay-bridge.ts        # Cross-chain bridge (coming soon)
+│   └── replay-guard.ts        # Transaction replay prevention
+│
+├── bot/                       # Chat Interfaces
+│   ├── telegram/              # Telegram-specific
+│   │   ├── bot.ts             # Telegram bot (raw API, long polling/webhook)
+│   │   ├── client.ts          # Minimal Telegram Bot API client
+│   │   ├── handlers.ts        # Telegram callback handler (payments, orders, gifts)
+│   │   └── webhook.ts         # Prestmit webhook handler (paused)
+│   ├── whatsapp/              # WhatsApp-specific
+│   │   └── bot.ts             # WhatsApp bot (Baileys)
+│   ├── service-executor.ts    # Shared service execution + result formatting
+│   ├── groups.ts              # Group wallet infrastructure (MongoDB)
+│   ├── group-context.ts       # Group @mention tracking, rate limiting
+│   ├── pending-orders.ts      # Order confirmation flow
+│   ├── user-settings.ts       # Per-user settings (timezone, etc.)
+│   ├── sell-orders.ts         # Sell order tracking (paused)
+│   └── sell-order-poller.ts   # Sell order status poller (paused)
+│
+├── wallet/                    # Wallet Management
+│   ├── manager.ts             # WalletManager — create, balance, withdraw, swap
+│   ├── crypto.ts              # AES-256-GCM encryption for private keys
+│   ├── mongo-store.ts         # MongoDB wallet store
+│   └── store.ts               # Wallet store interface + in-memory fallback
+│
+├── reports/                   # Expenditure Reports
+│   └── generator.ts           # PDF and Excel statement generation
+│
+├── mcp/                       # Model Context Protocol
+│   ├── server.ts              # MCP Streamable HTTP server
+│   └── tools.ts               # 13 MCP tools
+│
+├── a2a/                       # Agent-to-Agent Protocol
+│   ├── handler.ts             # A2A JSON-RPC handler
+│   └── agent-card.ts          # A2A Agent Card generator
+│
+├── shared/                    # Shared Utilities
+│   ├── constants.ts           # Chain IDs, token addresses, config
+│   ├── sanitize.ts            # Input sanitization (phones, amounts, injection)
+│   ├── refund.ts              # Auto-refund on service failure
+│   ├── api-cache.ts           # TTL cache for API responses
+│   ├── balance-cache.ts       # Wallet balance cache
+│   └── reputation-meta.ts    # Reputation metadata helpers
+│
+└── index.ts                   # Entry point — starts API, Telegram, WhatsApp
+```
 
 ## API Endpoints
 
@@ -67,11 +206,17 @@ Toppa parses this into three parallel operations and executes them all. This is 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/` | Agent info + protocol details |
+| GET | `/health` | Health check |
+| GET | `/countries` | All supported countries |
+| GET | `/countries/:cc/services` | Service availability for a country |
 | GET | `/operators/:country` | Mobile operators by country |
 | GET | `/data-plans/:country` | Data plan operators with bundle descriptions |
 | GET | `/billers/:country` | Utility billers by country (supports `?type=ELECTRICITY_BILL_PAYMENT`) |
 | GET | `/gift-cards/:country` | Gift card brands by country |
 | GET | `/gift-cards/search?q=Steam` | Search gift cards by brand |
+| GET | `/promotions/:country` | Active promotions by country |
+| GET | `/convert?amount=10&from=USD&country=NG` | Currency conversion |
+| GET | `/transaction/:type/:id` | Check transaction status |
 | GET | `/identity` | Agent ERC-8004 on-chain identity |
 | GET | `/reputation` | Agent reputation score |
 | POST | `/api/verify` | Self Protocol verification callback |
@@ -83,7 +228,15 @@ Toppa parses this into three parallel operations and executes them all. This is 
 | POST | `/send-data` | Send data plan top-up |
 | POST | `/pay-bill` | Pay utility bill |
 | POST | `/buy-gift-card` | Buy a gift card |
-| GET | `/gift-card-code/:id` | Get gift card redeem code |
+
+### Admin (API key required)
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/admin/receipts/stats` | Receipt statistics |
+| GET | `/admin/receipts/failed` | Failed receipts for review |
+| GET | `/admin/receipts/payer/:payer` | Receipts by payer |
+| GET | `/admin/receipts/tx/:txHash` | Receipt by payment tx hash |
+| GET | `/gift-card-code/:id` | Gift card redeem codes |
 
 ### x402 Payment Flow
 ```bash
@@ -110,7 +263,11 @@ cp .env.example .env
 # - LLM_API_KEY (OpenRouter API key)
 # - CELO_PRIVATE_KEY (agent wallet)
 # - RELOADLY_CLIENT_ID + SECRET (from reloadly.com)
+# - MONGODB_URI (MongoDB connection string)
+# - TELEGRAM_BOT_TOKEN (from @BotFather)
 # - ENABLE_WHATSAPP=true (optional — prints QR code for WhatsApp)
+# - DEEPGRAM_API_KEY (optional — for voice note transcription)
+# - WALLET_ENCRYPTION_KEY (32-byte hex — for encrypting wallet private keys)
 
 # Generate a wallet (if needed)
 npm run generate-wallet
@@ -121,6 +278,22 @@ npm run register
 # Start the agent
 npm run dev
 ```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LLM_API_KEY` | Yes | OpenRouter API key |
+| `CELO_PRIVATE_KEY` | Yes | Agent wallet private key |
+| `RELOADLY_CLIENT_ID` | Yes | Reloadly API credentials |
+| `RELOADLY_CLIENT_SECRET` | Yes | Reloadly API credentials |
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `TELEGRAM_BOT_TOKEN` | Yes | From @BotFather |
+| `WALLET_ENCRYPTION_KEY` | Yes | 32-byte hex key for AES-256-GCM wallet encryption |
+| `DEEPGRAM_API_KEY` | Recommended | Voice note transcription |
+| `ENABLE_WHATSAPP` | Optional | Set `true` to enable WhatsApp bot |
+| `ADMIN_API_KEY` | Optional | Admin endpoint authentication |
+| `SELF_APP_SCOPE` | Optional | Self Protocol verification scope |
 
 ## Integrations
 
