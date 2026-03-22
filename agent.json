@@ -1,0 +1,120 @@
+{
+  "name": "Toppa",
+  "version": "2.0.0",
+  "description": "AI agent for digital goods and utility payments across 170+ countries on Celo. Processes real transactions — airtime, data, bills, gift cards — via Telegram, WhatsApp, and x402 API.",
+
+  "operatorWallet": "0x558e7BFaF2Cf1A494F44E50D92431Afc060c9D12",
+
+  "identity": {
+    "erc8004": {
+      "agentId": 1870,
+      "chainId": 42220,
+      "caip2": "eip155:42220",
+      "identityRegistry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+      "reputationRegistry": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+      "registrationTx": "https://celoscan.io/tx/0x...",
+      "agentURI": "ipfs://Qma4J24WHP2wu8wHUJKjR5HsL2HtwEvGKLcKU2sMrEEmob",
+      "explorer": "https://www.8004scan.io/agents/celo/1870"
+    },
+    "selfAgentId": {
+      "agentId": 48,
+      "network": "celo-sepolia",
+      "agentAddress": "0x9480a88916074D9B2f62c6954a41Ea4B9B40b64c"
+    }
+  },
+
+  "supportedTools": [
+    "check_country",
+    "get_operators",
+    "get_data_operators",
+    "get_billers",
+    "search_gift_cards",
+    "get_gift_cards",
+    "get_gift_card_code",
+    "get_country_services",
+    "get_promotions",
+    "detect_operator",
+    "save_instruction",
+    "set_schedule",
+    "check_scheduled_tasks",
+    "cancel_schedule",
+    "convert_currency",
+    "check_balance",
+    "get_deposit_address",
+    "get_all_balances",
+    "withdraw_request",
+    "swap_to_cusd",
+    "group_info",
+    "group_contribute",
+    "group_create_poll",
+    "group_spend",
+    "generate_statement",
+    "clear_history",
+    "set_timezone",
+    "set_language",
+    "check_goals",
+    "save_goal",
+    "remove_goal",
+    "send_airtime",
+    "send_data",
+    "pay_bill",
+    "buy_gift_card"
+  ],
+
+  "techStack": {
+    "runtime": "Node.js (ES2022)",
+    "language": "TypeScript 5.7",
+    "agentFramework": "LangGraph (StateGraph)",
+    "llm": {
+      "primary": "Gemini 2.0 Flash (via OpenRouter)",
+      "fallback": "Llama 3.3 70B"
+    },
+    "blockchain": "Celo (viem)",
+    "swaps": "Uniswap V3 (on Celo)",
+    "database": "MongoDB",
+    "encryption": "AES-256-GCM",
+    "voiceTranscription": "Deepgram",
+    "protocols": ["x402", "MCP", "A2A", "ERC-8004"]
+  },
+
+  "computeConstraints": {
+    "maxIterations": 10,
+    "llmTimeoutMs": 30000,
+    "fallbackCooldownMs": 300000,
+    "rateLimitPerUser": "10 req / 5 min",
+    "dailySpendingCap": "$50 per user",
+    "maxConcurrentTools": 1
+  },
+
+  "taskCategories": [
+    "mobile-airtime",
+    "mobile-data",
+    "utility-bill-payment",
+    "gift-card-purchase",
+    "wallet-management",
+    "token-swaps",
+    "group-governance",
+    "expenditure-reporting",
+    "scheduled-payments",
+    "currency-conversion"
+  ],
+
+  "endpoints": {
+    "web": "https://toppa.cc",
+    "api": "https://api.toppa.cc",
+    "telegram": "https://t.me/toppa402bot",
+    "mcp": "https://api.toppa.cc/mcp",
+    "a2a": "https://api.toppa.cc/a2a",
+    "agentCard": "https://api.toppa.cc/.well-known/agent-card.json",
+    "registration": "https://api.toppa.cc/registration.json"
+  },
+
+  "trustTypes": ["reputation", "crypto-economic"],
+
+  "coverage": {
+    "countries": "170+",
+    "operators": "800+",
+    "giftCardBrands": "300+",
+    "giftCardProducts": "14000+"
+  }
+}
