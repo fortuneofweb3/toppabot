@@ -1099,7 +1099,12 @@ async function cmdContribute(chatId: number, userId: string, text: string, group
   try {
     await tg('sendMessage', { chat_id: chatId, text: `Contributing ${amount.toFixed(2)} ${TOKEN_SYMBOL} to group wallet...` });
     const result = await contributeToGroup(group, userId, amount, walletManager);
-    const { balance: newGroupBalance } = await getGroupBalance(group, walletManager);
+    const [{ balance: newGroupBalance }, { balance: newPersonalBalance }] = await Promise.all([
+      getGroupBalance(group, walletManager),
+      walletManager.getBalance(userId),
+    ]);
+
+    // Confirm in the group chat
     await tg('sendMessage', {
       chat_id: chatId,
       text:
@@ -1107,6 +1112,19 @@ async function cmdContribute(chatId: number, userId: string, text: string, group
         `Group: ${group.name}\n` +
         `Amount: ${amount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
         `New Group Balance: ${parseFloat(newGroupBalance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+        `TX: \`${result.txHash}\`\n` +
+        `${EXPLORER_BASE}/tx/${result.txHash}`,
+      parse_mode: 'Markdown',
+    });
+
+    // DM the contributor with their personal deduction details
+    tgSilent('sendMessage', {
+      chat_id: parseInt(userId),
+      text:
+        `💸 Group Contribution Sent\n\n` +
+        `Group: ${group.name}\n` +
+        `Amount: -${amount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+        `Your Balance: ${parseFloat(newPersonalBalance).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
         `TX: \`${result.txHash}\`\n` +
         `${EXPLORER_BASE}/tx/${result.txHash}`,
       parse_mode: 'Markdown',

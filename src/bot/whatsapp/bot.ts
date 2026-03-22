@@ -944,7 +944,12 @@ async function handleCommand(
       try {
         await sock.sendMessage(jid, { text: `Contributing ${cAmount.toFixed(2)} ${TOKEN_SYMBOL} to group wallet...` });
         const result = await contributeToGroup(group, userId, cAmount, walletManager);
-        const { balance: newGBal } = await getGroupBalance(group, walletManager);
+        const [{ balance: newGBal }, { balance: newPersonalBal }] = await Promise.all([
+          getGroupBalance(group, walletManager),
+          walletManager.getBalance(userId),
+        ]);
+
+        // Confirm in the group chat
         await sock.sendMessage(jid, {
           text:
             `✅ Contribution Successful\n\n` +
@@ -954,6 +959,18 @@ async function handleCommand(
             `TX: \`\`\`${result.txHash}\`\`\`\n` +
             `${EXPLORER_BASE}/tx/${result.txHash}`
         });
+
+        // DM the contributor with their personal deduction details
+        const personalJid = `${userId.replace('wa_', '')}@s.whatsapp.net`;
+        sock.sendMessage(personalJid, {
+          text:
+            `💸 Group Contribution Sent\n\n` +
+            `Group: ${group.name}\n` +
+            `Amount: -${cAmount.toFixed(2)} ${TOKEN_SYMBOL}\n` +
+            `Your Balance: ${parseFloat(newPersonalBal).toFixed(2)} ${TOKEN_SYMBOL}\n\n` +
+            `TX: \`\`\`${result.txHash}\`\`\`\n` +
+            `${EXPLORER_BASE}/tx/${result.txHash}`
+        }).catch(() => {});
       } catch (err: any) {
         await sock.sendMessage(jid, { text: `Contribution failed: ${err.message}` });
       }
