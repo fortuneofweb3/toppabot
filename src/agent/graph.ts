@@ -94,7 +94,12 @@ GIFT CARD SELL: Gift card selling is COMING SOON — we're integrating a new pro
 
 GROUP WALLETS: Groups have shared wallets. Only a group admin can enable it via /group enable — it checks admin status. Members can /contribute cUSD from their personal wallet to the group wallet. Admin can spend from the group wallet or /group_withdraw. Use group_info, group_contribute, group_spend tools when in a group context. In private chats, always use the user's personal wallet.
 
-GROUP GOVERNANCE: ALL group spending decisions require a poll — airtime, data, bills, gift cards, recurring payments, scheduled tasks, and cancellations. Any member can request a spend, but it goes to a vote. The action only executes when enough members approve (default 70%, admin-customizable via /threshold). Polls expire after 24 hours.
+POLLS vs TASKS — these are COMPLETELY DIFFERENT:
+- POLL = group_create_poll → creates a real native poll in the group chat for members to vote on. Use this for ANY group spending decision.
+- TASK = schedule_recurring / schedule_task → creates a PRIVATE reminder for the user. Does NOT create a poll. Does NOT involve the group.
+NEVER say "I've created a poll" unless you actually called group_create_poll. If the user asks for a poll, ALWAYS call group_create_poll.
+
+GROUP GOVERNANCE: ALL group spending decisions require a poll via group_create_poll. Any member can request a spend, but it goes to a vote. The action only executes when enough members approve (default 70%, admin-customizable via /threshold). Polls expire after 24 hours.
 EXCEPTION: The group admin can bypass polls and execute spending immediately. If the admin requests a group spend, use group_spend directly (it handles admin bypass automatically). For non-admin members, group_spend auto-creates a poll. If the admin has disabled polling (/poll off), all members can spend directly without polls.
 Group poll commands (admin only): /poll cancel [id], /poll approve [id], /poll off, /poll on. Members vote via native polls or /vote yes [id] / /vote no [id].
 
@@ -142,7 +147,7 @@ async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
   }
 
   if (state.groupId) {
-    prompt += `\nCONTEXT: You are in a GROUP CHAT (groupId: ${state.groupId}). Group commands are available. For spending requests, use group_create_poll to let the group vote before spending. The poll system handles threshold-based approval automatically.`;
+    prompt += `\nCONTEXT: You are in a GROUP CHAT (groupId: ${state.groupId}). Group commands are available. For ANY spending request (one-time or recurring), you MUST call group_create_poll to create a real poll for the group to vote on. Do NOT use schedule_recurring or schedule_task for group spending — those create private reminders, not polls. The poll system handles threshold-based approval automatically.`;
   } else {
     prompt += `\nCONTEXT: You are in a PRIVATE CHAT. Use the user's personal wallet for all operations.`;
   }
@@ -632,6 +637,17 @@ export async function runToppaAgent(
   const correction = checkToolResultFidelity(finalResponse, result.messages);
   if (correction) {
     finalResponse = correction;
+  }
+
+  // Safety: catch LLM claiming it created a poll without actually calling group_create_poll.
+  // The LLM sometimes calls schedule_recurring (private task) and says "I've created a poll" — this is wrong.
+  if (!result.shortCircuitResponse && state.groupId) {
+    const lc = finalResponse.toLowerCase();
+    if ((lc.includes('created a poll') || lc.includes('created the poll') || lc.includes("i've created a poll")) &&
+        !result.messages.some((m: BaseMessage) => m instanceof ToolMessage && m.name === 'group_create_poll')) {
+      console.warn('[Agent] LLM claimed poll created but group_create_poll was never called — correcting');
+      finalResponse = "I set up the task, but I need to create an actual poll for the group to vote on. Let me do that now — one moment.";
+    }
   }
 
   // Save conversation to memory (non-blocking)
