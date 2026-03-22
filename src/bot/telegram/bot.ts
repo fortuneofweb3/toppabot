@@ -18,7 +18,8 @@ import { getUserGoals } from '../../agent/goals';
 import { getFxRate } from '../../apis/reloadly';
 import { startSellOrderPoller, stopSellOrderPoller } from '../sell-order-poller';
 import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, setPollMessageInfo, getPollByTgPollId, getPollById, recordPollVote, closePoll, setPollingEnabled, getMostRecentActivePoll, getActivePolls } from '../groups';
-import { recordGroupMsg, buildGroupContext as buildGroupCtx, UserRateLimit, RATE_LIMIT_WINDOW, MAX_REQUESTS_PER_WINDOW, DAILY_SPENDING_LIMIT, SPENDING_RESET_WINDOW } from '../group-context';
+import { recordGroupMsg, buildGroupContext as buildGroupCtx, UserRateLimit, RATE_LIMIT_WINDOW, MAX_REQUESTS_PER_WINDOW, DAILY_SPENDING_LIMIT, VERIFIED_SPENDING_LIMIT, SPENDING_RESET_WINDOW } from '../group-context';
+import { getDailySpendingLimit, formatVerificationPrompt } from '../../blockchain/self-verification';
 
 // ─────────────────────────────────────────────────
 // Wallet & Order Infrastructure
@@ -128,8 +129,14 @@ async function checkRateLimit(userId: string): Promise<{ allowed: boolean; reaso
     persistSpendingToDb(userId, 0, now);
   }
 
-  if (userLimit.totalSpent >= DAILY_SPENDING_LIMIT) {
-    return { allowed: false, reason: `Daily spending limit of $${DAILY_SPENDING_LIMIT} reached. Try again tomorrow.` };
+  // Self Protocol tiered limits: verified users get higher daily cap
+  const userDailyLimit = await getDailySpendingLimit(userId);
+  if (userLimit.totalSpent >= userDailyLimit) {
+    const isLowTier = userDailyLimit === DAILY_SPENDING_LIMIT;
+    const reason = isLowTier
+      ? `Daily limit of $${userDailyLimit} reached. Verify with Self Protocol to unlock $${VERIFIED_SPENDING_LIMIT}/day! Use /verify to get started.`
+      : `Daily spending limit of $${userDailyLimit} reached. Try again tomorrow.`;
+    return { allowed: false, reason };
   }
 
   userLimit.requestCount++;

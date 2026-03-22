@@ -64,7 +64,8 @@ export interface UserRateLimit {
 
 export const RATE_LIMIT_WINDOW = 60 * 1000;       // 1 minute
 export const MAX_REQUESTS_PER_WINDOW = 20;         // 20 req/min
-export const DAILY_SPENDING_LIMIT = 50;            // $50/day
+export const DAILY_SPENDING_LIMIT = 20;            // $20/day for unverified users
+export const VERIFIED_SPENDING_LIMIT = 200;        // $200/day for Self-verified users
 export const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
 /**

@@ -618,8 +618,10 @@ app.get('/health', (_req: Request, res: Response) => {
 // Spec: https://eips.ethereum.org/EIPS/eip-8004#endpoint-domain-verification
 app.get('/.well-known/agent-registration.json', (_req: Request, res: Response) => {
   const agentId = parseInt(process.env.AGENT_ID || '1870');
-  const chainId = process.env.NODE_ENV === 'production' ? 42220 : 44787;
-  const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS || '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432';
+  const chainId = process.env.NODE_ENV === 'production' ? 42220 : 11142220;
+  const registryAddress = process.env.NODE_ENV === 'production'
+    ? (process.env.ERC8004_REGISTRY_ADDRESS || '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432')
+    : '0x8004A818BFB912233c491871b3d84c89A494BD9e';
 
   res.set('Access-Control-Allow-Origin', '*');
   res.json({
@@ -629,8 +631,8 @@ app.get('/.well-known/agent-registration.json', (_req: Request, res: Response) =
         agentRegistry: `eip155:${chainId}:${registryAddress}`,
       },
       {
-        agentId: 34481,
-        agentRegistry: `eip155:8453:${registryAddress}`,
+        agentId: 242,
+        agentRegistry: `eip155:11142220:0x8004A818BFB912233c491871b3d84c89A494BD9e`,
       },
     ],
   });

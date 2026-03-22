@@ -70,11 +70,12 @@
       "fallback": "Llama 3.3 70B"
     },
     "blockchain": "Celo (viem)",
-    "swaps": "Uniswap V3 (on Celo)",
+    "swaps": "Uniswap V3 (Trading API + direct contracts on Celo)",
+    "identity_verification": "Self Protocol (ZK proof-of-humanity)",
     "database": "MongoDB",
     "encryption": "AES-256-GCM",
     "voiceTranscription": "Deepgram",
-    "protocols": ["x402", "MCP", "A2A", "ERC-8004"]
+    "protocols": ["x402", "MCP", "A2A", "ERC-8004", "Self Protocol"]
   },
 
   "computeConstraints": {
@@ -82,7 +83,7 @@
     "llmTimeoutMs": 30000,
     "fallbackCooldownMs": 300000,
     "rateLimitPerUser": "10 req / 5 min",
-    "dailySpendingCap": "$50 per user",
+    "dailySpendingCap": "$20 unverified / $200 Self-verified per user",
     "maxConcurrentTools": 1
   },
 

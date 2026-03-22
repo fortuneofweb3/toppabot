@@ -103,7 +103,7 @@ const IPFS_GATEWAY = process.env.IPFS_GATEWAY || 'https://ipfs.toppa.cc';
 export function getAgentRegistrationFile(): object {
   const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
   const agentId = process.env.AGENT_ID ? parseInt(process.env.AGENT_ID) : null;
-  const chainId = isTestnet ? 44787 : 42220;
+  const chainId = isTestnet ? 11142220 : 42220;
 
   return {
     type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
@@ -261,8 +261,8 @@ export function getAgentRegistrationFile(): object {
         agentRegistry: `eip155:${chainId}:${IDENTITY_REGISTRY}`,
       },
       {
-        agentId: 34481,
-        agentRegistry: `eip155:8453:${IDENTITY_REGISTRY}`,
+        agentId: 242,
+        agentRegistry: `eip155:11142220:0x8004A818BFB912233c491871b3d84c89A494BD9e`,
       },
     ] : [],
     supportedTrust: ['reputation', 'crypto-economic', 'tee-attestation'],

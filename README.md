@@ -2,7 +2,7 @@
 
 > AI agent for digital goods and utility payments across 170+ countries, powered by Celo.
 
-**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | [WhatsApp](https://wa.me/YOUR_NUMBER) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa)
+**Use it:** [t.me/toppa402bot](https://t.me/toppa402bot) | [WhatsApp](https://wa.me/YOUR_NUMBER) | **See it:** [toppa.cc](https://toppa.cc) | **Build on it:** [toppa.cc/docs](https://toppa.cc/docs) | **Verify it:** [8004scan](https://www.8004scan.io/agents/celo/1870) · [Agentscan](https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df) · [Karma](https://www.karmahq.xyz/project/toppa) · [Self Agent ID](https://app.ai.self.xyz)
 
 ## What Toppa Does
 
@@ -50,10 +50,18 @@ Groups (Telegram or WhatsApp) can enable a shared wallet. One admin, democratic 
 
 All group spending goes through a poll — members vote, and the action executes when the threshold is reached (or is rejected if impossible to reach).
 
+### Identity Verification (Self Protocol)
+ZK proof-of-humanity for tiered access — no KYC, no personal data disclosed:
+- **Unverified users:** $20/day spending limit
+- **Self-verified users:** $200/day spending limit
+- `/verify` — Generate a Self Protocol verification link
+- Sybil-resistant: one passport = one identity (nullifier-based)
+- Self Agent ID: #48 on Celo Sepolia
+
 ### Multi-Currency Deposits
 Deposit any supported Celo token and auto-swap to cUSD:
 - **Supported:** cUSD, CELO, USDC, USDT, cEUR
-- `/swap` — Convert all non-cUSD tokens to cUSD via Uniswap V3
+- `/swap` — Convert all non-cUSD tokens to cUSD via Uniswap Trading API (with direct contract fallback)
 
 ### Expenditure Reports
 Generate PDF or Excel statements of your transaction history:
@@ -113,10 +121,10 @@ Set up recurring payments — the heartbeat engine checks every 15 minutes:
 | **LLM** | Gemini 2.0 Flash (via OpenRouter) | Fast, reliable, with automatic fallback to Llama 3.3 70B |
 | **Identity** | ERC-8004 | On-chain agent identity and reputation (Agent #1870 on Celo) |
 | **Payments** | x402 | HTTP 402 Payment Required for agent micropayments |
-| **Verification** | Self Protocol | ZK proof of humanity (passport-based, no data disclosed) |
+| **Verification** | Self Protocol | ZK proof of humanity — tiered spending limits ($20 unverified → $200 verified) |
 | **Digital Goods** | Reloadly | Airtime, data, bills, gift cards across 170+ countries |
 | **Blockchain** | Celo + viem | Low-cost L2, cUSD stablecoin, feeCurrency gas abstraction |
-| **Swaps** | Uniswap V3 (on Celo) | Multi-currency token swaps to cUSD |
+| **Swaps** | Uniswap Trading API + V3 | Optimized routing via Trading API with direct contract fallback |
 | **Wallets** | AES-256-GCM encrypted | MongoDB-backed wallet store with encrypted private keys |
 | **Bot** | Telegram (raw API) + WhatsApp (Baileys) | Chat interfaces with in-app wallets, rate limiting, input sanitization |
 | **Groups** | MongoDB | Group wallets, polls, contributions, transaction history |
@@ -152,7 +160,9 @@ src/
 │   ├── erc8004.ts             # ERC-8004 agent identity
 │   ├── reputation.ts          # On-chain reputation tracking
 │   ├── service-receipts.ts    # Payment → service binding receipts
-│   ├── swap.ts                # Uniswap V3 token swaps (multi-currency)
+│   ├── swap.ts                # Uniswap V3 direct contract swaps (fallback)
+│   ├── uniswap-api.ts         # Uniswap Trading API integration (primary)
+│   ├── self-verification.ts   # Self Protocol ZK identity + tiered limits
 │   ├── relay-bridge.ts        # Cross-chain bridge (coming soon)
 │   └── replay-guard.ts        # Transaction replay prevention
 │
@@ -309,6 +319,9 @@ Implements the x402 standard (HTTP 402 Payment Required). Other AI agents pay cU
 
 ### Self Protocol — ZK Verification
 ZK proof of humanity via passport NFC scanning. Users verify once in the Self app — no personal data disclosed. Sybil-resistant without KYC.
+
+- **Self Agent ID: #48** (Celo Sepolia) — Address: `0x9480a88916074D9B2f62c6954a41Ea4B9B40b64c`
+- **Registration:** [app.ai.self.xyz](https://app.ai.self.xyz) | [Self Docs](https://docs.self.xyz)
 
 ### Multi-Protocol Agent Access
 - **REST + x402** — Pay-per-call HTTP API for any agent

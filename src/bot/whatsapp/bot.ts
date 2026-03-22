@@ -125,7 +125,6 @@ interface UserRateLimit {
 const userRateLimits = new Map<string, UserRateLimit>();
 const RATE_LIMIT_WINDOW = 60 * 1000;
 const MAX_REQUESTS_PER_WINDOW = 20;
-const DAILY_SPENDING_LIMIT = 50;
 const SPENDING_RESET_WINDOW = 24 * 60 * 60 * 1000;
 
 function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
@@ -146,8 +145,15 @@ function checkRateLimit(userId: string): { allowed: boolean; reason?: string } {
     userLimit.spendingResetDate = now;
   }
 
-  if (userLimit.totalSpent >= DAILY_SPENDING_LIMIT) {
-    return { allowed: false, reason: `Daily spending limit of $${DAILY_SPENDING_LIMIT} reached. Try again tomorrow.` };
+  // Self Protocol tiered limits: verified users get higher daily cap
+  const { getDailySpendingLimit } = await import('../../blockchain/self-verification');
+  const userDailyLimit = await getDailySpendingLimit(userId);
+  if (userLimit.totalSpent >= userDailyLimit) {
+    const isLowTier = userDailyLimit <= 20;
+    const reason = isLowTier
+      ? `Daily limit of $${userDailyLimit} reached. Verify with Self Protocol to unlock $200/day! Use /verify to get started.`
+      : `Daily spending limit of $${userDailyLimit} reached. Try again tomorrow.`;
+    return { allowed: false, reason };
   }
 
   userLimit.requestCount++;
