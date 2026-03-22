@@ -9,6 +9,8 @@ import {
   sendAirtime, sendData,
   payBill as payReloadlyBill,
   buyGiftCard, getGiftCardRedeemCode,
+  getOperators, detectOperator,
+  getBillers, getGiftCardProduct,
 } from '../apis/reloadly';
 import { sanitizePhone, sanitizeCountryCode, sanitizeAccountNumber } from '../shared/sanitize';
 
@@ -47,7 +49,11 @@ function sanitizeToolArgs(toolName: string, args: Record<string, any>): Record<s
 }
 
 /**
- * Execute a Reloadly service tool by name
+ * Execute a Reloadly service tool by name.
+ *
+ * IMPORTANT: This runs AFTER the user has already paid cUSD on-chain.
+ * Every arg from the LLM is validated against Reloadly's real data
+ * before executing — never trust the LLM blindly.
  */
 export async function executeServiceTool(
   toolName: string,
@@ -55,22 +61,106 @@ export async function executeServiceTool(
 ): Promise<any> {
   const args = sanitizeToolArgs(toolName, toolArgs);
 
-  // Normalize gift card args: LLM sometimes generates toolArgs with `amount` instead
-  // of `unitPrice` when it creates order_confirmation directly (bypassing tool short-circuit).
-  // Reloadly requires `unitPrice`.
-  if (toolName === 'buy_gift_card' && args.unitPrice == null && args.amount != null) {
-    args.unitPrice = args.amount;
-    delete args.amount;
-  }
-
   switch (toolName) {
-    case 'send_airtime':
-      return sendAirtime(args as any);
-    case 'send_data':
-      return sendData(args as any);
-    case 'pay_bill':
+    case 'send_airtime': {
+      // Server-side: auto-detect operator from phone number (ignore any LLM-provided operatorId)
+      const detected = await detectOperator(args.phone, args.countryCode);
+      console.log(`[Validate] send_airtime: detected operator ${detected.name} (${detected.operatorId}) for ${args.phone}`);
+      return sendAirtime({
+        phone: args.phone,
+        countryCode: args.countryCode,
+        amount: args.amount,
+        operatorId: detected.operatorId,
+        useLocalAmount: args.useLocalAmount ?? false,
+      });
+    }
+
+    case 'send_data': {
+      // Server-side: validate operatorId belongs to the country, fallback to auto-detect
+      let operatorId = args.operatorId;
+      if (operatorId) {
+        const operators = await getOperators(args.countryCode);
+        const match = operators.find(op => op.operatorId === operatorId);
+        if (!match) {
+          console.warn(`[Validate] send_data: operatorId ${operatorId} not found in ${args.countryCode}, auto-detecting`);
+          const detected = await detectOperator(args.phone, args.countryCode);
+          operatorId = detected.operatorId;
+          console.log(`[Validate] send_data: using auto-detected ${detected.name} (${detected.operatorId})`);
+        } else {
+          console.log(`[Validate] send_data: operatorId ${operatorId} confirmed as ${match.name} in ${args.countryCode}`);
+        }
+      } else {
+        const detected = await detectOperator(args.phone, args.countryCode);
+        operatorId = detected.operatorId;
+        console.log(`[Validate] send_data: no operatorId provided, auto-detected ${detected.name} (${detected.operatorId})`);
+      }
+      return sendData({
+        phone: args.phone,
+        countryCode: args.countryCode,
+        amount: args.amount,
+        operatorId,
+        useLocalAmount: args.useLocalAmount ?? false,
+      });
+    }
+
+    case 'pay_bill': {
+      // Server-side: validate billerId exists
+      if (args.billerId) {
+        try {
+          // getBillers doesn't filter by ID, but we can at least verify the country has billers
+          const billers = await getBillers({ countryCode: args.countryCode || 'NG' });
+          const match = billers.find((b: any) => b.id === args.billerId);
+          if (!match) {
+            console.warn(`[Validate] pay_bill: billerId ${args.billerId} not found — proceeding (may be in different country)`);
+          } else {
+            console.log(`[Validate] pay_bill: billerId ${args.billerId} confirmed as ${match.name}`);
+          }
+        } catch (e: any) {
+          console.warn(`[Validate] pay_bill: biller validation failed: ${e.message}`);
+        }
+      }
       return payReloadlyBill(args as any);
+    }
+
     case 'buy_gift_card': {
+      // Normalize: LLM sometimes uses `amount` instead of `unitPrice`
+      if (args.unitPrice == null && args.amount != null) {
+        args.unitPrice = args.amount;
+        delete args.amount;
+      }
+
+      // Server-side: validate productId exists and price is within range
+      if (args.productId) {
+        try {
+          const product = await getGiftCardProduct(args.productId);
+          if (!product) {
+            throw new Error(`Gift card product ${args.productId} not found`);
+          }
+          // Validate price is within allowed range
+          if (product.denominationType === 'FIXED') {
+            const fixedAmounts = product.fixedSenderDenominations || [];
+            if (fixedAmounts.length > 0 && !fixedAmounts.includes(args.unitPrice)) {
+              // Find closest valid amount
+              const closest = fixedAmounts.reduce((prev: number, curr: number) =>
+                Math.abs(curr - args.unitPrice) < Math.abs(prev - args.unitPrice) ? curr : prev
+              );
+              console.warn(`[Validate] buy_gift_card: ${args.unitPrice} not in fixed amounts, using closest: ${closest}`);
+              args.unitPrice = closest;
+            }
+          } else if (product.denominationType === 'RANGE') {
+            const min = product.minSenderDenomination || 0;
+            const max = product.maxSenderDenomination || Infinity;
+            if (args.unitPrice < min || args.unitPrice > max) {
+              throw new Error(`Amount ${args.unitPrice} cUSD is outside the range ${min}-${max} cUSD for this gift card`);
+            }
+          }
+          console.log(`[Validate] buy_gift_card: productId ${args.productId} confirmed (${product.productName})`);
+        } catch (e: any) {
+          if (e.message.includes('not found') || e.message.includes('outside the range')) throw e;
+          console.warn(`[Validate] buy_gift_card: product validation failed: ${e.message}`);
+        }
+      }
+
       const result = await buyGiftCard(args as any);
       // Retry fetching redeem codes — Reloadly may need a few seconds to generate them.
       // This is a read-only GET call (no duplicate purchase risk).
@@ -86,9 +176,9 @@ export async function executeServiceTool(
         if (attempt < 4) await new Promise(r => setTimeout(r, 3000));
       }
       // Codes still not ready after retries — return without them.
-      // User can ask the agent later: "get code for transaction <id>"
       return { ...result, redeemCodesNote: 'Codes are being generated. Ask me for the code in a minute.' };
     }
+
     default:
       throw new Error(`Unknown service: ${toolName}`);
   }

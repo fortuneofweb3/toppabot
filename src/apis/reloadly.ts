@@ -519,7 +519,7 @@ export async function payBill(params: {
     amount: params.amount,
     billerId: params.billerId,
     useLocalAmount: params.useLocalAmount ?? false,
-    referenceId: `toppa-bill-${Date.now()}`,
+    referenceId: uniqueId('toppa-bill'),
   });
 }
 
