@@ -46,6 +46,7 @@ import {
 const SELF_SCOPE = process.env.SELF_SCOPE || 'toppa-verify';
 const API_BASE_URL = process.env.API_BASE_URL || 'https://api.toppa.cc';
 const SELF_ENDPOINT = `${API_BASE_URL}/api/verify`;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // ── Spending Tiers ───────────────────────────────────────────────────────
 
@@ -61,7 +62,7 @@ function getVerifier(): InstanceType<typeof SelfBackendVerifier> {
     _verifier = new SelfBackendVerifier(
       SELF_SCOPE,
       SELF_ENDPOINT,
-      false, // mainnet mode (not staging)
+      !IS_PRODUCTION, // true = staging (mock passports on Sepolia), false = mainnet (real passports)
       AllIds, // accept all document types (passport, ID card, etc.)
       new DefaultConfigStore({
         // No age restriction — we only care about proof of uniqueness
@@ -219,7 +220,7 @@ export async function createVerificationSession(
     endpoint: SELF_ENDPOINT,
     logoBase64: 'https://api.toppa.cc/agent-image.png',
     userId: paddedToken,
-    endpointType: 'https' as const,
+    endpointType: (IS_PRODUCTION ? 'https' : 'staging_https') as any,
     userIdType: 'hex' as const,
     disclosures: {
       // No age check or nationality disclosure — just proof of uniqueness

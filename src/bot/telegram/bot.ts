@@ -980,6 +980,20 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
       return;
     }
 
+    // Verify the user is a group admin before allowing wallet creation
+    try {
+      const member = await tg<{ status: string }>('getChatMember', { chat_id: chatId, user_id: parseInt(userId) });
+      if (member.status !== 'creator' && member.status !== 'administrator') {
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: 'Only group admins can enable the group wallet. Ask a group admin to run /group enable.',
+        });
+        return;
+      }
+    } catch {
+      // If we can't check, proceed (backward compat)
+    }
+
     // Get group name from Telegram
     let groupName = 'Group';
     try {
@@ -996,7 +1010,8 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
         `Wallet: ${group.walletAddress}\n` +
         `Admin: you\n\n` +
         `Members can /contribute cUSD to the group wallet.\n` +
-        `Admin can /group_withdraw to external addresses.`,
+        `Admin can /group_withdraw to external addresses.\n` +
+        `Spending requires ${Math.round(group.pollThreshold * 100)}% poll approval.`,
     });
     return;
   }
@@ -1015,11 +1030,15 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
   const contributions = await getMemberContributions(groupId);
   const recentTxs = await getGroupTransactions(groupId, 5);
 
+  const pollStatus = (group.pollingEnabled ?? true) ? 'ON' : 'OFF';
+  const thresholdPct = Math.round((group.pollThreshold ?? 0.7) * 100);
   let text2 =
     `👥 ${group.name} — Group Wallet\n\n` +
     `Address: ${group.walletAddress}\n` +
     `Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
-    `Members: ${group.members.length}\n`;
+    `Members: ${group.members.length}\n` +
+    `Poll Threshold: ${thresholdPct}%\n` +
+    `Polling: ${pollStatus}\n`;
 
   if (contributions.length > 0) {
     text2 += `\nContributions:\n`;

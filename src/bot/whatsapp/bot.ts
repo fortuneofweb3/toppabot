@@ -832,9 +832,29 @@ async function handleCommand(
           await sock.sendMessage(jid, { text: `Group wallet already enabled!\n\nAddress: ${existing.walletAddress}\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}` });
           return;
         }
-        const group = await enableGroup(groupId, 'whatsapp', 'WhatsApp Group', userId, walletManager);
+
+        // Verify the user is a group admin before allowing wallet creation
+        try {
+          const metadata = await sock.groupMetadata(groupId);
+          const callerPhone = userId.replace('wa_', '');
+          const callerParticipant = metadata.participants.find((p: any) => p.id.startsWith(callerPhone));
+          if (callerParticipant && callerParticipant.admin !== 'admin' && callerParticipant.admin !== 'superadmin') {
+            await sock.sendMessage(jid, { text: 'Only group admins can enable the group wallet. Ask a group admin to run /group enable.' });
+            return;
+          }
+        } catch {
+          // If we can't check metadata, proceed (backward compat)
+        }
+
+        let groupName = 'WhatsApp Group';
+        try {
+          const metadata = await sock.groupMetadata(groupId);
+          groupName = metadata.subject || groupName;
+        } catch { /* use default */ }
+
+        const group = await enableGroup(groupId, 'whatsapp', groupName, userId, walletManager);
         await sock.sendMessage(jid, {
-          text: `Group wallet enabled!\n\nWallet: ${group.walletAddress}\nAdmin: you\n\nMembers can /contribute cUSD to the group wallet.\nAdmin can /group_withdraw to external addresses.`
+          text: `Group wallet enabled!\n\nGroup: ${groupName}\nWallet: ${group.walletAddress}\nAdmin: you\n\nMembers can /contribute cUSD to the group wallet.\nAdmin can /group_withdraw to external addresses.\nSpending requires ${Math.round(group.pollThreshold * 100)}% poll approval.`
         });
         return;
       }
@@ -849,7 +869,9 @@ async function handleCommand(
       const contributions = await getMemberContributions(groupId);
       const recentTxs = await getGroupTransactions(groupId, 5);
 
-      let info = `${group.name} — Group Wallet\n\nAddress: ${group.walletAddress}\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}\nMembers: ${group.members.length}\n`;
+      const pollStatus = (group.pollingEnabled ?? true) ? 'ON' : 'OFF';
+      const thresholdPct = Math.round((group.pollThreshold ?? 0.7) * 100);
+      let info = `${group.name} — Group Wallet\n\nAddress: ${group.walletAddress}\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}\nMembers: ${group.members.length}\nPoll Threshold: ${thresholdPct}%\nPolling: ${pollStatus}\n`;
 
       if (contributions.length > 0) {
         info += `\nContributions:\n`;
@@ -1227,14 +1249,53 @@ async function handleCommand(
     }
 
     case '/help': {
-      let helpText = `Toppa — Airtime, Data, Bills & Gift Cards on Celo\n\nCommands:\n/start - Create wallet & get started\n/wallet - Check all token balances\n/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n/swap - Convert all tokens to cUSD\n/rate <country> - Check FX rate (e.g. /rate NG)\n/verify - Verify identity (unlock $200/day limit)\n/cancel - Cancel pending order\n/settings - View settings\n/togglereview - Toggle auto-review\n/export - Export private key\n/clear - Clear conversation memory\n/help - Show this message\n`;
+      let helpText = `*Toppa* — Airtime, Data, Bills & Gift Cards on Celo\n\n`;
+      helpText += `*Getting Started*\n`;
+      helpText += `/start - Create your wallet\n`;
+      helpText += `/wallet - Check all token balances\n`;
+      helpText += `/verify - Verify identity (unlock $200/day limit)\n\n`;
+      helpText += `*Payments*\n`;
+      helpText += `/withdraw <address> <amount> - Withdraw cUSD\n`;
+      helpText += `/swap - Convert all tokens to cUSD\n`;
+      helpText += `/rate <country> - FX rate (e.g. /rate NG)\n`;
+      helpText += `/cancel - Cancel pending order\n\n`;
+      helpText += `*Settings*\n`;
+      helpText += `/settings - View settings\n`;
+      helpText += `/togglereview - Toggle auto-review\n`;
+      helpText += `/export - Export private key\n`;
+      helpText += `/clear - Clear conversation memory\n`;
+      helpText += `/help - Show this message\n`;
 
       if (groupId) {
-        helpText += `\nGroup Commands:\n/group enable - Enable group wallet\n/group - Show group wallet info\n/contribute <amount> - Contribute cUSD to group\n/group_withdraw <addr> <amt> - Admin withdraw\n/threshold <percent> - Set poll approval % (admin)\n/vote - View/vote on active polls\n/poll - Admin: manage polls (cancel/approve/off/on)\n/tasks - Admin: view group scheduled tasks\n/task cancel <id> - Admin: cancel a task\n`;
+        helpText += `\n*Group Wallet*\n`;
+        helpText += `/group enable - Enable group wallet (admin only)\n`;
+        helpText += `/group - Show group wallet info & balance\n`;
+        helpText += `/contribute <amount> - Contribute cUSD to group\n`;
+        helpText += `  Example: /contribute 5.00\n`;
+        helpText += `/group_withdraw <address> <amount> - Admin: withdraw\n`;
+        helpText += `  Example: /group_withdraw 0x1234... 10.00\n\n`;
+        helpText += `*Group Governance*\n`;
+        helpText += `/threshold <10-100> - Admin: set poll approval %\n`;
+        helpText += `  Example: /threshold 70 (70% votes needed)\n`;
+        helpText += `/vote - View active polls\n`;
+        helpText += `/vote yes - Vote yes on active poll\n`;
+        helpText += `/vote no <poll_id> - Vote no on specific poll\n`;
+        helpText += `/poll - Admin: view & manage polls\n`;
+        helpText += `/poll cancel [id] - Cancel a poll\n`;
+        helpText += `/poll approve [id] - Force-approve a poll\n`;
+        helpText += `/poll off - Disable polling (direct spend)\n`;
+        helpText += `/poll on - Re-enable polling\n`;
+        helpText += `/tasks - Admin: view scheduled tasks\n`;
+        helpText += `/task cancel <id> - Cancel a task\n`;
       }
 
       helpText += `\n/claim <id> - Claim a gift card sent to you\n`;
-      helpText += `\nOr just type what you need:\n"Send 500 NGN airtime to 08012345678"\n"Buy 1GB data for +254712345678"\n"Pay my DSTV subscription"`;
+      helpText += `\n*Or just type what you need:*\n`;
+      helpText += `"Send 500 NGN airtime to 08012345678"\n`;
+      helpText += `"Buy 1GB data for +254712345678"\n`;
+      helpText += `"Pay my DSTV subscription"\n`;
+      helpText += `"Buy a $25 Steam gift card"\n`;
+      helpText += `\nI support 170+ countries, 800+ operators & 300+ gift card brands!`;
       await sock.sendMessage(jid, { text: helpText });
       return;
     }
