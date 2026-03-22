@@ -67,6 +67,11 @@ export async function getUserScheduledTasks(userId: string): Promise<ScheduledTa
   return col.find({ userId, status: 'pending' }).sort({ scheduledAt: 1 }).toArray();
 }
 
+export async function getScheduledTaskById(taskId: string): Promise<ScheduledTask | null> {
+  const col = await collection();
+  return col.findOne({ _id: new ObjectId(taskId) });
+}
+
 /**
  * Cancel a scheduled task
  */
@@ -379,6 +384,11 @@ export async function createRecurringTask(
 export async function getUserRecurringTasks(userId: string): Promise<RecurringTask[]> {
   const col = await recurringCollection();
   return col.find({ userId, enabled: true }).sort({ createdAt: 1 }).toArray();
+}
+
+export async function getRecurringTaskById(taskId: string): Promise<RecurringTask | null> {
+  const col = await recurringCollection();
+  return col.findOne({ _id: new ObjectId(taskId) });
 }
 
 /**

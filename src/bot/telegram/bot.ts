@@ -10,7 +10,7 @@ import { PendingOrderStore, PendingOrder, generateOrderId } from '../pending-ord
 import { handleCallback, storePendingWithdrawal } from './handlers';
 import { userSettingsStore } from '../user-settings';
 import { IS_TESTNET, TOKEN_SYMBOL, EXPLORER_BASE } from '../../shared/constants';
-import { startScheduler, startRecurringScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask, getUserScheduledTasks, getScheduledTasksByChatId, getRecurringTasksByChatId, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
+import { startScheduler, startRecurringScheduler, stopScheduler, markTaskCompleted, markTaskFailed, ScheduledTask, getUserScheduledTasks, getUserRecurringTasks, getScheduledTasksByChatId, getRecurringTasksByChatId, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
 import { clearConversationHistory } from '../../agent/memory';
 import { startHeartbeat, stopHeartbeat } from '../../agent/heartbeat';
 import { trackActivity, setProactiveEnabled, getUserActivity } from '../../agent/user-activity';
@@ -409,6 +409,7 @@ async function cmdHelp(chatId: number, isGroupChat = false) {
     `/silent - Toggle proactive messages on/off\n` +
     `/clear - Clear conversation memory\n` +
     `/verify - Verify identity (unlock $200/day limit)\n` +
+    `/tasks - View your scheduled & recurring tasks\n` +
     `/cancel - Cancel pending order\n` +
     `/help - Show this help message\n`;
 
@@ -420,9 +421,8 @@ async function cmdHelp(chatId: number, isGroupChat = false) {
       `/contribute <amount> - Contribute cUSD to group\n` +
       `/group_withdraw <address> <amount> - Admin withdraw\n` +
       `/threshold <percent> - Set poll approval % (admin)\n` +
-      `/poll - Admin: manage polls (cancel/approve/off/on)\n` +
-      `/tasks - Admin: view group scheduled tasks\n` +
-      `/task cancel <id> - Admin: cancel a task\n`;
+      `/polls - Admin: manage polls (cancel/approve/off/on)\n` +
+      `/tasks - View group scheduled & recurring tasks\n`;
   }
 
   text +=
@@ -975,7 +975,8 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
       const { balance } = await getGroupBalance(existing, walletManager);
       await tg('sendMessage', {
         chat_id: chatId,
-        text: `Group wallet already enabled!\n\nAddress: ${existing.walletAddress}\nBalance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\nAdmin: set up by user ${existing.adminUserId}`,
+        text: `Group wallet already enabled!\n\nAddress: \`${existing.walletAddress}\`\nBalance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\nAdmin: set up by user ${existing.adminUserId}`,
+        parse_mode: 'Markdown',
       });
       return;
     }
@@ -1002,17 +1003,20 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
     } catch { /* use default */ }
 
     const group = await enableGroup(groupId, 'telegram', groupName, userId, walletManager);
-    await tg('sendMessage', {
+    const enableMsg = await tg<{ message_id: number }>('sendMessage', {
       chat_id: chatId,
       text:
         `Group wallet enabled!\n\n` +
         `Group: ${groupName}\n` +
-        `Wallet: ${group.walletAddress}\n` +
+        `Wallet: \`${group.walletAddress}\`\n` +
         `Admin: you\n\n` +
         `Members can /contribute cUSD to the group wallet.\n` +
         `Admin can /group_withdraw to external addresses.\n` +
         `Spending requires ${Math.round(group.pollThreshold * 100)}% poll approval.`,
+      parse_mode: 'Markdown',
     });
+    // Pin the wallet setup message so members can find the address easily
+    tgSilent('pinChatMessage', { chat_id: chatId, message_id: enableMsg.message_id, disable_notification: true });
     return;
   }
 
@@ -1034,7 +1038,7 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
   const thresholdPct = Math.round((group.pollThreshold ?? 0.7) * 100);
   let text2 =
     `👥 ${group.name} — Group Wallet\n\n` +
-    `Address: ${group.walletAddress}\n` +
+    `Address: \`${group.walletAddress}\`\n` +
     `Balance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\n` +
     `Members: ${group.members.length}\n` +
     `Poll Threshold: ${thresholdPct}%\n` +
@@ -1055,7 +1059,7 @@ async function cmdGroup(chatId: number, userId: string, text: string, groupId: s
     }
   }
 
-  await tg('sendMessage', { chat_id: chatId, text: text2 });
+  await tg('sendMessage', { chat_id: chatId, text: text2, parse_mode: 'Markdown' });
 }
 
 async function cmdContribute(chatId: number, userId: string, text: string, groupId: string | null) {
@@ -1441,15 +1445,22 @@ async function cmdPoll(chatId: number, userId: string, text: string, groupId: st
       if (active.length === 0) {
         await tg('sendMessage', {
           chat_id: chatId,
-          text: `No active polls. Polling is ${pollStatus}.\n\nCommands:\n/poll cancel [poll_id]\n/poll approve [poll_id]\n/poll off — disable polling\n/poll on — enable polling`,
+          text: `No active polls. Polling is ${pollStatus}.\n\nCommands:\n/polls — view active polls\n/poll cancel [poll_id]\n/poll approve [poll_id]\n/poll off — disable polling\n/poll on — enable polling`,
         });
       } else {
-        let list = `Active Polls (${active.length}) — Polling: ${pollStatus}\n\n`;
+        let list = `📊 Active Polls (${active.length}) — Polling: ${pollStatus}\n\n`;
+        const buttons: { text: string; callback_data: string }[][] = [];
         for (const p of active) {
-          list += `${p.pollId}\n${p.description}\n${p.action.amount.toFixed(2)} cUSD | ${p.yesVotes.length} yes / ${p.noVotes.length} no\n\n`;
+          const needed = Math.ceil(p.totalMembers * p.threshold);
+          const desc = p.description.length > 35 ? p.description.slice(0, 32) + '...' : p.description;
+          list += `• ${desc}\n  ${p.action.amount.toFixed(2)} cUSD | ${p.yesVotes.length}/${needed} votes\n\n`;
+          buttons.push([{ text: `📊 ${desc}`, callback_data: `pdtl_${p.pollId}` }]);
         }
-        list += 'Commands: /poll cancel [id], /poll approve [id]';
-        await tg('sendMessage', { chat_id: chatId, text: list });
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: list,
+          reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+        });
       }
       return;
     }
@@ -1457,42 +1468,68 @@ async function cmdPoll(chatId: number, userId: string, text: string, groupId: st
 }
 
 async function cmdTasks(chatId: number, userId: string, groupId: string | null) {
-  if (!groupId) {
-    await tg('sendMessage', { chat_id: chatId, text: 'This command only works in group chats.' });
-    return;
-  }
-  const group = await getGroup(groupId);
-  if (!group || !isGroupAdmin(group, userId)) {
-    await tg('sendMessage', { chat_id: chatId, text: 'Admin only.' });
-    return;
-  }
+  let scheduled: any[];
+  let recurring: any[];
 
-  const [scheduled, recurring] = await Promise.all([
-    getScheduledTasksByChatId(chatId),
-    getRecurringTasksByChatId(chatId),
-  ]);
+  if (groupId) {
+    // Group: admin only
+    const group = await getGroup(groupId);
+    if (!group || !isGroupAdmin(group, userId)) {
+      await tg('sendMessage', { chat_id: chatId, text: 'Admin only.' });
+      return;
+    }
+    [scheduled, recurring] = await Promise.all([
+      getScheduledTasksByChatId(chatId),
+      getRecurringTasksByChatId(chatId),
+    ]);
+  } else {
+    // Personal: show user's own tasks
+    [scheduled, recurring] = await Promise.all([
+      getUserScheduledTasks(userId),
+      getUserRecurringTasks(userId),
+    ]);
+  }
 
   if (scheduled.length === 0 && recurring.length === 0) {
-    await tg('sendMessage', { chat_id: chatId, text: 'No scheduled or recurring tasks for this group.' });
+    await tg('sendMessage', { chat_id: chatId, text: groupId ? 'No tasks for this group.' : 'No scheduled or recurring tasks. Ask me to schedule something!' });
     return;
   }
 
-  let msg = '';
+  let msg = groupId ? '📋 Group Tasks\n\n' : '📋 Your Tasks\n\n';
+  const buttons: { text: string; callback_data: string }[][] = [];
+
   if (scheduled.length > 0) {
-    msg += `Scheduled Tasks (${scheduled.length}):\n`;
+    msg += `Scheduled (${scheduled.length}):\n`;
     for (const t of scheduled) {
-      msg += `${t._id} | ${t.description} | ${new Date(t.scheduledAt).toLocaleString()}\n`;
+      const when = new Date(t.scheduledAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+      const desc = t.description.length > 40 ? t.description.slice(0, 37) + '...' : t.description;
+      msg += `• ${desc} — ${when}\n`;
+      buttons.push([{ text: `📋 ${desc}`, callback_data: `tsk_${t._id}` }]);
     }
     msg += '\n';
   }
+
   if (recurring.length > 0) {
-    msg += `Recurring Tasks (${recurring.length}):\n`;
+    msg += `Recurring (${recurring.length}):\n`;
     for (const t of recurring) {
-      msg += `${t._id} | ${t.description} | ${t.recurrence.frequency} at ${t.recurrence.time}\n`;
+      const freq = t.recurrence.frequency;
+      let schedule = freq.charAt(0).toUpperCase() + freq.slice(1);
+      if (freq === 'weekly' && t.recurrence.dayOfWeek != null) {
+        schedule += `, ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][t.recurrence.dayOfWeek]}`;
+      } else if (freq === 'monthly' && t.recurrence.dayOfMonth != null) {
+        schedule += `, day ${t.recurrence.dayOfMonth}`;
+      }
+      const desc = t.description.length > 35 ? t.description.slice(0, 32) + '...' : t.description;
+      msg += `🔁 ${desc} — ${schedule} at ${t.recurrence.time}\n`;
+      buttons.push([{ text: `🔁 ${desc}`, callback_data: `rtsk_${t._id}` }]);
     }
   }
-  msg += '\nCancel: /task cancel <id>';
-  await tg('sendMessage', { chat_id: chatId, text: msg });
+
+  await tg('sendMessage', {
+    chat_id: chatId,
+    text: msg,
+    reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined,
+  });
 }
 
 async function cmdTaskCancel(chatId: number, userId: string, text: string, groupId: string | null) {
@@ -1591,10 +1628,11 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
           case 'contribute': return cmdContribute(chatId, userId, text, groupId);
           case 'group_withdraw': return cmdGroupWithdraw(chatId, userId, text, groupId);
           case 'threshold': return cmdGroupThreshold(chatId, userId, text, groupId);
-          // Admin commands
-          case 'poll': return cmdPoll(chatId, userId, text, groupId);
+          // Task & poll commands (work in both personal and group chats)
           case 'tasks': return cmdTasks(chatId, userId, groupId);
           case 'task': return cmdTaskCancel(chatId, userId, text, groupId);
+          case 'polls': return cmdPoll(chatId, userId, text, groupId);
+          case 'poll': return cmdPoll(chatId, userId, text, groupId);
           default: return handleTextMessage(chatId, userId, text, groupId);
         }
       }
@@ -1684,6 +1722,7 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
       { command: 'rate', description: 'Check FX rate (e.g. /rate NG)' },
       { command: 'status', description: 'Your profile, instructions & tasks' },
       { command: 'settings', description: 'Wallet settings & export key' },
+      { command: 'tasks', description: 'View your scheduled & recurring tasks' },
       { command: 'cancel', description: 'Cancel pending order' },
       { command: 'silent', description: 'Toggle proactive messages' },
       { command: 'verify', description: 'Verify identity (unlock $200/day limit)' },
@@ -1700,9 +1739,8 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
       { command: 'contribute', description: 'Contribute cUSD to group wallet' },
       { command: 'group_withdraw', description: 'Admin: withdraw from group' },
       { command: 'threshold', description: 'Admin: set poll approval % (e.g. /threshold 70)' },
-      { command: 'poll', description: 'Admin: manage polls (cancel/approve/off/on)' },
-      { command: 'tasks', description: 'Admin: view group scheduled tasks' },
-      { command: 'task', description: 'Admin: cancel a task (/task cancel <id>)' },
+      { command: 'polls', description: 'Admin: manage polls (cancel/approve/off/on)' },
+      { command: 'tasks', description: 'View scheduled & recurring tasks' },
       { command: 'wallet', description: 'Check your personal balance' },
       { command: 'help', description: 'Show help & commands' },
     ],
@@ -1755,7 +1793,7 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
 
       await pendingOrders.create(order);
 
-      await tg('sendMessage', {
+      const sentTask = await tg<{ message_id: number }>('sendMessage', {
         chat_id: task.chatId,
         text:
           `⏰ Scheduled Task Ready\n\n` +
@@ -1769,6 +1807,11 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
           [{ text: '❌ Skip', callback_data: `order_cancel_${orderId}` }],
         ]},
       });
+
+      // Pin in group chats so members can see the pending task
+      if (task.chatId < 0) {
+        tgSilent('pinChatMessage', { chat_id: task.chatId, message_id: sentTask.message_id, disable_notification: true });
+      }
 
       await markTaskCompleted(task._id!, 'Notification sent — awaiting user confirmation');
     } catch (err: any) {
@@ -1800,7 +1843,7 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
 
       await pendingOrders.create(order);
 
-      await tg('sendMessage', {
+      const sentRecurring = await tg<{ message_id: number }>('sendMessage', {
         chat_id: task.chatId,
         text:
           `🔄 Recurring Payment Ready\n\n` +
@@ -1814,6 +1857,11 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
           [{ text: '❌ Skip This Time', callback_data: `order_cancel_${orderId}` }],
         ]},
       });
+
+      // Pin in group chats so members can see the pending recurring task
+      if (task.chatId < 0) {
+        tgSilent('pinChatMessage', { chat_id: task.chatId, message_id: sentRecurring.message_id, disable_notification: true });
+      }
     } catch (err: any) {
       console.error(`[Scheduler] Failed to notify user for recurring task ${task._id}:`, err.message);
     }

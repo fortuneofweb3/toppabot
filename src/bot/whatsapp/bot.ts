@@ -20,7 +20,7 @@ import { saveConversation, clearConversationHistory } from '../../agent/memory';
 import { getFxRate } from '../../apis/reloadly';
 import { getAllBalances } from '../../blockchain/swap';
 import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, recordPollVote, getActivePolls, getPollById, closePoll, setPollingEnabled, getMostRecentActivePoll } from '../groups';
-import { getUserScheduledTasks, getUserRecurringTasks, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
+import { getUserScheduledTasks, getUserRecurringTasks, getScheduledTaskById, getRecurringTaskById, adminCancelScheduledTask, adminCancelRecurringTask } from '../../agent/scheduler';
 import { recordGroupMsg, buildGroupContext as buildGroupCtx } from '../group-context';
 import { detectInjection } from '../../shared/sanitize';
 
@@ -667,11 +667,11 @@ async function handleCommand(
           .map(b => `${b.symbol}: ${parseFloat(b.balance).toFixed(4)}`)
           .join('\n');
         await sock.sendMessage(jid, {
-          text: `Your Wallet\n\nAddress:\n${address}\n\n${balanceLines}\n\nNetwork: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\nDeposit any supported token (cUSD, CELO, USDC, USDT, cEUR).\nUse /swap to convert all tokens to cUSD.`
+          text: `Your Wallet\n\nAddress:\n\`\`\`${address}\`\`\`\n\n${balanceLines}\n\nNetwork: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}\n\nDeposit any supported token (cUSD, CELO, USDC, USDT, cEUR).\nUse /swap to convert all tokens to cUSD.`
         });
       } catch {
         await sock.sendMessage(jid, {
-          text: `Your Wallet\n\nAddress:\n${address}\n\nBalance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\nNetwork: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}`
+          text: `Your Wallet\n\nAddress:\n\`\`\`${address}\`\`\`\n\nBalance: ${parseFloat(balance).toFixed(2)} ${TOKEN_SYMBOL}\nNetwork: Celo ${IS_TESTNET ? 'Sepolia Testnet' : 'Mainnet'}`
         });
       }
       return;
@@ -849,7 +849,7 @@ async function handleCommand(
         const existing = await getGroup(groupId);
         if (existing) {
           const { balance: gBal } = await getGroupBalance(existing, walletManager);
-          await sock.sendMessage(jid, { text: `Group wallet already enabled!\n\nAddress: ${existing.walletAddress}\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}` });
+          await sock.sendMessage(jid, { text: `Group wallet already enabled!\n\nAddress:\n\`\`\`${existing.walletAddress}\`\`\`\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}` });
           return;
         }
 
@@ -874,7 +874,7 @@ async function handleCommand(
 
         const group = await enableGroup(groupId, 'whatsapp', groupName, userId, walletManager);
         await sock.sendMessage(jid, {
-          text: `Group wallet enabled!\n\nGroup: ${groupName}\nWallet: ${group.walletAddress}\nAdmin: you\n\nMembers can /contribute cUSD to the group wallet.\nAdmin can /group_withdraw to external addresses.\nSpending requires ${Math.round(group.pollThreshold * 100)}% poll approval.`
+          text: `Group wallet enabled!\n\nGroup: ${groupName}\nWallet:\n\`\`\`${group.walletAddress}\`\`\`\nAdmin: you\n\nMembers can /contribute cUSD to the group wallet.\nAdmin can /group_withdraw to external addresses.\nSpending requires ${Math.round(group.pollThreshold * 100)}% poll approval.`
         });
         return;
       }
@@ -891,7 +891,7 @@ async function handleCommand(
 
       const pollStatus = (group.pollingEnabled ?? true) ? 'ON' : 'OFF';
       const thresholdPct = Math.round((group.pollThreshold ?? 0.7) * 100);
-      let info = `${group.name} — Group Wallet\n\nAddress: ${group.walletAddress}\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}\nMembers: ${group.members.length}\nPoll Threshold: ${thresholdPct}%\nPolling: ${pollStatus}\n`;
+      let info = `${group.name} — Group Wallet\n\nAddress:\n\`\`\`${group.walletAddress}\`\`\`\nBalance: ${parseFloat(gBal).toFixed(2)} ${TOKEN_SYMBOL}\nMembers: ${group.members.length}\nPoll Threshold: ${thresholdPct}%\nPolling: ${pollStatus}\n`;
 
       if (contributions.length > 0) {
         info += `\nContributions:\n`;
@@ -1103,6 +1103,7 @@ async function handleCommand(
       return;
     }
 
+    case '/polls':
     case '/poll': {
       if (!groupId) {
         await sock.sendMessage(jid, { text: 'This command only works in group chats.' });
@@ -1204,67 +1205,110 @@ async function handleCommand(
     }
 
     case '/tasks': {
-      if (!groupId) {
-        await sock.sendMessage(jid, { text: 'This command only works in group chats.' });
-        return;
+      // In group chats, require admin; in personal chats, show user's own tasks
+      if (groupId) {
+        const group = await getGroup(groupId);
+        if (!group || !isGroupAdmin(group, userId)) {
+          await sock.sendMessage(jid, { text: 'Admin only.' });
+          return;
+        }
       }
-      const group = await getGroup(groupId);
-      if (!group || !isGroupAdmin(group, userId)) {
-        await sock.sendMessage(jid, { text: 'Admin only.' });
-        return;
-      }
-      // Filter tasks by the admin's userId (WhatsApp doesn't use numeric chatId)
       const [scheduled, recurring] = await Promise.all([
         getUserScheduledTasks(userId),
         getUserRecurringTasks(userId),
       ]);
       if (scheduled.length === 0 && recurring.length === 0) {
-        await sock.sendMessage(jid, { text: 'No scheduled or recurring tasks for this group.' });
+        await sock.sendMessage(jid, { text: groupId ? 'No tasks for this group.' : 'You have no scheduled or recurring tasks.' });
         return;
       }
-      let msg = '';
+      let msg = groupId ? '*Group Tasks*\n\n' : '*Your Tasks*\n\n';
       if (scheduled.length > 0) {
-        msg += `Scheduled Tasks (${scheduled.length}):\n`;
-        for (const t of scheduled) {
-          msg += `${t._id} | ${t.description} | ${new Date(t.scheduledAt).toLocaleString()}\n`;
+        msg += `*Scheduled (${scheduled.length}):*\n`;
+        for (let i = 0; i < scheduled.length; i++) {
+          const t = scheduled[i];
+          const when = new Date(t.scheduledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          msg += `${i + 1}. ${t.description} — ${when}\n`;
+          msg += `   ID: \`\`\`${t._id}\`\`\`\n`;
         }
         msg += '\n';
       }
       if (recurring.length > 0) {
-        msg += `Recurring Tasks (${recurring.length}):\n`;
-        for (const t of recurring) {
-          msg += `${t._id} | ${t.description} | ${t.recurrence.frequency} at ${t.recurrence.time}\n`;
+        msg += `*Recurring (${recurring.length}):*\n`;
+        for (let i = 0; i < recurring.length; i++) {
+          const t = recurring[i];
+          const freq = (t as any).recurrence?.frequency || 'unknown';
+          const time = (t as any).recurrence?.time || '';
+          msg += `🔁 ${i + 1}. ${t.description} — ${freq} at ${time}\n`;
+          msg += `   ID: \`\`\`${t._id}\`\`\`\n`;
         }
       }
-      msg += '\nCancel: /task cancel <id>';
+      msg += '\nView: /task <id>\nCancel: /task cancel <id>';
       await sock.sendMessage(jid, { text: msg });
       return;
     }
 
     case '/task': {
-      if (!groupId) {
-        await sock.sendMessage(jid, { text: 'This command only works in group chats.' });
-        return;
-      }
-      const group = await getGroup(groupId);
-      if (!group || !isGroupAdmin(group, userId)) {
-        await sock.sendMessage(jid, { text: 'Admin only.' });
-        return;
+      // In group chats, require admin; in personal chats, show user's own tasks
+      if (groupId) {
+        const grp = await getGroup(groupId);
+        if (!grp || !isGroupAdmin(grp, userId)) {
+          await sock.sendMessage(jid, { text: 'Admin only.' });
+          return;
+        }
       }
       const taskParts = text.split(/\s+/);
       const taskSubCmd = taskParts[1]?.toLowerCase();
-      if (taskSubCmd !== 'cancel' || !taskParts[2]) {
-        await sock.sendMessage(jid, { text: 'Usage: /task cancel <task_id>' });
+
+      if (taskSubCmd === 'cancel' && taskParts[2]) {
+        // /task cancel <id>
+        const taskId = taskParts[2];
+        const cancelledScheduled = await adminCancelScheduledTask(taskId);
+        const cancelledRecurring = !cancelledScheduled ? await adminCancelRecurringTask(taskId) : false;
+        if (cancelledScheduled || cancelledRecurring) {
+          await sock.sendMessage(jid, { text: `Task ${taskId} cancelled.` });
+        } else {
+          await sock.sendMessage(jid, { text: 'Task not found or already cancelled/completed.' });
+        }
         return;
       }
-      const taskId = taskParts[2];
-      const cancelledScheduled = await adminCancelScheduledTask(taskId);
-      const cancelledRecurring = !cancelledScheduled ? await adminCancelRecurringTask(taskId) : false;
-      if (cancelledScheduled || cancelledRecurring) {
-        await sock.sendMessage(jid, { text: `Task ${taskId} cancelled.` });
-      } else {
-        await sock.sendMessage(jid, { text: 'Task not found or already cancelled/completed.' });
+
+      if (taskSubCmd && taskSubCmd !== 'cancel') {
+        // /task <id> — show task detail
+        const taskId = taskSubCmd;
+        const [sTask, rTask] = await Promise.all([
+          getScheduledTaskById(taskId).catch(() => null),
+          getRecurringTaskById(taskId).catch(() => null),
+        ]);
+        if (sTask && sTask.userId === userId) {
+          const when = new Date(sTask.scheduledAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+          let detail = `*Scheduled Task*\n\n`;
+          detail += `${sTask.description}\n`;
+          detail += `When: ${when}\n`;
+          detail += `Amount: ${sTask.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n`;
+          detail += `Status: ${sTask.status}\n`;
+          detail += `ID: \`\`\`${sTask._id}\`\`\`\n\n`;
+          detail += `Cancel: /task cancel ${sTask._id}`;
+          await sock.sendMessage(jid, { text: detail });
+        } else if (rTask && rTask.userId === userId) {
+          const rec = (rTask as any).recurrence || {};
+          let detail = `*🔁 Recurring Task*\n\n`;
+          detail += `${rTask.description}\n`;
+          detail += `Frequency: ${rec.frequency || 'unknown'}\n`;
+          detail += `Time: ${rec.time || 'N/A'}\n`;
+          if (rec.dayOfWeek != null) detail += `Day: ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][rec.dayOfWeek] || rec.dayOfWeek}\n`;
+          if (rec.dayOfMonth != null) detail += `Day of month: ${rec.dayOfMonth}\n`;
+          detail += `Amount: ${rTask.productAmount.toFixed(2)} ${TOKEN_SYMBOL}\n`;
+          detail += `Failures: ${(rTask as any).consecutiveFailures || 0}\n`;
+          detail += `ID: \`\`\`${rTask._id}\`\`\`\n\n`;
+          detail += `Cancel: /task cancel ${rTask._id}`;
+          await sock.sendMessage(jid, { text: detail });
+        } else {
+          await sock.sendMessage(jid, { text: 'Task not found.' });
+        }
+        return;
       }
+
+      await sock.sendMessage(jid, { text: 'Usage:\n/task <id> — View task details\n/task cancel <id> — Cancel a task' });
       return;
     }
 
@@ -1278,7 +1322,9 @@ async function handleCommand(
       helpText += `/withdraw <address> <amount> - Withdraw cUSD\n`;
       helpText += `/swap - Convert all tokens to cUSD\n`;
       helpText += `/rate <country> - FX rate (e.g. /rate NG)\n`;
-      helpText += `/cancel - Cancel pending order\n\n`;
+      helpText += `/cancel - Cancel pending order\n`;
+      helpText += `/tasks - View your scheduled & recurring tasks\n`;
+      helpText += `/task <id> - View task details\n\n`;
       helpText += `*Settings*\n`;
       helpText += `/settings - View settings\n`;
       helpText += `/togglereview - Toggle auto-review\n`;
@@ -1300,12 +1346,13 @@ async function handleCommand(
         helpText += `/vote - View active polls\n`;
         helpText += `/vote yes - Vote yes on active poll\n`;
         helpText += `/vote no <poll_id> - Vote no on specific poll\n`;
-        helpText += `/poll - Admin: view & manage polls\n`;
+        helpText += `/polls - Admin: view & manage polls\n`;
         helpText += `/poll cancel [id] - Cancel a poll\n`;
         helpText += `/poll approve [id] - Force-approve a poll\n`;
         helpText += `/poll off - Disable polling (direct spend)\n`;
         helpText += `/poll on - Re-enable polling\n`;
-        helpText += `/tasks - Admin: view scheduled tasks\n`;
+        helpText += `/tasks - View scheduled & recurring tasks\n`;
+        helpText += `/task <id> - View task details\n`;
         helpText += `/task cancel <id> - Cancel a task\n`;
       }
 

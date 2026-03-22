@@ -465,6 +465,23 @@ function buildGraph(
       }
     }
 
+    // Check for create_poll short-circuit — pass the JSON through so the bot layer
+    // can send the actual Telegram/WhatsApp poll (the LLM would otherwise rephrase it)
+    for (const tm of toolMessages) {
+      const content = typeof tm.content === 'string' ? tm.content : '';
+      if (content.includes('"create_poll"')) {
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed?.type === 'create_poll') {
+            return {
+              messages: toolMessages,
+              shortCircuitResponse: content,
+            };
+          }
+        } catch { /* not JSON */ }
+      }
+    }
+
     return {
       messages: toolMessages,
     };
@@ -623,7 +640,8 @@ export async function runToppaAgent(
     finalResponse.startsWith('I ran into a processing limit') ||
     finalResponse.startsWith("I'm having trouble") ||
     finalResponse.includes('"order_confirmation"') ||
-    finalResponse.includes('"payment_required"');
+    finalResponse.includes('"payment_required"') ||
+    finalResponse.includes('"create_poll"');
 
   if (state.userAddress && !shouldSkipMemory) {
     saveConversation(state.userAddress, userMessage, finalResponse).catch((err: any) =>

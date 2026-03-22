@@ -742,6 +742,203 @@ export async function handleCallback(
       return;
     }
 
+    // ─── Task Detail ─────────────────────────────
+    if ((match = data.match(/^tsk_([a-f0-9]{24})$/))) {
+      const { getScheduledTaskById } = await import('../../agent/scheduler');
+      const task = await getScheduledTaskById(match[1]);
+      if (!task) { await answer('Task not found or already completed.'); return; }
+      if (task.userId !== userId) { await answer('Unauthorized'); return; }
+      const when = task.scheduledAt.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+      await editMsg(
+        `📋 Scheduled Task\n\n` +
+        `${task.description}\n` +
+        `Service: ${task.toolName.replace(/_/g, ' ')}\n` +
+        `Amount: ${task.productAmount.toFixed(2)} cUSD\n` +
+        `Scheduled: ${when}\n` +
+        `Status: ${task.status}`,
+        { reply_markup: task.status === 'pending' ? { inline_keyboard: [
+          [{ text: '❌ Cancel Task', callback_data: `tskc_${match[1]}` }],
+        ]} : undefined },
+      );
+      await answer();
+      return;
+    }
+
+    // ─── Task Cancel ─────────────────────────────
+    if ((match = data.match(/^tskc_([a-f0-9]{24})$/))) {
+      const { cancelScheduledTask, adminCancelScheduledTask, getScheduledTaskById } = await import('../../agent/scheduler');
+      const task = await getScheduledTaskById(match[1]);
+      if (!task) { await answer('Task not found.'); return; }
+      // Allow owner or group admin
+      let authorized = task.userId === userId;
+      if (!authorized && task.chatId < 0) {
+        const group = await getGroup(String(task.chatId));
+        authorized = !!group && isGroupAdmin(group, userId);
+      }
+      if (!authorized) { await answer('Unauthorized'); return; }
+      const ok = task.userId === userId
+        ? await cancelScheduledTask(match[1], userId)
+        : await adminCancelScheduledTask(match[1]);
+      await editMsg(ok ? '✅ Task cancelled.' : '❌ Could not cancel — task may have already executed.');
+      await answer(ok ? 'Cancelled' : 'Failed');
+      return;
+    }
+
+    // ─── Recurring Task Detail ───────────────────
+    if ((match = data.match(/^rtsk_([a-f0-9]{24})$/))) {
+      const { getRecurringTaskById } = await import('../../agent/scheduler');
+      const task = await getRecurringTaskById(match[1]);
+      if (!task) { await answer('Recurring task not found.'); return; }
+      if (task.userId !== userId) { await answer('Unauthorized'); return; }
+      const freq = task.recurrence.frequency;
+      let schedule = freq.charAt(0).toUpperCase() + freq.slice(1);
+      if (freq === 'weekly' && task.recurrence.dayOfWeek != null) {
+        schedule += `, ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][task.recurrence.dayOfWeek]}`;
+      } else if (freq === 'monthly' && task.recurrence.dayOfMonth != null) {
+        schedule += `, day ${task.recurrence.dayOfMonth}`;
+      }
+      schedule += ` at ${task.recurrence.time}`;
+      const nextDue = task.nextDueAt.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+      const lastRun = task.lastExecutedAt
+        ? task.lastExecutedAt.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+        : 'Never';
+      await editMsg(
+        `🔁 Recurring Task\n\n` +
+        `${task.description}\n` +
+        `Service: ${task.toolName.replace(/_/g, ' ')}\n` +
+        `Amount: ${task.productAmount.toFixed(2)} cUSD\n` +
+        `Schedule: ${schedule}\n` +
+        `Timezone: ${task.timezone}\n` +
+        `Next run: ${nextDue}\n` +
+        `Last run: ${lastRun}\n` +
+        `Failures: ${task.failureCount}/${task.maxFailures}`,
+        { reply_markup: task.enabled ? { inline_keyboard: [
+          [{ text: '❌ Cancel Recurring', callback_data: `rtskc_${match[1]}` }],
+        ]} : undefined },
+      );
+      await answer();
+      return;
+    }
+
+    // ─── Recurring Task Cancel ───────────────────
+    if ((match = data.match(/^rtskc_([a-f0-9]{24})$/))) {
+      const { cancelRecurringTask, adminCancelRecurringTask, getRecurringTaskById } = await import('../../agent/scheduler');
+      const task = await getRecurringTaskById(match[1]);
+      if (!task) { await answer('Task not found.'); return; }
+      let authorized = task.userId === userId;
+      if (!authorized && task.chatId < 0) {
+        const group = await getGroup(String(task.chatId));
+        authorized = !!group && isGroupAdmin(group, userId);
+      }
+      if (!authorized) { await answer('Unauthorized'); return; }
+      const ok = task.userId === userId
+        ? await cancelRecurringTask(match[1], userId)
+        : await adminCancelRecurringTask(match[1]);
+      await editMsg(ok ? '✅ Recurring task cancelled.' : '❌ Could not cancel.');
+      await answer(ok ? 'Cancelled' : 'Failed');
+      return;
+    }
+
+    // ─── Poll Detail ─────────────────────────────
+    if ((match = data.match(/^pdtl_(.+)$/))) {
+      const { getPollById } = await import('../groups');
+      const poll = await getPollById(match[1]);
+      if (!poll) { await answer('Poll not found or expired.'); return; }
+      const yes = poll.yesVotes.length;
+      const no = poll.noVotes.length;
+      const needed = Math.ceil(poll.totalMembers * poll.threshold);
+      const remaining = poll.expiresAt ? Math.max(0, Math.round((poll.expiresAt.getTime() - Date.now()) / 60000)) : 0;
+      let text =
+        `📊 Poll Details\n\n` +
+        `${poll.description}\n` +
+        `Amount: ${poll.action.amount.toFixed(2)} cUSD\n` +
+        `Service: ${poll.action.service.replace(/_/g, ' ')}\n\n` +
+        `Votes: ${yes} yes / ${no} no (need ${needed} of ${poll.totalMembers})\n` +
+        `Threshold: ${Math.round(poll.threshold * 100)}%\n` +
+        `Status: ${poll.status}\n` +
+        `Expires in: ${remaining} min`;
+      // Admin buttons
+      const buttons: any[][] = [];
+      if (poll.status === 'active') {
+        const group = await getGroup(poll.groupId);
+        if (group && isGroupAdmin(group, userId)) {
+          buttons.push([
+            { text: '✅ Approve', callback_data: `papr_${match[1]}` },
+            { text: '❌ Cancel', callback_data: `pcan_${match[1]}` },
+          ]);
+        }
+      }
+      await editMsg(text, buttons.length > 0 ? { reply_markup: { inline_keyboard: buttons } } : undefined);
+      await answer();
+      return;
+    }
+
+    // ─── Poll Cancel (button) ────────────────────
+    if ((match = data.match(/^pcan_(.+)$/))) {
+      const { getPollById, closePoll } = await import('../groups');
+      const poll = await getPollById(match[1]);
+      if (!poll || poll.status !== 'active') { await answer('Poll not found or already closed.'); return; }
+      const group = await getGroup(poll.groupId);
+      if (!group || !isGroupAdmin(group, userId)) { await answer('Admin only.'); return; }
+      await closePoll(match[1], 'cancelled');
+      if (poll.messageId && chatId) {
+        const tgSilent = (method: string, params: any) => tg(method, params).catch(() => {});
+        tgSilent('stopPoll', { chat_id: chatId, message_id: poll.messageId });
+        tgSilent('unpinChatMessage', { chat_id: chatId, message_id: poll.messageId });
+      }
+      await editMsg('✅ Poll cancelled.');
+      await answer('Cancelled');
+      return;
+    }
+
+    // ─── Poll Approve (button) ───────────────────
+    if ((match = data.match(/^papr_(.+)$/))) {
+      const { getPollById, closePoll } = await import('../groups');
+      const poll = await getPollById(match[1]);
+      if (!poll || poll.status !== 'active') { await answer('Poll not found or already closed.'); return; }
+      const group = await getGroup(poll.groupId);
+      if (!group || !isGroupAdmin(group, userId)) { await answer('Admin only.'); return; }
+      await closePoll(match[1], 'approved');
+      if (poll.messageId && chatId) {
+        const tgSilent = (method: string, params: any) => tg(method, params).catch(() => {});
+        tgSilent('stopPoll', { chat_id: chatId, message_id: poll.messageId });
+        tgSilent('unpinChatMessage', { chat_id: chatId, message_id: poll.messageId });
+      }
+      await editMsg('✅ Poll approved by admin. Creating order...');
+      await answer('Approved');
+      // Trigger order creation via message to bot
+      if (chatId) {
+        const { calculateTotalPayment } = await import('../../blockchain/x402');
+        const { total, serviceFee } = calculateTotalPayment(poll.action.amount);
+        const orderId = `order_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const order: PendingOrder = {
+          orderId,
+          telegramId: group.walletId,
+          chatId: poll.chatId,
+          action: poll.action.service.replace('send_', '').replace('pay_', '').replace('buy_', '') as any,
+          description: `[Admin Approved] ${poll.description}`,
+          productAmount: poll.action.amount,
+          serviceFee,
+          totalAmount: total,
+          toolName: poll.action.service,
+          toolArgs: poll.action.details,
+          status: 'pending_confirmation',
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        };
+        await pendingOrders.create(order);
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: `Admin approved: ${poll.description}\nTotal: ${total.toFixed(2)} cUSD (includes 1.5% fee)\n\nConfirm to execute from group wallet:`,
+          reply_markup: { inline_keyboard: [
+            [{ text: 'Confirm Group Spend', callback_data: `order_confirm_${orderId}` }],
+            [{ text: 'Cancel', callback_data: `order_cancel_${orderId}` }],
+          ]},
+        });
+      }
+      return;
+    }
+
     // ─── Star Rating ─────────────────────────────
     if ((match = data.match(/^rate_(order_\d{13}_[a-z0-9]{6,8})_(\d+|skip)$/))) {
       const orderId = match[1];
