@@ -38,7 +38,6 @@ const primaryLlm = new ChatOpenAI({
   modelName: PRIMARY_MODEL,
   temperature: 0,
   maxTokens: 800,
-  streaming: true,
   timeout: 30_000,
 });
 
@@ -51,7 +50,6 @@ const fallbackLlm = (process.env.FALLBACK_LLM_KEY || process.env.LLM_API_KEY || 
     modelName: FALLBACK_MODEL,
     temperature: 0,
     maxTokens: 800,
-    streaming: true,
     timeout: 30_000,
   })
   : null;
