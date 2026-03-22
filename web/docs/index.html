@@ -46,6 +46,7 @@
         <a href="#reports" class="sidebar-link">Reports & Statements</a>
         <a href="#smart-memory" class="sidebar-link">Smart Memory</a>
         <a href="#scheduled" class="sidebar-link">Scheduled Payments</a>
+        <a href="#identity-verification" class="sidebar-link">Identity Verification</a>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-heading">Developer Reference</div>
@@ -334,6 +335,43 @@
             <li>There are relevant promotions on your favorite operators</li>
             <li>Your wallet balance is running low</li>
           </ul>
+        </section>
+
+        <section id="identity-verification">
+          <h1>Identity Verification</h1>
+          <p class="lead">Verify your identity with Self Protocol to unlock higher spending limits. No KYC, no personal data — just a quick passport scan using zero-knowledge proofs.</p>
+
+          <h2>Spending Tiers</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Status</th><th>Daily Limit</th><th>How to Get</th></tr></thead>
+              <tbody>
+                <tr><td>Unverified</td><td>$20/day</td><td>Default for all new users</td></tr>
+                <tr><td>Self-Verified</td><td>$200/day</td><td>Complete the /verify flow</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>How to Verify</h2>
+          <ol>
+            <li>Type <code>/verify</code> in Telegram or WhatsApp</li>
+            <li>Tap the verification link — the Self app opens</li>
+            <li>Scan your passport with NFC (~30 seconds)</li>
+            <li>Done! Your limits upgrade automatically</li>
+          </ol>
+
+          <h2>How It Works</h2>
+          <p>Self Protocol uses <strong>zero-knowledge proofs</strong> from your passport's NFC chip. This means:</p>
+          <ul>
+            <li><strong>No personal data</strong> is shared with Toppa — we only receive a proof of uniqueness</li>
+            <li><strong>Sybil-resistant</strong> — one passport can only verify one account (nullifier-based)</li>
+            <li><strong>No KYC process</strong> — no documents to upload, no waiting for approval</li>
+            <li><strong>Valid for 1 year</strong> — then you can re-verify</li>
+          </ul>
+
+          <div class="callout">
+            <strong>Don't have the Self app?</strong> Download it from <a href="https://self.xyz" target="_blank">self.xyz</a>. The app is free and available on iOS and Android.
+          </div>
         </section>
       </div>
 

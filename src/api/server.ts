@@ -587,7 +587,16 @@ app.get('/', (_req: Request, res: Response) => {
       },
       selfProtocol: {
         spec: 'https://docs.self.xyz',
-        description: 'ZK proof of humanity verification',
+        description: 'ZK proof of humanity for tiered spending limits',
+        verifyPage: '/verify',
+        callbackEndpoint: '/api/verify',
+        statusEndpoint: '/api/verify/status',
+        tiers: {
+          unverified: `${UNVERIFIED_DAILY_LIMIT} cUSD/day`,
+          verified: `${VERIFIED_DAILY_LIMIT} cUSD/day`,
+        },
+        agentId: 48,
+        network: 'celo-sepolia',
       },
     },
     services: [
@@ -1058,6 +1067,154 @@ app.get('/reputation', async (_req: Request, res: Response) => {
   } catch (error) {
     res.status(errorStatus(error)).json(errorResponse(error));
   }
+});
+
+// ─────────────────────────────────────────────────
+// Self Protocol Verification Routes
+// ─────────────────────────────────────────────────
+
+import { verifySelfProof, getUserVerificationStatus, VERIFIED_DAILY_LIMIT, UNVERIFIED_DAILY_LIMIT } from '../blockchain/self-verification';
+
+// POST /api/verify — Self Protocol callback endpoint
+// Self sends the ZK proof here after a user completes passport verification.
+app.post('/api/verify', async (req: Request, res: Response) => {
+  try {
+    const { attestationId, proof, publicSignals, userContextData } = req.body;
+
+    if (!proof || !publicSignals || !attestationId) {
+      return res.status(200).json({
+        status: 'error',
+        result: false,
+        reason: 'Missing required fields: attestationId, proof, publicSignals',
+      });
+    }
+
+    const result = await verifySelfProof(
+      attestationId,
+      proof,
+      publicSignals,
+      userContextData || '',
+    );
+
+    if (result.success) {
+      console.log(`[Self] Verification succeeded for ${result.userId} (${result.platform})`);
+
+      // Send confirmation to user via their chat platform
+      if (result.platform === 'telegram' && result.chatId) {
+        try {
+          const { tgSilent } = await import('../bot/telegram/client');
+          await tgSilent('sendMessage', {
+            chat_id: result.chatId,
+            text: `Identity verified! Your daily spending limit is now ${VERIFIED_DAILY_LIMIT} cUSD/day.\n\nNo personal data was stored — only a ZK proof of uniqueness. Valid for 1 year.`,
+          });
+        } catch (e: any) {
+          console.error('[Self] Failed to send Telegram confirmation:', e.message);
+        }
+      }
+      // WhatsApp confirmation would require the socket instance, handled separately
+
+      return res.status(200).json({ status: 'success', result: true });
+    }
+
+    return res.status(200).json({
+      status: 'error',
+      result: false,
+      reason: result.error || 'Verification failed',
+    });
+  } catch (error: any) {
+    console.error('[Self] Verify endpoint error:', error.message);
+    return res.status(200).json({
+      status: 'error',
+      result: false,
+      reason: 'Internal verification error',
+    });
+  }
+});
+
+// GET /verify — Verification landing page
+// Users are sent here from the bot's /verify command.
+// Shows a simple page with instructions and a link to the Self app.
+app.get('/verify', async (req: Request, res: Response) => {
+  const token = req.query.token as string;
+  if (!token) {
+    return res.status(400).send('Missing verification token. Use the /verify command in Telegram or WhatsApp.');
+  }
+
+  // Build the Self universal link with the token embedded
+  const paddedToken = '0x' + token.padStart(40, '0');
+  const { getUniversalLink } = await import('@selfxyz/core');
+  const selfApp = {
+    version: 2,
+    appName: 'Toppa',
+    scope: process.env.SELF_SCOPE || 'toppa-verify',
+    endpoint: `${process.env.API_BASE_URL || 'https://api.toppa.cc'}/api/verify`,
+    logoBase64: 'https://api.toppa.cc/agent-image.png',
+    userId: paddedToken,
+    endpointType: 'https' as const,
+    userIdType: 'hex' as const,
+    disclosures: {},
+  };
+  const selfLink = getUniversalLink(selfApp);
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toppa — Verify Identity</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { max-width: 420px; padding: 40px 32px; background: #1a1a1a; border-radius: 16px; border: 1px solid #333; text-align: center; }
+    h1 { font-size: 24px; margin-bottom: 8px; color: #fcff52; }
+    .subtitle { color: #888; margin-bottom: 24px; font-size: 14px; }
+    .limits { background: #111; border-radius: 8px; padding: 16px; margin-bottom: 24px; }
+    .limits .row { display: flex; justify-content: space-between; padding: 4px 0; }
+    .limits .current { color: #888; }
+    .limits .upgraded { color: #4ade80; font-weight: 600; }
+    .steps { text-align: left; margin-bottom: 24px; }
+    .steps li { margin-bottom: 8px; padding-left: 4px; color: #ccc; }
+    .btn { display: inline-block; background: #fcff52; color: #000; font-weight: 700; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 16px; }
+    .btn:hover { background: #e8eb3a; }
+    .note { margin-top: 16px; font-size: 12px; color: #666; }
+    .download { margin-top: 12px; font-size: 13px; }
+    .download a { color: #fcff52; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Verify Your Identity</h1>
+    <p class="subtitle">Self Protocol — Zero-Knowledge Proof of Humanity</p>
+    <div class="limits">
+      <div class="row"><span class="current">Current limit</span><span class="current">${UNVERIFIED_DAILY_LIMIT} cUSD/day</span></div>
+      <div class="row"><span class="upgraded">After verification</span><span class="upgraded">${VERIFIED_DAILY_LIMIT} cUSD/day</span></div>
+    </div>
+    <ol class="steps">
+      <li>Tap the button below to open the Self app</li>
+      <li>Scan your passport with NFC (~30 seconds)</li>
+      <li>Done! Your limits upgrade automatically</li>
+    </ol>
+    <a href="${selfLink}" class="btn">Verify with Self</a>
+    <p class="note">No personal data is shared with Toppa. Self uses zero-knowledge proofs — we only receive proof of your uniqueness.</p>
+    <p class="download">Don't have the Self app? <a href="https://self.xyz" target="_blank">Download here</a></p>
+  </div>
+</body>
+</html>`);
+});
+
+// GET /api/verify/status — Check verification status for a user
+app.get('/api/verify/status', async (req: Request, res: Response) => {
+  const userId = req.query.userId as string;
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing userId parameter' });
+  }
+  const status = await getUserVerificationStatus(userId);
+  res.json({
+    userId,
+    verified: status.verified,
+    dailyLimit: status.dailyLimit,
+    verifiedAt: status.verifiedAt,
+  });
 });
 
 // ─────────────────────────────────────────────────
@@ -1672,7 +1829,9 @@ export function startApiServer() {
     console.log(`   Public:  GET  /convert?amount=10&from=USD&country=NG - Currency conversion`);
     console.log(`   Public:  GET  /identity                      - ERC-8004 agent identity`);
     console.log(`   Public:  GET  /reputation                    - Agent reputation`);
-    console.log(`   Public:  POST /api/verify                    - Self Protocol callback`);
+    console.log(`   Public:  GET  /verify?token=...              - Self verification page`);
+    console.log(`   Public:  POST /api/verify                    - Self Protocol ZK proof callback`);
+    console.log(`   Public:  GET  /api/verify/status?userId=...  - Check verification status`);
     console.log(`   Paid:    POST /send-airtime                  - Send airtime top-up`);
     console.log(`   Paid:    POST /send-data                     - Send data plan top-up`);
     console.log(`   Paid:    POST /pay-bill                      - Pay utility bill`);

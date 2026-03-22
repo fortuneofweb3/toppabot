@@ -54,9 +54,23 @@ All group spending goes through a poll — members vote, and the action executes
 ZK proof-of-humanity for tiered access — no KYC, no personal data disclosed:
 - **Unverified users:** $20/day spending limit
 - **Self-verified users:** $200/day spending limit
-- `/verify` — Generate a Self Protocol verification link
+- `/verify` — Opens Self Protocol verification flow
 - Sybil-resistant: one passport = one identity (nullifier-based)
 - Self Agent ID: #48 on Celo Sepolia
+
+**Verification Flow:**
+1. User types `/verify` in Telegram or WhatsApp
+2. Bot creates a verification session and sends a Self universal deep link
+3. User taps link → Self app opens → scans passport via NFC (~30 seconds)
+4. Self Protocol sends ZK proof to `POST /api/verify` callback
+5. Server verifies proof using `SelfBackendVerifier` from `@selfxyz/core`
+6. On success, user's spending limit upgrades from $20 → $200/day
+7. Bot sends confirmation message to the user
+
+**Endpoints:**
+- `GET /verify?token=...` — Verification landing page with Self link
+- `POST /api/verify` — Self Protocol ZK proof callback
+- `GET /api/verify/status?userId=...` — Check verification status
 
 ### Multi-Currency Deposits
 Deposit any supported Celo token and auto-swap to cUSD:
@@ -153,7 +167,7 @@ src/
 ├── apis/                      # External Service Clients
 │   ├── reloadly.ts            # Reloadly API (airtime, data, bills, gift cards)
 │   ├── prestmit.ts            # Prestmit API (gift card sell — coming soon)
-│   └── selfclaw.ts            # Self Protocol ZK verification (in reloadly.ts)
+│   └── selfclaw.ts            # Self Protocol ZK verification
 │
 ├── blockchain/                # On-Chain Interactions
 │   ├── x402.ts                # x402 payment verification
@@ -229,7 +243,9 @@ src/
 | GET | `/transaction/:type/:id` | Check transaction status |
 | GET | `/identity` | Agent ERC-8004 on-chain identity |
 | GET | `/reputation` | Agent reputation score |
-| POST | `/api/verify` | Self Protocol verification callback |
+| GET | `/verify?token=...` | Self Protocol verification landing page |
+| POST | `/api/verify` | Self Protocol ZK proof callback |
+| GET | `/api/verify/status?userId=...` | Check user verification status |
 
 ### Paid (x402 — product cost + 1.5% service fee)
 | Method | Path | Description |
@@ -303,7 +319,9 @@ npm run dev
 | `DEEPGRAM_API_KEY` | Recommended | Voice note transcription |
 | `ENABLE_WHATSAPP` | Optional | Set `true` to enable WhatsApp bot |
 | `ADMIN_API_KEY` | Optional | Admin endpoint authentication |
-| `SELF_APP_SCOPE` | Optional | Self Protocol verification scope |
+| `UNISWAP_API_KEY` | Optional | Uniswap Trading API key (from developers.uniswap.org) |
+| `SELF_SCOPE` | Optional | Self Protocol verification scope (default: `toppa-verify`) |
+| `API_BASE_URL` | Optional | Public API URL for Self callback (default: `https://api.toppa.cc`) |
 
 ## Integrations
 
@@ -321,7 +339,11 @@ Implements the x402 standard (HTTP 402 Payment Required). Other AI agents pay cU
 ZK proof of humanity via passport NFC scanning. Users verify once in the Self app — no personal data disclosed. Sybil-resistant without KYC.
 
 - **Self Agent ID: #48** (Celo Sepolia) — Address: `0x9480a88916074D9B2f62c6954a41Ea4B9B40b64c`
-- **Registration:** [app.ai.self.xyz](https://app.ai.self.xyz) | [Self Docs](https://docs.self.xyz)
+- **SDK:** `@selfxyz/core` — `SelfBackendVerifier` for proof verification, `getUniversalLink` for deep links
+- **Callback:** `POST /api/verify` receives ZK proof from Self Protocol after passport scan
+- **Sybil Resistance:** Nullifier-based — one passport = one identity across all accounts
+- **Spending Tiers:** $20/day (unverified) → $200/day (verified) — enforced in both Telegram and WhatsApp bots
+- **Docs:** [docs.self.xyz](https://docs.self.xyz) | [app.ai.self.xyz](https://app.ai.self.xyz)
 
 ### Multi-Protocol Agent Access
 - **REST + x402** — Pay-per-call HTTP API for any agent

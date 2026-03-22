@@ -778,6 +778,29 @@ async function handleCommand(
       await sock.sendMessage(jid, { text: 'Conversation history cleared.' });
       return;
 
+    case '/verify': {
+      try {
+        const { createVerificationSession, getUserVerificationStatus, formatVerificationMessage, formatAlreadyVerifiedMessage } = await import('../../blockchain/self-verification');
+        const { link, alreadyVerified } = await createVerificationSession(
+          userId,
+          'whatsapp',
+          jid,
+        );
+
+        if (alreadyVerified) {
+          const status = await getUserVerificationStatus(userId);
+          await sock.sendMessage(jid, { text: formatAlreadyVerifiedMessage(status.verifiedAt) });
+          return;
+        }
+
+        await sock.sendMessage(jid, { text: formatVerificationMessage(link) });
+      } catch (err: any) {
+        console.error('[WA Verify] Error:', err.message);
+        await sock.sendMessage(jid, { text: 'Verification is temporarily unavailable. Please try again later.' });
+      }
+      return;
+    }
+
     case '/group': {
       if (!groupId) {
         await sock.sendMessage(jid, { text: 'This command only works in group chats.' });
@@ -1188,7 +1211,7 @@ async function handleCommand(
     }
 
     case '/help': {
-      let helpText = `Toppa — Airtime, Data, Bills & Gift Cards on Celo\n\nCommands:\n/start - Create wallet & get started\n/wallet - Check all token balances\n/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n/swap - Convert all tokens to cUSD\n/rate <country> - Check FX rate (e.g. /rate NG)\n/cancel - Cancel pending order\n/settings - View settings\n/togglereview - Toggle auto-review\n/export - Export private key\n/clear - Clear conversation memory\n/help - Show this message\n`;
+      let helpText = `Toppa — Airtime, Data, Bills & Gift Cards on Celo\n\nCommands:\n/start - Create wallet & get started\n/wallet - Check all token balances\n/withdraw <address> <amount> - Withdraw ${TOKEN_SYMBOL}\n/swap - Convert all tokens to cUSD\n/rate <country> - Check FX rate (e.g. /rate NG)\n/verify - Verify identity (unlock $200/day limit)\n/cancel - Cancel pending order\n/settings - View settings\n/togglereview - Toggle auto-review\n/export - Export private key\n/clear - Clear conversation memory\n/help - Show this message\n`;
 
       if (groupId) {
         helpText += `\nGroup Commands:\n/group enable - Enable group wallet\n/group - Show group wallet info\n/contribute <amount> - Contribute cUSD to group\n/group_withdraw <addr> <amt> - Admin withdraw\n/threshold <percent> - Set poll approval % (admin)\n/vote - View/vote on active polls\n/poll - Admin: manage polls (cancel/approve/off/on)\n/tasks - Admin: view group scheduled tasks\n/task cancel <id> - Admin: cancel a task\n`;

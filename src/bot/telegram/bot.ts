@@ -19,7 +19,7 @@ import { getFxRate } from '../../apis/reloadly';
 import { startSellOrderPoller, stopSellOrderPoller } from '../sell-order-poller';
 import { enableGroup, getGroup, isGroupAdmin, getGroupBalance, contributeToGroup, groupWithdraw, getGroupTransactions, getMemberContributions, setPollThreshold, createGroupPoll, setPollMessageInfo, getPollByTgPollId, getPollById, recordPollVote, closePoll, setPollingEnabled, getMostRecentActivePoll, getActivePolls } from '../groups';
 import { recordGroupMsg, buildGroupContext as buildGroupCtx, UserRateLimit, RATE_LIMIT_WINDOW, MAX_REQUESTS_PER_WINDOW, DAILY_SPENDING_LIMIT, VERIFIED_SPENDING_LIMIT, SPENDING_RESET_WINDOW } from '../group-context';
-import { getDailySpendingLimit, formatVerificationPrompt } from '../../blockchain/self-verification';
+import { getDailySpendingLimit, createVerificationSession, getUserVerificationStatus, formatVerificationMessage, formatAlreadyVerifiedMessage, VERIFIED_DAILY_LIMIT } from '../../blockchain/self-verification';
 
 // ─────────────────────────────────────────────────
 // Wallet & Order Infrastructure
@@ -408,6 +408,7 @@ async function cmdHelp(chatId: number, isGroupChat = false) {
     `/status - Your profile, instructions & tasks\n` +
     `/silent - Toggle proactive messages on/off\n` +
     `/clear - Clear conversation memory\n` +
+    `/verify - Verify identity (unlock $200/day limit)\n` +
     `/cancel - Cancel pending order\n` +
     `/help - Show this help message\n`;
 
@@ -593,6 +594,45 @@ async function cmdExport(chatId: number) {
     chat_id: chatId,
     text: `To export your private key, use /settings\n\nThis must be done in a private chat for security.`,
   });
+}
+
+// ─────────────────────────────────────────────────
+// Self Protocol Verification Command
+// ─────────────────────────────────────────────────
+
+async function cmdVerify(chatId: number, userId: string) {
+  try {
+    const { link, alreadyVerified } = await createVerificationSession(
+      userId,
+      'telegram',
+      chatId.toString(),
+    );
+
+    if (alreadyVerified) {
+      const status = await getUserVerificationStatus(userId);
+      await tg('sendMessage', {
+        chat_id: chatId,
+        text: formatAlreadyVerifiedMessage(status.verifiedAt),
+      });
+      return;
+    }
+
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: formatVerificationMessage(link),
+      reply_markup: {
+        inline_keyboard: [[
+          { text: 'Verify with Self', url: link },
+        ]],
+      },
+    });
+  } catch (err: any) {
+    console.error('[Verify] Error:', err.message);
+    await tg('sendMessage', {
+      chat_id: chatId,
+      text: 'Verification is temporarily unavailable. Please try again later.',
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────
@@ -1526,6 +1566,7 @@ async function handleUpdate(update: TgUpdate): Promise<void> {
           case 'silent': return cmdSilent(chatId, userId);
           case 'status': return cmdStatus(chatId, userId);
           case 'export': return cmdExport(chatId);
+          case 'verify': return cmdVerify(chatId, userId);
           // Group commands
           case 'group': return cmdGroup(chatId, userId, text, groupId);
           case 'contribute': return cmdContribute(chatId, userId, text, groupId);
@@ -1626,6 +1667,7 @@ export async function startTelegramBot(expressApp?: import('express').Express) {
       { command: 'settings', description: 'Wallet settings & export key' },
       { command: 'cancel', description: 'Cancel pending order' },
       { command: 'silent', description: 'Toggle proactive messages' },
+      { command: 'verify', description: 'Verify identity (unlock $200/day limit)' },
       { command: 'clear', description: 'Clear conversation memory' },
       { command: 'help', description: 'Show help & examples' },
     ],

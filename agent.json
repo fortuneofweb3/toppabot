@@ -107,7 +107,9 @@
     "mcp": "https://api.toppa.cc/mcp",
     "a2a": "https://api.toppa.cc/a2a",
     "agentCard": "https://api.toppa.cc/.well-known/agent-card.json",
-    "registration": "https://api.toppa.cc/registration.json"
+    "registration": "https://api.toppa.cc/registration.json",
+    "selfVerify": "https://api.toppa.cc/api/verify",
+    "selfVerifyStatus": "https://api.toppa.cc/api/verify/status"
   },
 
   "trustTypes": ["reputation", "crypto-economic"],
