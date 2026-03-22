@@ -105,8 +105,10 @@ export const sendAirtimeTool: Tool = {
     countryCode = sanitizeCountryCode(countryCode);
 
     // Validate amount against operator constraints before generating payment
+    let operatorName: string | undefined;
     try {
       const operator = await detectOperator(phone, countryCode);
+      operatorName = operator.name;
       const amountError = validateOperatorAmount(operator, amount);
       if (amountError) return JSON.stringify({ status: 'error', error: amountError });
     } catch (e: any) {
@@ -120,6 +122,7 @@ export const sendAirtimeTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
+      operatorName,
       details: { phone, countryCode, amount, useLocalAmount: false },
       message: `Airtime top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
@@ -190,10 +193,12 @@ export const sendDataTool: Tool = {
     countryCode = sanitizeCountryCode(countryCode);
 
     // Validate amount against operator constraints before generating payment
+    let operatorName: string | undefined;
     try {
       const operators = await getOperators(countryCode);
       const operator = operators.find(op => op.operatorId === operatorId);
       if (operator) {
+        operatorName = operator.name;
         const amountError = validateOperatorAmount(operator, amount);
         if (amountError) return JSON.stringify({ status: 'error', error: amountError });
       }
@@ -208,6 +213,7 @@ export const sendDataTool: Tool = {
       productAmount: amount,
       totalWithFee: total,
       currency: 'cUSD',
+      operatorName,
       details: { phone, countryCode, amount, operatorId, useLocalAmount: false },
       message: `Data top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });

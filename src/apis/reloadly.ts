@@ -10,8 +10,14 @@
  * across users are instant. Only transactions and balance are always fresh.
  */
 
+import crypto from 'crypto';
 import { apiCache, CACHE_TTL } from '../shared/api-cache';
 import { sanitizePhone } from '../shared/sanitize';
+
+/** Generate a unique identifier that won't collide across retries */
+function uniqueId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+}
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -182,6 +188,14 @@ async function reloadlyRequest<T>(
     if (!response.ok) {
       try {
         const err = await response.json();
+
+        // "customIdentifier already used" means a previous attempt succeeded.
+        // Treat it as a success — the service was delivered on the earlier try.
+        if (response.status === 400 && err?.message?.includes('already been used')) {
+          console.log(`[Reloadly] customIdentifier already used — previous attempt succeeded (idempotent OK)`);
+          return { status: 'SUCCESSFUL', customIdentifier: body?.customIdentifier, idempotent: true } as T;
+        }
+
         throw parseReloadlyError(response.status, err);
       } catch (e) {
         if (e instanceof ReloadlyError) throw e;
@@ -306,6 +320,49 @@ export interface ReloadlyBillPaymentResponse {
   finalStatusAvailabilityAt: string | null;
 }
 
+// ─── Phone Normalization ───
+
+/** Country ISO code → international dial code mapping (most common markets) */
+const DIAL_CODES: Record<string, string> = {
+  NG: '234', KE: '254', GH: '233', ZA: '27', TZ: '255', UG: '256',
+  ET: '251', CM: '237', CI: '225', SN: '221', RW: '250', ZM: '260',
+  MW: '265', MZ: '258', BJ: '229', TG: '228', NE: '227', ML: '223',
+  BF: '226', GA: '241', CG: '242', CD: '243', AO: '244', NA: '264',
+  BW: '267', ZW: '263', MG: '261', MU: '230', SC: '248', DJ: '253',
+  US: '1', CA: '1', GB: '44', IN: '91', PH: '63', PK: '92',
+  BD: '880', ID: '62', MY: '60', TH: '66', VN: '84', EG: '20',
+  BR: '55', MX: '52', CO: '57', AR: '54', CL: '56', PE: '51',
+  AE: '971', SA: '966', TR: '90', DE: '49', FR: '33', ES: '34',
+  IT: '39', NL: '31', BE: '32', PT: '351', SE: '46', NO: '47',
+  DK: '45', FI: '358', PL: '48', CZ: '420', AT: '43', CH: '41',
+  IE: '353', RO: '40', UA: '380', RU: '7', JP: '81', KR: '82',
+  AU: '61', NZ: '64', SG: '65', HK: '852', TW: '886', LK: '94',
+};
+
+/**
+ * Normalize a phone number to international format for Reloadly.
+ * Handles: local format (0xxx), +prefix, or already international.
+ * Returns digits only (no +).
+ */
+function normalizePhone(phone: string, countryCode: string): string {
+  let digits = phone.replace(/[^0-9]/g, '');
+  const dialCode = DIAL_CODES[countryCode.toUpperCase()];
+
+  if (!dialCode) return digits; // Unknown country, pass through
+
+  // If starts with 0 and we know the dial code, replace leading 0 with dial code
+  if (digits.startsWith('0') && digits.length >= 8) {
+    digits = dialCode + digits.slice(1);
+  }
+  // If it already starts with the dial code, it's already international
+  // If it doesn't start with 0 or the dial code, prepend dial code
+  else if (!digits.startsWith(dialCode) && digits.length <= 10) {
+    digits = dialCode + digits;
+  }
+
+  return digits;
+}
+
 // ─── Airtime Functions ───
 
 /**
@@ -327,12 +384,13 @@ export async function getOperators(countryCode: string) {
  */
 export async function detectOperator(phone: string, countryCode: string) {
   const sanitized = sanitizePhone(phone);
+  const intlPhone = normalizePhone(sanitized, countryCode);
   const cc = countryCode.toUpperCase();
-  const cacheKey = `detect:${sanitized}:${cc}`;
+  const cacheKey = `detect:${intlPhone}:${cc}`;
   const cached = apiCache.get<ReloadlyOperator>(cacheKey);
   if (cached) return cached;
 
-  const result = await airtimeRequest<ReloadlyOperator>('GET', `/operators/auto-detect/phone/${encodeURIComponent(sanitized)}/countries/${cc}`);
+  const result = await airtimeRequest<ReloadlyOperator>('GET', `/operators/auto-detect/phone/${encodeURIComponent(intlPhone)}/countries/${cc}`);
   apiCache.set(cacheKey, result, CACHE_TTL.DETECT_OPERATOR);
   return result;
 }
@@ -348,11 +406,12 @@ export async function sendAirtime(params: {
   useLocalAmount?: boolean;
 }) {
   const sanitizedPhone = sanitizePhone(params.phone);
+  const intlPhone = normalizePhone(sanitizedPhone, params.countryCode);
 
   // Auto-detect operator if not provided
   let operatorId = params.operatorId;
   if (!operatorId) {
-    const operator = await detectOperator(sanitizedPhone, params.countryCode);
+    const operator = await detectOperator(intlPhone, params.countryCode);
     operatorId = operator.operatorId;
   }
 
@@ -360,10 +419,10 @@ export async function sendAirtime(params: {
     operatorId,
     amount: params.amount,
     useLocalAmount: params.useLocalAmount ?? false,
-    customIdentifier: `toppa-${Date.now()}`,
+    customIdentifier: uniqueId('toppa'),
     recipientPhone: {
       countryCode: params.countryCode.toUpperCase(),
-      number: sanitizedPhone,
+      number: intlPhone,
     },
   });
 }
@@ -391,15 +450,16 @@ export async function sendData(params: {
   useLocalAmount?: boolean;
 }) {
   const sanitizedPhone = sanitizePhone(params.phone);
+  const intlPhone = normalizePhone(sanitizedPhone, params.countryCode);
 
   return airtimeRequest<ReloadlyTopupResponse>('POST', '/topups', {
     operatorId: params.operatorId,
     amount: params.amount,
     useLocalAmount: params.useLocalAmount ?? false,
-    customIdentifier: `toppa-data-${Date.now()}`,
+    customIdentifier: uniqueId('toppa-data'),
     recipientPhone: {
       countryCode: params.countryCode.toUpperCase(),
-      number: sanitizedPhone,
+      number: intlPhone,
     },
   });
 }
@@ -588,7 +648,7 @@ export async function buyGiftCard(params: {
     productId: params.productId,
     quantity: params.quantity,
     unitPrice: params.unitPrice,
-    customIdentifier: `toppa-gc-${Date.now()}`,
+    customIdentifier: uniqueId('toppa-gc'),
     recipientEmail: params.recipientEmail,
     senderName: params.senderName || 'Toppa Agent',
   });

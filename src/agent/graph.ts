@@ -237,11 +237,12 @@ function checkPaymentShortCircuit(
           .replace('buy_', '');
 
         const d = parsed.details;
+        const opName = parsed.operatorName ? ` via ${parsed.operatorName}` : '';
         let description = '';
         if (parsed.service === 'send_airtime') {
-          description = `Send ${parsed.productAmount} cUSD airtime to ${d.phone} in ${d.countryCode}`;
+          description = `Send ${parsed.productAmount} cUSD airtime to ${d.phone}${opName}`;
         } else if (parsed.service === 'send_data') {
-          description = `Send ${parsed.productAmount} cUSD data to ${d.phone} in ${d.countryCode}`;
+          description = `Send ${parsed.productAmount} cUSD data to ${d.phone}${opName}`;
         } else if (parsed.service === 'pay_bill') {
           description = `Pay ${parsed.productAmount} cUSD bill for account ${d.accountNumber}`;
         } else if (parsed.service === 'buy_gift_card') {
