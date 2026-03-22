@@ -192,18 +192,27 @@ export const sendDataTool: Tool = {
     phone = sanitizePhone(phone);
     countryCode = sanitizeCountryCode(countryCode);
 
-    // Validate amount against operator constraints before generating payment
+    // Validate operatorId belongs to this country and check amount constraints
     let operatorName: string | undefined;
+    let validatedOperatorId = operatorId;
     try {
       const operators = await getOperators(countryCode);
       const operator = operators.find(op => op.operatorId === operatorId);
-      if (operator) {
+      if (!operator) {
+        // LLM passed wrong operatorId — auto-detect from phone number instead
+        console.warn(`[send_data] operatorId ${operatorId} not found in ${countryCode}, auto-detecting`);
+        const detected = await detectOperator(phone, countryCode);
+        validatedOperatorId = detected.operatorId;
+        operatorName = detected.name;
+        const amountError = validateOperatorAmount(detected, amount);
+        if (amountError) return JSON.stringify({ status: 'error', error: amountError });
+      } else {
         operatorName = operator.name;
         const amountError = validateOperatorAmount(operator, amount);
         if (amountError) return JSON.stringify({ status: 'error', error: amountError });
       }
     } catch (e: any) {
-      // If operator lookup fails, let it proceed
+      // If operator lookup fails, let it proceed with original operatorId
     }
 
     const { total } = calculateTotalPayment(amount);
@@ -214,7 +223,7 @@ export const sendDataTool: Tool = {
       totalWithFee: total,
       currency: 'cUSD',
       operatorName,
-      details: { phone, countryCode, amount, operatorId, useLocalAmount: false },
+      details: { phone, countryCode, amount, operatorId: validatedOperatorId, useLocalAmount: false },
       message: `Data top-up requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },

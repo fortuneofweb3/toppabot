@@ -1458,10 +1458,19 @@ async function processOrderConfirmation(
     }
 
     let userMsg = 'Transaction failed. Please try again or contact support.';
-    if (error.message.includes('Insufficient balance') || error.message.includes('Insufficient cUSD') || error.message.includes('transfer amount exceeds')) {
+    const errMsg = error.message || '';
+    if (errMsg.includes('Insufficient balance') || errMsg.includes('Insufficient cUSD') || errMsg.includes('transfer amount exceeds')) {
        userMsg = `You don't have enough ${TOKEN_SYMBOL} to complete this payment.`;
-    } else if (error.message.includes('OPERATOR') || error.message.includes('operator')) {
-       userMsg = 'Service provider error. Please check your details and try again.';
+    } else if (errMsg.includes('not valid for the given mobile operator') || errMsg.includes('phone number is not valid')) {
+       userMsg = 'This phone number is not valid for the detected operator. Double-check the number and try again.';
+    } else if (errMsg.includes('disabled for your account') || errMsg.includes('currently disabled')) {
+       userMsg = 'This operator is temporarily unavailable. Please try again later or choose a different service.';
+    } else if (errMsg.includes('operator') || errMsg.includes('OPERATOR')) {
+       userMsg = 'Service provider error. Please check the phone number/country and try again.';
+    } else if (errMsg.includes('amount') || errMsg.includes('AMOUNT') || errMsg.includes('minimum') || errMsg.includes('maximum') || errMsg.includes('denomination')) {
+       userMsg = 'The amount is not accepted by the provider. Try a different amount.';
+    } else if (errMsg.includes('timeout') || errMsg.includes('AbortError') || errMsg.includes('ETIMEDOUT')) {
+       userMsg = 'The service provider took too long to respond. Please try again.';
     }
 
     if (refunded) {
