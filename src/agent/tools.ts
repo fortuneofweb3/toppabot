@@ -374,10 +374,11 @@ export const searchGiftCardsTool: Tool = {
 
       if (results.length === 0) return `No gift cards found for "${query}"${countryCode ? ' in ' + countryCode.toUpperCase() : ''}.`;
       const balance = await getCachedReloadlyBalance();
-      return results.slice(0, 10).map(p => {
+      let output = `Found ${results.length} gift cards. IMPORTANT: use the exact productId number when calling buy_gift_card.\n\n`;
+      output += results.slice(0, 10).map(p => {
         const amounts = (p.fixedSenderDenominations || []).filter((d: number) => d <= balance).slice(0, 10);
         const recipientAmounts = (p.fixedRecipientDenominations || []).slice(0, 10);
-        let text = `${p.productName} [productId:${p.productId}] ${p.brand.brandName} | ${p.country.isoName} ${p.recipientCurrencyCode}`;
+        let text = `productId=${p.productId} | ${p.productName} | ${p.brand.brandName} | ${p.country.isoName} ${p.recipientCurrencyCode}`;
         if (p.denominationType === 'FIXED' && amounts.length > 0) {
           const pairs = amounts.map((a: number, i: number) => recipientAmounts[i] ? `${a} cUSD (${recipientAmounts[i]} ${p.recipientCurrencyCode})` : `${a} cUSD`);
           text += '\n  ' + pairs.join(' | ');
@@ -388,6 +389,7 @@ export const searchGiftCardsTool: Tool = {
         if (p.redeemInstruction?.concise) text += `\n  Redeem: ${p.redeemInstruction.concise}`;
         return text;
       }).join('\n\n');
+      return output;
     } catch (error: any) {
       console.error(`[Tool:search_gift_cards] Error after ${Date.now() - start}ms:`, error.message);
       return JSON.stringify({ error: error.message });
@@ -444,23 +446,38 @@ export const getGiftCardsTool: Tool = {
  */
 export const buyGiftCardTool: Tool = {
   name: "buy_gift_card",
-  description: "Buy a gift card by productId. Amount in cUSD.",
+  description: "Buy a gift card. You MUST use the EXACT productId number from search_gift_cards results. Do NOT guess or make up productIds.",
   schema: z.object({
-    productId: z.number().describe("Product ID from search_gift_cards"),
+    productId: z.number().describe("EXACT productId number from search_gift_cards results (e.g. 20498). Do NOT guess this."),
     amount: z.number().describe("Amount in cUSD"),
     recipientEmail: z.string().describe("Delivery email"),
     quantity: z.number().optional().nullable().describe("Number of cards (default 1)"),
     recipientUserId: z.string().optional().nullable().describe("In groups: Telegram/WhatsApp user ID of the gift card recipient. Omit for general/giveaway."),
+    productName: z.string().optional().nullable().describe("Product name from search results (e.g. 'Binance (USDT) US'). Used as fallback if productId fails."),
   }),
-  func: async ({ productId, amount, recipientEmail, quantity, recipientUserId }) => {
+  func: async ({ productId, amount, recipientEmail, quantity, recipientUserId, productName: inputProductName }) => {
     // Server-side: validate productId exists and amount is valid
-    console.log(`[GiftCardTool] Called for productId: ${productId}, amount: ${amount}`);
+    console.log(`[GiftCardTool] Called for productId: ${productId}, amount: ${amount}, productName: ${inputProductName || 'none'}`);
     let productName: string | undefined;
     let validatedAmount = amount;
+    let resolvedProductId = Number(productId);
     try {
-      const product = await getGiftCardProduct(Number(productId));
+      let product = await getGiftCardProduct(resolvedProductId).catch(() => null);
+      
+      // Fallback: if productId not found but we have a productName, search for the correct product
+      if (!product && inputProductName) {
+        console.log(`[GiftCardTool] productId ${productId} not found, trying fallback search for "${inputProductName}"`);
+        const fallbackResults = await searchGiftCards(inputProductName);
+        if (fallbackResults.length > 0) {
+          // Pick the best match (exact name match first, then first result)
+          product = fallbackResults.find(p => p.productName === inputProductName) || fallbackResults[0];
+          resolvedProductId = product.productId;
+          console.log(`[GiftCardTool] Fallback resolved to productId: ${resolvedProductId} (${product.productName})`);
+        }
+      }
+      
       if (!product) {
-        return JSON.stringify({ status: 'error', error: `Gift card product ${productId} not found. Use search_gift_cards to find valid products.` });
+        return JSON.stringify({ status: 'error', error: `Gift card product ${productId} not found. Use search_gift_cards to find valid products and use the EXACT productId from results.` });
       }
       // Reject unavailable / delisted products before showing order summary
           // Reject only explicitly unavailable products
@@ -498,7 +515,7 @@ export const buyGiftCardTool: Tool = {
       totalWithFee: total,
       currency: 'cUSD',
       productName,
-      details: { productId, unitPrice: validatedAmount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
+      details: { productId: resolvedProductId, unitPrice: validatedAmount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
