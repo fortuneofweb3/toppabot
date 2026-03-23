@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toppa — Demo & Pitch Deck</title>
+  <meta name="description" content="Watch the Toppa demo video and view the pitch deck. AI agent for airtime, data, bills & gift cards on Celo.">
+
+  <meta property="og:title" content="Toppa — Demo & Pitch Deck">
+  <meta property="og:description" content="Watch the Toppa demo and view the pitch deck. AI agent for real-world payments on Celo.">
+  <meta property="og:image" content="https://toppa.cc/banner.png">
+  <meta property="og:url" content="https://toppa.cc/demo">
+
+  <link rel="icon" type="image/png" href="../favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --orange: #FFA533;
+      --orange-dark: #E8901A;
+      --orange-light: #FFF7ED;
+      --text: #0F172A;
+      --text-2: #475569;
+      --text-3: #94A3B8;
+      --bg: #FFFFFF;
+      --bg-alt: #F8FAFC;
+      --border: #E2E8F0;
+      --radius: 12px;
+      --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── Topbar ─────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 56px;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .topbar-brand img {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+    }
+
+    .topbar-sep { color: var(--text-3); font-weight: 300; }
+    .topbar-label { color: var(--text-2); font-weight: 500; }
+
+    .topbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .topbar-nav a {
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-2);
+      transition: color 0.15s;
+    }
+
+    .topbar-nav a:hover { color: var(--text); }
+
+    .topbar-cta {
+      background: var(--orange) !important;
+      color: #fff !important;
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 0.8rem !important;
+    }
+
+    .topbar-cta:hover { background: var(--orange-dark) !important; }
+
+    /* ─── Main ───────────────────────────── */
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      font-size: 1.05rem;
+      color: var(--text-2);
+      line-height: 1.65;
+      margin-bottom: 48px;
+    }
+
+    /* ─── Cards ──────────────────────────── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    .card {
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: box-shadow 0.2s, transform 0.2s;
+    }
+
+    .card:hover {
+      box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+      transform: translateY(-2px);
+    }
+
+    .card-preview {
+      width: 100%;
+      aspect-ratio: 16/10;
+      background: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-preview.pitch {
+      background: linear-gradient(135deg, #FFA533 0%, #E8901A 100%);
+    }
+
+    .card-preview.video {
+      background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+    }
+
+    .card-icon {
+      font-size: 3rem;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .card-body {
+      padding: 20px 24px 24px;
+    }
+
+    .card-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+
+    .card-badge.pdf {
+      background: var(--orange-light);
+      color: var(--orange-dark);
+    }
+
+    .card-badge.video-badge {
+      background: #EFF6FF;
+      color: #2563EB;
+    }
+
+    .card-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+    }
+
+    .card-desc {
+      font-size: 0.88rem;
+      color: var(--text-2);
+      line-height: 1.55;
+      margin-bottom: 16px;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.15s;
+      font-family: var(--font);
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: var(--orange);
+      color: #fff;
+    }
+
+    .btn-primary:hover { background: var(--orange-dark); }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+
+    .btn-outline:hover {
+      border-color: var(--text-3);
+      color: var(--text);
+    }
+
+    /* ─── PDF Embed ──────────────────────── */
+    .pdf-embed {
+      margin-top: 48px;
+    }
+
+    .pdf-embed h2 {
+      font-size: 1.3rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+      letter-spacing: -0.01em;
+    }
+
+    .pdf-frame {
+      width: 100%;
+      height: 600px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-alt);
+    }
+
+    /* ─── Footer ─────────────────────────── */
+    .footer {
+      text-align: center;
+      padding: 32px 24px;
+      font-size: 0.8rem;
+      color: var(--text-3);
+      border-top: 1px solid var(--border);
+      margin-top: 48px;
+    }
+
+    .footer a {
+      color: var(--text-2);
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: var(--orange); }
+
+    /* ─── Mobile ─────────────────────────── */
+    @media (max-width: 640px) {
+      .card-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 1.6rem; }
+      .container { padding: 32px 16px 64px; }
+      .topbar { padding: 0 16px; }
+      .topbar-nav { gap: 14px; }
+      .pdf-frame { height: 400px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="../" class="topbar-brand">
+      <img src="../favicon.png" alt="">
+      <span>Toppa</span>
+      <span class="topbar-sep">/</span>
+      <span class="topbar-label">Demo</span>
+    </a>
+    <nav class="topbar-nav">
+      <a href="../">Home</a>
+      <a href="../docs">Docs</a>
+      <a href="https://github.com/nicholasforbes/toppabot" target="_blank">GitHub</a>
+      <a href="https://t.me/toppa402Bot" target="_blank" class="topbar-cta">Try Toppa</a>
+    </nav>
+  </header>
+
+  <div class="container">
+    <h1>Demo &amp; Pitch Deck</h1>
+    <p class="subtitle">See Toppa in action. Watch the demo video and browse the pitch deck below.</p>
+
+    <div class="card-grid">
+      <!-- Pitch Deck Card -->
+      <div class="card">
+        <div class="card-preview pitch">
+          <span class="card-icon">&#128196;</span>
+        </div>
+        <div class="card-body">
+          <span class="card-badge pdf">PDF</span>
+          <div class="card-title">Pitch Deck</div>
+          <p class="card-desc">10 slides covering the problem, solution, architecture, agent-to-agent commerce, and roadmap.</p>
+          <div class="card-actions">
+            <a href="pitchdeck.pdf" target="_blank" class="btn btn-primary">&#8595; Download PDF</a>
+            <a href="#pitchdeck" class="btn btn-outline">View below</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Demo Video Card -->
+      <div class="card">
+        <div class="card-preview video">
+          <span class="card-icon">&#9654;</span>
+        </div>
+        <div class="card-body">
+          <span class="card-badge video-badge">Video</span>
+          <div class="card-title">Demo Video</div>
+          <p class="card-desc">A walkthrough of Toppa on Telegram — sending airtime, paying bills, buying gift cards, and group wallets.</p>
+          <div class="card-actions">
+            <a href="#demo-video" class="btn btn-primary">&#9654; Watch Demo</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Demo Video Section -->
+    <div class="pdf-embed" id="demo-video">
+      <h2>Demo Video</h2>
+      <div style="width:100%; aspect-ratio:16/9; background:var(--text); border-radius:var(--radius); display:flex; align-items:center; justify-content:center; color:var(--text-3); font-size:0.95rem; border:1px solid var(--border);">
+        Coming soon — video will be embedded here
+      </div>
+    </div>
+
+    <!-- Pitch Deck Embed -->
+    <div class="pdf-embed" id="pitchdeck">
+      <h2>Pitch Deck</h2>
+      <iframe src="pitchdeck.pdf" class="pdf-frame" title="Toppa Pitch Deck"></iframe>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <a href="../">Back to toppa.cc</a> &middot; Built on <a href="https://celo.org" target="_blank">Celo</a>
+  </footer>
+
+</body>
+</html>

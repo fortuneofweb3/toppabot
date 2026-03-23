@@ -52,10 +52,16 @@
       <div class="sidebar-section">
         <div class="sidebar-heading">Developer Reference</div>
         <a href="#api-overview" class="sidebar-link">API Overview</a>
+        <a href="#pricing" class="sidebar-link">Pricing & Fees</a>
         <a href="#x402" class="sidebar-link">x402 Protocol</a>
+        <a href="#send-airtime" class="sidebar-link">POST /send-airtime</a>
+        <a href="#send-data" class="sidebar-link">POST /send-data</a>
+        <a href="#pay-bill" class="sidebar-link">POST /pay-bill</a>
+        <a href="#buy-gift-card" class="sidebar-link">POST /buy-gift-card</a>
+        <a href="#discovery" class="sidebar-link">Discovery APIs</a>
+        <a href="#errors" class="sidebar-link">Error Handling</a>
         <a href="#mcp" class="sidebar-link">MCP Server</a>
         <a href="#a2a" class="sidebar-link">A2A Protocol</a>
-        <a href="#discovery" class="sidebar-link">Discovery APIs</a>
         <a href="#agent-card" class="sidebar-link">Agent Card & ERC-8004</a>
       </div>
       <div class="sidebar-section">
@@ -434,7 +440,7 @@
                   <td><span class="badge">REST</span></td>
                   <td><code>api.toppa.cc/operators/:cc</code></td>
                   <td>None (free)</td>
-                  <td>Discovery & browsing catalog</td>
+                  <td>Discovery &amp; browsing catalog</td>
                 </tr>
                 <tr>
                   <td><span class="badge">Telegram</span></td>
@@ -459,74 +465,523 @@
           <p>All endpoints accept and return JSON. No API keys required — paid endpoints use the x402 protocol (HTTP 402 + on-chain payment).</p>
         </section>
 
+        <!-- ─── Pricing ─────────────────────────────── -->
+        <section id="pricing">
+          <h1>Pricing &amp; Fees</h1>
+          <p class="lead">Toppa charges a flat <strong>1.5% service fee</strong> on top of the product cost. No hidden charges, no subscriptions.</p>
+
+          <h2>Fee Formula</h2>
+          <div class="code-block dark">
+<pre>total = product_cost + (product_cost × 0.015)
+
+Examples:
+  $5.00 airtime  → $5.08 total  ($0.08 fee)
+  $25.00 gift card → $25.38 total ($0.38 fee)
+  $100 bill payment → $101.50 total ($1.50 fee)</pre>
+          </div>
+          <p>Both the fee and total are rounded to 2 decimal places. The 402 response always returns the exact amount to pay — your agent doesn't need to calculate the fee.</p>
+
+          <h2>Payment Details</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Detail</th><th>Value</th></tr></thead>
+              <tbody>
+                <tr><td>Service fee</td><td>1.5% of product cost</td></tr>
+                <tr><td>Payment currency</td><td>cUSD (Celo Dollar) or USDC on Celo</td></tr>
+                <tr><td>Payment network</td><td>Celo Mainnet</td></tr>
+                <tr><td>Transaction max age</td><td>~1 hour (720 blocks)</td></tr>
+                <tr><td>Amount tolerance</td><td>0.2% (for gas rounding)</td></tr>
+                <tr><td>Replay protection</td><td>Each tx hash can only be used once</td></tr>
+                <tr><td>Auto-refund</td><td>If service fails after payment, cUSD is returned to payer</td></tr>
+                <tr><td>Rate limit</td><td>10 requests per 5 minutes per payer address</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ─── x402 Protocol ────────────────────────── -->
         <section id="x402">
           <h1>x402 Protocol</h1>
           <p class="lead">x402 turns HTTP 402 (Payment Required) into a machine-readable payment flow. Agents pay per API call using cUSD on Celo — no API keys, no accounts, no invoices.</p>
 
           <h2>How It Works</h2>
           <ol>
-            <li><strong>Request</strong> — Your agent sends a normal POST request to a paid endpoint.</li>
-            <li><strong>402 Response</strong> — Toppa returns HTTP 402 with payment details: price in cUSD, recipient address, and a payment schema.</li>
-            <li><strong>Pay</strong> — Your agent sends a cUSD transfer on the Celo blockchain for the exact amount.</li>
-            <li><strong>Retry with proof</strong> — Resend the same request with the transaction hash in the <code>X-PAYMENT</code> header.</li>
-            <li><strong>Fulfillment</strong> — Toppa verifies the payment on-chain and returns the result.</li>
+            <li><strong>Request</strong> — Send a normal POST request to a paid endpoint (no headers needed).</li>
+            <li><strong>402 Response</strong> — Toppa returns HTTP 402 with: price in cUSD, recipient wallet address, and network.</li>
+            <li><strong>Pay on-chain</strong> — Transfer the exact cUSD amount to the recipient address on Celo.</li>
+            <li><strong>Retry with proof</strong> — Resend the same request with the tx hash in the <code>X-PAYMENT</code> header.</li>
+            <li><strong>Fulfillment</strong> — Toppa verifies the payment on-chain, executes the service, and returns the result.</li>
           </ol>
+          <div class="callout">
+            <strong>Settlement receipt:</strong> After successful fulfillment, the response includes a <code>PAYMENT-RESPONSE</code> header with a Base64-encoded receipt containing the tx hash, network, and payer address.
+          </div>
+        </section>
 
-          <h2>Example Flow</h2>
+        <!-- ─── POST /send-airtime ───────────────────── -->
+        <section id="send-airtime">
+          <h1>POST /send-airtime</h1>
+          <p class="lead">Send airtime top-up to a mobile phone number. Operator is auto-detected from the phone number.</p>
+
+          <h2>Request Body</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>phone</code></td><td>string</td><td>Yes</td><td>Recipient phone number (local or international format)</td></tr>
+                <tr><td><code>countryCode</code></td><td>string</td><td>Yes</td><td>ISO 3166-1 alpha-2 country code (e.g. <code>NG</code>, <code>KE</code>, <code>GH</code>)</td></tr>
+                <tr><td><code>amount</code></td><td>number</td><td>Yes</td><td>Amount in cUSD (not local currency)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Example</h2>
           <div class="code-block dark">
-<pre># Step 1: Initial request
-POST https://api.toppa.cc/send-airtime
-Content-Type: application/json
+<pre># Step 1: Request without payment → 402
+curl -X POST https://api.toppa.cc/send-airtime \
+  -H "Content-Type: application/json" \
+  -d '{"phone": "+2348021234567", "countryCode": "NG", "amount": 5}'
 
+# 402 Response
 {
-  "phone": "+2348021234567",
-  "amount": 5,
-  "currency": "USD"
-}
-
-# Response: 402 Payment Required
-{
-  "price": "3.50",
+  "price": "5.08",
   "currency": "cUSD",
-  "recipient": "0x...",
+  "recipient": "0xYOUR_TOPPA_WALLET",
   "network": "celo"
 }
 
-# Step 2: After paying on-chain
-POST https://api.toppa.cc/send-airtime
-Content-Type: application/json
-X-PAYMENT: 0xabc123...def456
+# Step 2: Pay 5.08 cUSD on Celo, then retry with proof
+curl -X POST https://api.toppa.cc/send-airtime \
+  -H "Content-Type: application/json" \
+  -H "X-PAYMENT: 0xabc123...def456" \
+  -d '{"phone": "+2348021234567", "countryCode": "NG", "amount": 5}'</pre>
+          </div>
 
-{
-  "phone": "+2348021234567",
-  "amount": 5,
-  "currency": "USD"
-}
-
-# Response: 200 OK
-{
+          <h2>Success Response <span class="badge">200</span></h2>
+          <div class="code-block dark">
+<pre>{
   "status": "success",
-  "transactionId": "...",
-  "operatorName": "MTN Nigeria"
+  "transactionId": 123456,
+  "operatorTransactionId": "OP_789",
+  "operatorName": "MTN Nigeria",
+  "recipientPhone": "2348021234567",
+  "requestedAmount": 5.00,
+  "requestedAmountCurrencyCode": "USD",
+  "deliveredAmount": 6030,
+  "deliveredAmountCurrencyCode": "NGN",
+  "discount": 0.15,
+  "transactionDate": "2025-06-15T14:30:00Z",
+  "pinDetail": null,
+  "payment": {
+    "productAmount": 5.00,
+    "serviceFee": 0.08,
+    "total": 5.08,
+    "txHash": "0xabc123...def456",
+    "payer": "0xPAYER_ADDRESS"
+  }
 }</pre>
           </div>
 
-          <h2>Paid Endpoints</h2>
+          <h2>JavaScript Example</h2>
+          <div class="code-block dark">
+<pre>// Using viem to send cUSD on Celo
+import { createWalletClient, http, parseUnits } from 'viem';
+import { celo } from 'viem/chains';
+
+const CUSD = '0x765DE816845861e75A25fCA122bb6898B8B1282a';
+const TOPPA_API = 'https://api.toppa.cc';
+
+// 1. Get price quote (402 response)
+const quoteRes = await fetch(`${TOPPA_API}/send-airtime`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    phone: '+2348021234567',
+    countryCode: 'NG',
+    amount: 5
+  })
+});
+const quote = await quoteRes.json(); // { price, recipient, ... }
+
+// 2. Send cUSD on-chain
+const txHash = await walletClient.writeContract({
+  address: CUSD,
+  abi: erc20Abi,
+  functionName: 'transfer',
+  args: [quote.recipient, parseUnits(quote.price, 18)]
+});
+
+// 3. Submit payment proof
+const result = await fetch(`${TOPPA_API}/send-airtime`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'X-PAYMENT': txHash
+  },
+  body: JSON.stringify({
+    phone: '+2348021234567',
+    countryCode: 'NG',
+    amount: 5
+  })
+});
+console.log(await result.json()); // { status: 'success', ... }</pre>
+          </div>
+        </section>
+
+        <!-- ─── POST /send-data ──────────────────────── -->
+        <section id="send-data">
+          <h1>POST /send-data</h1>
+          <p class="lead">Send a mobile data bundle. Requires an <code>operatorId</code> — use <code>GET /operators/:cc</code> to find data operators first.</p>
+
+          <h2>Request Body</h2>
           <div class="table-wrap">
             <table>
-              <thead>
-                <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
-              </thead>
+              <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td><code>/send-airtime</code></td><td>POST</td><td>Send airtime to a phone number</td></tr>
-                <tr><td><code>/send-data</code></td><td>POST</td><td>Send a data bundle</td></tr>
-                <tr><td><code>/pay-bill</code></td><td>POST</td><td>Pay a utility bill</td></tr>
-                <tr><td><code>/buy-gift-card</code></td><td>POST</td><td>Purchase a gift card</td></tr>
+                <tr><td><code>phone</code></td><td>string</td><td>Yes</td><td>Recipient phone number</td></tr>
+                <tr><td><code>countryCode</code></td><td>string</td><td>Yes</td><td>ISO country code</td></tr>
+                <tr><td><code>amount</code></td><td>number</td><td>Yes</td><td>Amount in cUSD</td></tr>
+                <tr><td><code>operatorId</code></td><td>number</td><td>Yes</td><td>Operator ID (from <code>GET /operators/:cc</code>). Server validates against country; falls back to auto-detect if invalid.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Example</h2>
+          <div class="code-block dark">
+<pre>curl -X POST https://api.toppa.cc/send-data \
+  -H "Content-Type: application/json" \
+  -H "X-PAYMENT: 0xabc..." \
+  -d '{
+    "phone": "+2348021234567",
+    "countryCode": "NG",
+    "amount": 2,
+    "operatorId": 174
+  }'</pre>
+          </div>
+
+          <h2>Success Response <span class="badge">200</span></h2>
+          <div class="code-block dark">
+<pre>{
+  "status": "success",
+  "transactionId": 123457,
+  "operatorName": "MTN Nigeria",
+  "recipientPhone": "2348021234567",
+  "requestedAmount": 2.00,
+  "deliveredAmount": 2412,
+  "deliveredAmountCurrencyCode": "NGN",
+  "transactionDate": "2025-06-15T14:32:00Z",
+  "payment": {
+    "productAmount": 2.00,
+    "serviceFee": 0.03,
+    "total": 2.03,
+    "txHash": "0xabc...",
+    "payer": "0xPAYER_ADDRESS"
+  }
+}</pre>
+          </div>
+          <div class="callout">
+            <strong>Tip:</strong> Data operators have <code>data: true</code> or <code>bundle: true</code> in the <code>GET /operators/:cc</code> response. FIXED-type operators require exact denomination amounts; RANGE-type accept any amount within min/max.
+          </div>
+        </section>
+
+        <!-- ─── POST /pay-bill ───────────────────────── -->
+        <section id="pay-bill">
+          <h1>POST /pay-bill</h1>
+          <p class="lead">Pay a utility bill — electricity, water, TV (DStv, GOtv, Startimes), or internet. Use <code>GET /billers/:cc</code> to find the biller ID first.</p>
+
+          <h2>Request Body</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>billerId</code></td><td>number</td><td>Yes</td><td>Biller ID (from <code>GET /billers/:cc</code>)</td></tr>
+                <tr><td><code>accountNumber</code></td><td>string</td><td>Yes</td><td>Meter number, smartcard number, or account ID</td></tr>
+                <tr><td><code>amount</code></td><td>number</td><td>Yes</td><td>Amount in cUSD. Must be within the biller's min/max range.</td></tr>
+                <tr><td><code>countryCode</code></td><td>string</td><td>Yes</td><td>ISO country code (server validates biller belongs to this country)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Example</h2>
+          <div class="code-block dark">
+<pre>curl -X POST https://api.toppa.cc/pay-bill \
+  -H "Content-Type: application/json" \
+  -H "X-PAYMENT: 0xabc..." \
+  -d '{
+    "billerId": 42,
+    "accountNumber": "1234567890",
+    "amount": 10,
+    "countryCode": "NG"
+  }'</pre>
+          </div>
+
+          <h2>Success Response <span class="badge">200</span></h2>
+          <div class="code-block dark">
+<pre>{
+  "status": "success",
+  "id": 78901,
+  "referenceId": "toppa-bill-1718...",
+  "code": "PROCESSING",
+  "message": "Bill payment submitted successfully",
+  "submittedAt": "2025-06-15T14:35:00Z",
+  "finalStatusAvailabilityAt": "2025-06-15T14:40:00Z",
+  "payment": {
+    "productAmount": 10.00,
+    "serviceFee": 0.15,
+    "total": 10.15,
+    "txHash": "0xabc...",
+    "payer": "0xPAYER_ADDRESS"
+  }
+}</pre>
+          </div>
+          <div class="callout">
+            <strong>Note:</strong> Bill payments may take up to 5 minutes to finalize on the biller's side. The <code>finalStatusAvailabilityAt</code> field indicates when the final status will be available.
+          </div>
+        </section>
+
+        <!-- ─── POST /buy-gift-card ──────────────────── -->
+        <section id="buy-gift-card">
+          <h1>POST /buy-gift-card</h1>
+          <p class="lead">Purchase a gift card and receive the redeem code(s) in the response. Use <code>GET /gift-cards</code> or search by brand to find product IDs.</p>
+
+          <h2>Request Body</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>productId</code></td><td>number</td><td>Yes</td><td>Gift card product ID (from discovery endpoints)</td></tr>
+                <tr><td><code>amount</code></td><td>number</td><td>Yes</td><td>Amount in cUSD. FIXED products require an exact denomination; RANGE products accept any value within min/max.</td></tr>
+                <tr><td><code>recipientEmail</code></td><td>string</td><td>Yes</td><td>Email address for delivery (also returned in response)</td></tr>
+                <tr><td><code>quantity</code></td><td>number</td><td>No</td><td>Number of cards (default: 1, max: 10)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Example</h2>
+          <div class="code-block dark">
+<pre>curl -X POST https://api.toppa.cc/buy-gift-card \
+  -H "Content-Type: application/json" \
+  -H "X-PAYMENT: 0xabc..." \
+  -d '{
+    "productId": 5678,
+    "amount": 25,
+    "recipientEmail": "user@example.com"
+  }'</pre>
+          </div>
+
+          <h2>Success Response <span class="badge">200</span></h2>
+          <div class="code-block dark">
+<pre>{
+  "status": "success",
+  "transactionId": 456789,
+  "amount": 25.00,
+  "discount": 0,
+  "currencyCode": "USD",
+  "fee": 0,
+  "recipientEmail": "user@example.com",
+  "product": {
+    "productId": 5678,
+    "productName": "Steam USD 25",
+    "brand": { "brandId": 12, "brandName": "Steam" },
+    "country": { "isoName": "US", "name": "United States" }
+  },
+  "redeemCodes": [
+    { "cardNumber": "XXXX-XXXX-XXXX-XXXX", "pinCode": "1234" }
+  ],
+  "payment": {
+    "productAmount": 25.00,
+    "serviceFee": 0.38,
+    "total": 25.38,
+    "txHash": "0xabc...",
+    "payer": "0xPAYER_ADDRESS"
+  }
+}</pre>
+          </div>
+          <div class="callout">
+            <strong>Redeem codes:</strong> Codes are usually available immediately. If they're still being generated, the response will include <code>"redeemCodesNote": "Codes are being generated. Try again in a minute."</code> instead. Use the transaction ID to retrieve codes later.
+          </div>
+        </section>
+
+        <!-- ─── Discovery APIs ───────────────────────── -->
+        <section id="discovery">
+          <h1>Discovery APIs</h1>
+          <p class="lead">Free, unauthenticated REST endpoints for browsing Toppa's catalog. No x402 payment required. All responses are cached (30 min for operators/billers, 10 min for gift cards).</p>
+
+          <h2>GET /operators/:countryCode</h2>
+          <p>List all mobile operators for a country. Each operator includes denomination type (FIXED or RANGE), available amounts, FX rates, and logo URLs.</p>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/operators/NG
+
+[
+  {
+    "operatorId": 174,
+    "name": "MTN Nigeria",
+    "bundle": false,
+    "data": false,
+    "denominationType": "RANGE",
+    "minAmount": 0.50,
+    "maxAmount": 50.00,
+    "fixedAmounts": null,
+    "fx": { "rate": 1206, "currencyCode": "NGN" },
+    "logoUrls": ["https://..."],
+    "country": { "isoName": "NG", "name": "Nigeria" }
+  }
+]</pre>
+          </div>
+
+          <h2>GET /detect-operator/:phone/:countryCode</h2>
+          <p>Auto-detect the mobile operator from a phone number. Returns the full operator object including available plans and pricing.</p>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/detect-operator/08021234567/NG
+
+{
+  "operatorId": 174,
+  "name": "MTN Nigeria",
+  "denominationType": "RANGE",
+  "minAmount": 0.50,
+  "maxAmount": 50.00,
+  "fx": { "rate": 1206, "currencyCode": "NGN" }
+}</pre>
+          </div>
+
+          <h2>GET /billers/:countryCode</h2>
+          <p>List utility billers for a country. Optional query param <code>?type=</code> to filter by type.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Query Param</th><th>Values</th></tr></thead>
+              <tbody>
+                <tr><td><code>type</code></td><td><code>ELECTRICITY_BILL_PAYMENT</code>, <code>WATER_BILL_PAYMENT</code>, <code>TV_BILL_PAYMENT</code>, <code>INTERNET_BILL_PAYMENT</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-block dark">
+<pre>curl "https://api.toppa.cc/billers/NG?type=TV_BILL_PAYMENT"
+
+[
+  {
+    "id": 42,
+    "name": "DStv Nigeria",
+    "serviceType": "TV_BILL_PAYMENT",
+    "countryCode": "NG",
+    "minLocalTransactionAmount": 1000,
+    "maxLocalTransactionAmount": 50000,
+    "localTransactionCurrencyCode": "NGN",
+    "fx": { "rate": 1206, "currencyCode": "NGN" }
+  }
+]</pre>
+          </div>
+
+          <h2>GET /gift-cards/:countryCode</h2>
+          <p>List available gift card brands for a country, grouped by brand with product counts and price ranges.</p>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/gift-cards/US
+
+[
+  {
+    "productId": 5678,
+    "productName": "Steam USD 25",
+    "denominationType": "FIXED",
+    "fixedSenderDenominations": [10, 25, 50, 100],
+    "brand": { "brandId": 12, "brandName": "Steam" },
+    "country": { "isoName": "US", "name": "United States" },
+    "recipientCurrencyCode": "USD",
+    "category": { "id": 3, "name": "Gaming" },
+    "redeemInstruction": { "concise": "Redeem at store.steampowered.com" },
+    "status": "AVAILABLE"
+  }
+]</pre>
+          </div>
+
+          <h2>GET /promotions/:countryCode</h2>
+          <p>List active operator promotions and bonus deals for a country.</p>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/promotions/NG
+
+[
+  {
+    "title": "MTN 2x Bonus Weekend",
+    "description": "Get double data on all recharges this weekend",
+    "startDate": "2025-06-14",
+    "endDate": "2025-06-16"
+  }
+]</pre>
+          </div>
+
+          <h2>GET /countries</h2>
+          <p>List all supported countries with currency info and calling codes.</p>
+          <div class="code-block dark">
+<pre>curl https://api.toppa.cc/countries
+
+[
+  {
+    "isoName": "NG",
+    "name": "Nigeria",
+    "currencyCode": "NGN",
+    "currencyName": "Nigerian Naira",
+    "currencySymbol": "&#x20A6;",
+    "callingCodes": ["+234"]
+  }
+]</pre>
+          </div>
+
+          <h2>GET /fx-rate?countryCode=XX</h2>
+          <p>Get the FX rate between USD and the local currency for a country.</p>
+          <div class="code-block dark">
+<pre>curl "https://api.toppa.cc/fx-rate?countryCode=NG"
+
+{
+  "rate": 1206,
+  "currencyCode": "NGN"
+}</pre>
+          </div>
+
+          <h2>GET /reputation</h2>
+          <p>Get Toppa's on-chain reputation score from the ERC-8004 Reputation Registry.</p>
+        </section>
+
+        <!-- ─── Errors ───────────────────────────────── -->
+        <section id="errors">
+          <h1>Error Handling</h1>
+          <p class="lead">All errors return a JSON body with an <code>error</code> field and an appropriate HTTP status code.</p>
+
+          <h2>Error Response Format</h2>
+          <div class="code-block dark">
+<pre>{
+  "error": "Human-readable error message",
+  "code": "RELOADLY_ERROR_CODE"   // present for provider errors
+}</pre>
+          </div>
+
+          <h2>HTTP Status Codes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Status</th><th>Meaning</th><th>Common Causes</th></tr></thead>
+              <tbody>
+                <tr><td><code>200</code></td><td>Success</td><td>Service executed, result in body</td></tr>
+                <tr><td><code>400</code></td><td>Bad Request</td><td>Missing/invalid fields, amount out of range, invalid phone number, biller not found</td></tr>
+                <tr><td><code>402</code></td><td>Payment Required</td><td>No <code>X-PAYMENT</code> header, or payment verification failed (wrong amount, expired tx, replay detected)</td></tr>
+                <tr><td><code>429</code></td><td>Rate Limited</td><td>Exceeded 10 requests per 5 minutes from the same payer address</td></tr>
+                <tr><td><code>500</code></td><td>Server Error</td><td>Upstream provider failure (Reloadly). Payment is auto-refunded.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2>Common Validation Errors</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr><td><code>Could not detect operator for +234...</code></td><td>Invalid phone number or unsupported operator</td><td>Verify the phone number and country code match</td></tr>
+                <tr><td><code>MTN Nigeria only accepts fixed amounts: 0.50, 1.00...</code></td><td>Amount doesn't match FIXED denominations</td><td>Use <code>GET /operators/:cc</code> to see valid amounts</td></tr>
+                <tr><td><code>Biller ID 42 not found in NG</code></td><td>Wrong biller ID or country mismatch</td><td>Use <code>GET /billers/:cc</code> to find valid billers</td></tr>
+                <tr><td><code>Gift card product 5678 not found</code></td><td>Invalid or delisted product</td><td>Search again with <code>GET /gift-cards/:cc</code></td></tr>
+                <tr><td><code>Amount outside range 1.00-50.00 cUSD</code></td><td>Amount exceeds operator/biller limits</td><td>Check min/max in discovery response</td></tr>
+                <tr><td><code>Payment already used</code></td><td>Transaction hash was already submitted</td><td>Send a new cUSD payment for a fresh tx hash</td></tr>
               </tbody>
             </table>
           </div>
         </section>
 
+        <!-- ─── MCP Server ───────────────────────────── -->
         <section id="mcp">
           <h1>MCP Server</h1>
           <p class="lead">Toppa exposes 13 tools via the Model Context Protocol (MCP), allowing AI clients like Claude Desktop and Cursor to execute real-world payments.</p>
@@ -548,29 +1003,30 @@ X-PAYMENT: 0xabc123...def456
           <h2>Available Tools</h2>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Tool</th><th>Description</th></tr></thead>
+              <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
               <tbody>
-                <tr><td><code>get_operators</code></td><td>List mobile operators by country</td></tr>
-                <tr><td><code>get_operator_details</code></td><td>Get details for a specific operator</td></tr>
-                <tr><td><code>detect_operator</code></td><td>Auto-detect operator from phone number</td></tr>
-                <tr><td><code>send_airtime</code></td><td>Send airtime (paid)</td></tr>
-                <tr><td><code>send_data</code></td><td>Send data bundle (paid)</td></tr>
-                <tr><td><code>get_billers</code></td><td>List utility billers by country</td></tr>
-                <tr><td><code>pay_bill</code></td><td>Pay a utility bill (paid)</td></tr>
-                <tr><td><code>get_gift_cards</code></td><td>List available gift cards</td></tr>
-                <tr><td><code>get_gift_card_details</code></td><td>Get details for a specific gift card</td></tr>
-                <tr><td><code>buy_gift_card</code></td><td>Purchase a gift card (paid)</td></tr>
-                <tr><td><code>get_promotions</code></td><td>List current promotions</td></tr>
-                <tr><td><code>get_countries</code></td><td>List supported countries</td></tr>
-                <tr><td><code>get_fx_rate</code></td><td>Get exchange rates</td></tr>
+                <tr><td><code>get_operators</code></td><td>Free</td><td>List mobile operators by country code</td></tr>
+                <tr><td><code>detect_operator</code></td><td>Free</td><td>Auto-detect operator from phone number</td></tr>
+                <tr><td><code>get_billers</code></td><td>Free</td><td>List utility billers by country (filterable by type)</td></tr>
+                <tr><td><code>get_gift_cards</code></td><td>Free</td><td>List gift card brands for a country</td></tr>
+                <tr><td><code>search_gift_cards</code></td><td>Free</td><td>Search gift cards by brand name</td></tr>
+                <tr><td><code>get_promotions</code></td><td>Free</td><td>Active promotions for a country</td></tr>
+                <tr><td><code>get_countries</code></td><td>Free</td><td>All supported countries</td></tr>
+                <tr><td><code>get_fx_rate</code></td><td>Free</td><td>FX rate for a country</td></tr>
+                <tr><td><code>convert_currency</code></td><td>Free</td><td>Convert between cUSD and local currency</td></tr>
+                <tr><td><code>send_airtime</code></td><td><strong>Paid</strong></td><td>Send airtime (returns order for x402 payment)</td></tr>
+                <tr><td><code>send_data</code></td><td><strong>Paid</strong></td><td>Send data bundle (returns order for x402 payment)</td></tr>
+                <tr><td><code>pay_bill</code></td><td><strong>Paid</strong></td><td>Pay utility bill (returns order for x402 payment)</td></tr>
+                <tr><td><code>buy_gift_card</code></td><td><strong>Paid</strong></td><td>Buy gift card (returns order for x402 payment)</td></tr>
               </tbody>
             </table>
           </div>
           <div class="callout">
-            <strong>Note:</strong> Paid tools (send_airtime, send_data, pay_bill, buy_gift_card) return an order confirmation object for user approval before executing payment via x402.
+            <strong>How paid tools work in MCP:</strong> Paid tools return a <code>payment_required</code> object with the price and recipient address. Your MCP client handles the on-chain payment, then the tool auto-completes the service execution.
           </div>
         </section>
 
+        <!-- ─── A2A Protocol ─────────────────────────── -->
         <section id="a2a">
           <h1>A2A Protocol</h1>
           <p class="lead">Google's Agent-to-Agent protocol enables machine-to-machine task delegation. Send tasks to Toppa from other agents using JSON-RPC.</p>
@@ -592,7 +1048,7 @@ Content-Type: application/json
         "parts": [
           {
             "type": "text",
-            "text": "Send $5 airtime to +2348021234567"
+            "text": "Send $5 airtime to +2348021234567 in Nigeria"
           }
         ]
       }
@@ -602,96 +1058,37 @@ Content-Type: application/json
           </div>
 
           <h2>Task Lifecycle</h2>
-          <ol>
-            <li><code>tasks/send</code> — Submit a task</li>
-            <li><code>tasks/get</code> — Check task status</li>
-            <li><code>tasks/cancel</code> — Cancel a pending task</li>
-          </ol>
-          <p>Tasks that require payment will return with status <code>input-required</code> and an order confirmation artifact for the calling agent to approve.</p>
-        </section>
-
-        <section id="discovery">
-          <h1>Discovery APIs</h1>
-          <p class="lead">Free, unauthenticated REST endpoints for browsing Toppa's catalog. No x402 payment required.</p>
-
-          <h2>Endpoints</h2>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Endpoint</th><th>Description</th><th>Example</th></tr></thead>
+              <thead><tr><th>Method</th><th>Description</th></tr></thead>
               <tbody>
-                <tr>
-                  <td><code>GET /operators/:cc</code></td>
-                  <td>Mobile operators by country code</td>
-                  <td><code>/operators/NG</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /gift-cards</code></td>
-                  <td>All available gift cards</td>
-                  <td><code>/gift-cards</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /billers/:cc</code></td>
-                  <td>Utility billers by country</td>
-                  <td><code>/billers/KE</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /promotions/:cc</code></td>
-                  <td>Active promotions</td>
-                  <td><code>/promotions/NG</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /countries</code></td>
-                  <td>Supported countries</td>
-                  <td><code>/countries</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /fx-rate</code></td>
-                  <td>Exchange rates</td>
-                  <td><code>/fx-rate?from=NGN&to=USD</code></td>
-                </tr>
-                <tr>
-                  <td><code>GET /reputation</code></td>
-                  <td>On-chain reputation score</td>
-                  <td><code>/reputation</code></td>
-                </tr>
+                <tr><td><code>tasks/send</code></td><td>Submit a new task. Returns task status + artifacts.</td></tr>
+                <tr><td><code>tasks/get</code></td><td>Check task status by ID.</td></tr>
+                <tr><td><code>tasks/cancel</code></td><td>Cancel a pending task.</td></tr>
               </tbody>
             </table>
           </div>
+          <p>Tasks that require payment return with status <code>input-required</code> and an order confirmation artifact. The calling agent must approve and pay before the task completes.</p>
 
-          <h2>Example</h2>
+          <h2>Agent Discovery</h2>
           <div class="code-block dark">
-<pre>curl https://api.toppa.cc/operators/NG
-
-[
-  {
-    "operatorId": 174,
-    "name": "MTN Nigeria",
-    "bundle": false,
-    "data": false,
-    "denominationType": "RANGE",
-    "logoUrls": ["https://..."],
-    "countryCode": "NG"
-  },
-  ...
-]</pre>
+<pre>GET https://api.toppa.cc/.well-known/agent-card.json</pre>
           </div>
-          <div class="callout">
-            <strong>Try it live:</strong> Use the <a href="../#playground">Playground</a> on the landing page to explore these endpoints interactively.
-          </div>
+          <p>Returns Toppa's agent card with capabilities, supported protocols, and on-chain registration info.</p>
         </section>
 
+        <!-- ─── Agent Card & ERC-8004 ────────────────── -->
         <section id="agent-card">
-          <h1>Agent Card & ERC-8004</h1>
+          <h1>Agent Card &amp; ERC-8004</h1>
           <p class="lead">Toppa is a registered on-chain agent on Celo with a verifiable identity and reputation score, following the ERC-8004 standard.</p>
 
           <h2>Agent Card</h2>
-          <p>Toppa publishes a standard agent card for automated discovery:</p>
           <div class="code-block dark">
 <pre>GET https://api.toppa.cc/.well-known/agent-card.json
 
 {
   "name": "Toppa",
-  "description": "AI agent for airtime, data, bills & gift cards",
+  "description": "AI agent for airtime, data, bills &amp; gift cards",
   "url": "https://toppa.cc",
   "capabilities": {
     "mcp": "https://api.toppa.cc/mcp",
@@ -707,11 +1104,11 @@ Content-Type: application/json
           </div>
 
           <h2>ERC-8004 Registration</h2>
-          <p>Toppa is registered as agent #1870 on the Celo blockchain under the ERC-8004 standard. This provides:</p>
+          <p>Agent #1870 on the Celo blockchain. Provides:</p>
           <ul>
             <li><strong>On-chain identity</strong> — verifiable, immutable registration</li>
             <li><strong>Reputation score</strong> — computed from peer reviews and transaction history</li>
-            <li><strong>Discoverability</strong> — other agents can find Toppa through the registry</li>
+            <li><strong>Discoverability</strong> — other agents find Toppa through the registry</li>
           </ul>
 
           <h2>Verification Links</h2>

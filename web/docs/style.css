@@ -356,6 +356,12 @@ tbody td code {
   white-space: nowrap;
 }
 
+section h2 .badge {
+  vertical-align: middle;
+  margin-left: 6px;
+  font-size: 0.62rem;
+}
+
 /* ─── Callout ─────────────────────────────────── */
 .callout {
   background: var(--orange-light);
