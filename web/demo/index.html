@@ -264,6 +264,18 @@
       background: var(--bg-alt);
     }
 
+    .pdf-mobile {
+      display: none;
+    }
+
+    .pdf-mobile-inner {
+      text-align: center;
+      padding: 40px 24px;
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
     /* ─── Footer ─────────────────────────── */
     .footer {
       text-align: center;
@@ -284,11 +296,29 @@
     /* ─── Mobile ─────────────────────────── */
     @media (max-width: 640px) {
       .card-grid { grid-template-columns: 1fr; }
-      h1 { font-size: 1.6rem; }
-      .container { padding: 32px 16px 64px; }
-      .topbar { padding: 0 16px; }
-      .topbar-nav { gap: 14px; }
-      .pdf-frame { height: 400px; }
+      h1 { font-size: 1.5rem; }
+      .subtitle { font-size: 0.92rem; margin-bottom: 32px; }
+      .container { padding: 28px 16px 56px; }
+      .topbar { padding: 0 12px; }
+      .topbar-nav { gap: 12px; }
+      .topbar-nav .nav-desktop { display: none; }
+      .topbar-brand span:not(.topbar-sep):not(.topbar-label) { font-size: 0.88rem; }
+      .card-body { padding: 16px 18px 20px; }
+      .card-title { font-size: 1.05rem; }
+      .card-desc { font-size: 0.82rem; }
+      .btn { padding: 8px 14px; font-size: 0.78rem; }
+      .pdf-desktop { display: none; }
+      .pdf-mobile { display: block; }
+      .pdf-embed { margin-top: 36px; }
+      .pdf-embed h2 { font-size: 1.1rem; margin-bottom: 12px; }
+      .footer { padding: 24px 16px; margin-top: 36px; }
+    }
+
+    @media (max-width: 380px) {
+      h1 { font-size: 1.3rem; }
+      .topbar-sep, .topbar-label { display: none; }
+      .card-actions { flex-direction: column; }
+      .card-actions .btn { width: 100%; justify-content: center; }
     }
   </style>
 </head>
@@ -302,9 +332,9 @@
       <span class="topbar-label">Demo</span>
     </a>
     <nav class="topbar-nav">
-      <a href="../">Home</a>
-      <a href="../docs">Docs</a>
-      <a href="https://github.com/nicholasforbes/toppabot" target="_blank">GitHub</a>
+      <a href="../" class="nav-desktop">Home</a>
+      <a href="../docs" class="nav-desktop">Docs</a>
+      <a href="https://github.com/fortuneofweb3/toppabot" target="_blank" class="nav-desktop">GitHub</a>
       <a href="https://t.me/toppa402Bot" target="_blank" class="topbar-cta">Try Toppa</a>
     </nav>
   </header>
@@ -357,7 +387,15 @@
     <!-- Pitch Deck Embed -->
     <div class="pdf-embed" id="pitchdeck">
       <h2>Pitch Deck</h2>
-      <iframe src="pitchdeck.pdf" class="pdf-frame" title="Toppa Pitch Deck"></iframe>
+      <iframe src="pitchdeck.pdf" class="pdf-frame pdf-desktop" title="Toppa Pitch Deck"></iframe>
+      <div class="pdf-mobile">
+        <div class="pdf-mobile-inner">
+          <span style="font-size:2.5rem;">&#128196;</span>
+          <p style="font-weight:600; margin:12px 0 4px; color:var(--text);">Toppa Pitch Deck</p>
+          <p style="font-size:0.82rem; color:var(--text-2); margin-bottom:16px;">10 slides — PDF viewer works best on desktop</p>
+          <a href="pitchdeck.pdf" target="_blank" class="btn btn-primary">&#8595; Open PDF</a>
+        </div>
+      </div>
     </div>
   </div>
 
