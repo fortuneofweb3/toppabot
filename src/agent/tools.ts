@@ -462,9 +462,11 @@ export const buyGiftCardTool: Tool = {
         return JSON.stringify({ status: 'error', error: `Gift card product ${productId} not found. Use search_gift_cards to find valid products.` });
       }
       // Reject unavailable / delisted products before showing order summary
-      if (product.status && product.status !== 'AVAILABLE' && product.status !== 'ACTIVE') {
-        return JSON.stringify({ status: 'error', error: `Gift card "${product.productName}" is no longer available (status: ${product.status}). Please search for an alternative.` });
-      }
+          // Reject only explicitly unavailable products
+          console.log(`[GiftCard] Product ${productId} status: ${product.status}`);
+          if (product.status === 'UNAVAILABLE' || product.status === 'REMOVED') {
+            return JSON.stringify({ status: 'error', error: `Gift card "${product.productName}" is no longer available (status: ${product.status}).` });
+          }
       productName = product.productName;
 
       if (product.denominationType === 'FIXED') {

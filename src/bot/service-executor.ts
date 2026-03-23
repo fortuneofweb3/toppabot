@@ -148,8 +148,10 @@ export async function executeServiceTool(
             throw new Error(`Gift card product ${args.productId} not found`);
           }
           // Reject unavailable / delisted products
-          if (product.status && product.status !== 'AVAILABLE' && product.status !== 'ACTIVE') {
-            throw new Error(`Gift card "${product.productName}" is no longer available (status: ${product.status}). Please search for an alternative.`);
+          // Reject only explicitly unavailable products
+          console.log(`[Executor] Product ${args.productId} status: ${product.status}`);
+          if (product.status === 'UNAVAILABLE' || product.status === 'REMOVED') {
+            throw new Error(`Gift card "${product.productName}" is no longer available (status: ${product.status}).`);
           }
           // Validate price is within allowed range
           if (product.denominationType === 'FIXED') {

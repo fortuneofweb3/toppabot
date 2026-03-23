@@ -653,7 +653,7 @@ export async function searchGiftCards(query: string, countryCode?: string, page?
 
   const lowerQuery = query.toLowerCase();
   return products.filter(p =>
-    (!p.status || p.status === 'AVAILABLE' || p.status === 'ACTIVE') &&
+    (p.status !== 'UNAVAILABLE' && p.status !== 'REMOVED') &&
     (p.productName.toLowerCase().includes(lowerQuery) ||
     p.brand.brandName.toLowerCase().includes(lowerQuery))
   );
