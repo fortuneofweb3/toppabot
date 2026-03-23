@@ -148,7 +148,7 @@ export async function executeServiceTool(
             throw new Error(`Gift card product ${args.productId} not found`);
           }
           // Reject unavailable / delisted products
-          if (product.status && product.status !== 'AVAILABLE') {
+          if (product.status && product.status !== 'AVAILABLE' && product.status !== 'ACTIVE') {
             throw new Error(`Gift card "${product.productName}" is no longer available (status: ${product.status}). Please search for an alternative.`);
           }
           // Validate price is within allowed range
