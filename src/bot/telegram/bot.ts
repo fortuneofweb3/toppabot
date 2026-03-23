@@ -793,7 +793,10 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     let orderData: any = null;
     try {
       const parsed = JSON.parse(response);
-      if (parsed?.type === 'order_confirmation') orderData = parsed;
+      if (parsed?.type === 'order_confirmation') {
+        console.log(`[Bot] Found order_confirmation JSON: ${response.slice(0, 100)}...`);
+        orderData = parsed;
+      }
     } catch {
       // Not pure JSON — try to extract embedded JSON with brace matching
       const idx = response.indexOf('"order_confirmation"');
@@ -906,6 +909,7 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
     }
 
     if (orderData) {
+      console.log(`[Bot] Processing orderData for userId: ${userId}`);
       // Block new orders while another is processing (payment in-flight / service executing).
       // The wallet lock would catch this at pay_accept time anyway, but warning early is better UX.
       // Staleness guard: if a processing order is >3 min old, the server likely crashed mid-execution.
@@ -982,7 +986,8 @@ async function handleTextMessage(chatId: number, userId: string, userMessage: st
             [{ text: '❌ Cancel', callback_data: `order_cancel_${orderId}` }],
           ]},
         });
-      } catch {
+      } catch (err: any) {
+        console.error(`[Bot] Error processing orderData: ${err.message}`);
         await sendLongMessage(chatId, stripMarkdown(response));
       }
     } else {
