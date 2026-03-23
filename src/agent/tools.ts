@@ -362,12 +362,13 @@ export const searchGiftCardsTool: Tool = {
   schema: z.object({
     query: z.string().describe("Brand name to search (e.g. Steam, Netflix)"),
     countryCode: z.string().optional().nullable().describe("Country ISO code filter"),
+    page: z.number().optional().describe("Page number (each page has 200 items). Start at 0."),
   }),
-  func: async ({ query, countryCode }) => {
+  func: async ({ query, countryCode, page }) => {
     const start = Date.now();
     try {
       if (countryCode) countryCode = sanitizeCountryCode(countryCode);
-      const results = await searchGiftCards(query, countryCode);
+      const results = await searchGiftCards(query, countryCode, page);
       const elapsed = Date.now() - start;
       console.log(`[Tool:search_gift_cards] Found ${results.length} results for "${query}" in ${elapsed}ms`);
 

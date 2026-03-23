@@ -276,12 +276,13 @@ export function registerMcpTools(server: McpServer) {
     {
       query: z.string().describe("Brand or product name to search (e.g. 'Steam', 'Netflix', 'Amazon')"),
       countryCode: z.string().optional().describe('Country ISO code to filter by (e.g. US, NG)'),
+      page: z.number().optional().describe('Page number (starts at 0)'),
     },
-    async ({ query, countryCode }) => {
+    async ({ query, countryCode, page }) => {
       try {
         const sanitizedCountry = countryCode ? sanitizeCountryCode(countryCode) : undefined;
         const [results, balance] = await Promise.all([
-          searchGiftCards(query, sanitizedCountry),
+          searchGiftCards(query, sanitizedCountry, page),
           getCachedReloadlyBalance(),
         ]);
         return {

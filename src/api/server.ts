@@ -617,6 +617,15 @@ app.get('/', (_req: Request, res: Response) => {
     ],
     docs: {
       howToUse: `1) POST without payment to get 402 + exact amount needed. 2) Send ${x402Info.currency} to payTo address. 3) Retry with tx hash in X-PAYMENT header.`,
+      discovery: {
+        allCountries: 'GET /countries',
+        countryServices: 'GET /countries/:cc/services',
+        operators: 'GET /operators/:cc',
+        dataPlans: 'GET /data-plans/:cc',
+        billers: 'GET /billers/:cc',
+        giftCardsByCountry: 'GET /gift-cards/:cc',
+        searchGiftCards: 'GET /gift-cards/search?q=Amazon&page=0',
+      },
       pricing: 'Fee = product_amount * 1.5%. The 402 response includes the exact total.',
       example: 'curl -X POST https://api.toppa.cc/send-airtime -H "Content-Type: application/json" -d \'{"phone":"08147658721","countryCode":"NG","amount":5}\'',
     },
@@ -835,13 +844,23 @@ app.get('/gift-cards/search', discoveryLimiter, async (req: Request, res: Respon
   try {
     const query = req.query.q as string;
     const countryCode = req.query.country as string | undefined;
+    const page = req.query.page ? parseInt(req.query.page as string) : undefined;
 
     if (!query) {
-      res.json({ endpoint: 'GET /gift-cards/search?q=Steam', description: 'Search gift card brands by name', params: { q: 'Search query (required)', country: 'ISO country code (optional)' }, example: '/gift-cards/search?q=Netflix' });
+      res.json({ 
+        endpoint: 'GET /gift-cards/search?q=Steam', 
+        description: 'Search gift card brands by name', 
+        params: { 
+          q: 'Search query (required)', 
+          country: 'ISO country code (optional)', 
+          page: 'Page number (optional, results are in batches of 200)' 
+        }, 
+        example: '/gift-cards/search?q=Netflix&page=1' 
+      });
       return;
     }
 
-    const results = await searchGiftCards(query, countryCode);
+    const results = await searchGiftCards(query, countryCode, page);
     const balance = await getReloadlyBalance();
 
     res.json({

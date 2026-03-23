@@ -604,35 +604,52 @@ export async function getGiftCardProducts(countryCode: string) {
 /**
  * Search gift card products by name
  */
-export async function searchGiftCards(query: string, countryCode?: string) {
+export async function searchGiftCards(query: string, countryCode?: string, page?: number) {
   let products: ReloadlyGiftCardProduct[];
 
   if (countryCode) {
     // getGiftCardProducts is already cached
     products = await getGiftCardProducts(countryCode);
+  } else if (page !== undefined) {
+    // Specific page lookup (for deep pagination)
+    const pageKey = `giftcards:PAGE:${page}`;
+    const cached = apiCache.get<ReloadlyGiftCardProduct[]>(pageKey);
+    if (cached) {
+      products = cached;
     } else {
-      // Global product list — fetch multiple pages to ensure common brands (like Binance) are found
-      const globalKey = 'giftcards:GLOBAL';
-      const cached = apiCache.get<ReloadlyGiftCardProduct[]>(globalKey);
-      if (cached) {
-        products = cached;
-      } else {
-        // Fetch up to 5 pages (1000 products)
-        const pages = [0, 1, 2, 3, 4];
-        const results = await Promise.all(pages.map(page =>
-          giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
-            'GET',
-            `/products?page=${page}&size=200`
-          ).catch(err => {
-            console.error(`[Reloadly] Failed to fetch gift card page ${page}:`, err.message);
-            return [];
-          })
-        ));
-
-        products = results.flatMap(res => Array.isArray(res) ? res : (res?.content || []));
-        apiCache.set(globalKey, products, CACHE_TTL.SEARCH);
-      }
+      const res = await giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
+        'GET',
+        `/products?page=${page}&size=200`
+      ).catch(err => {
+        console.error(`[Reloadly] Failed to fetch gift card page ${page}:`, err.message);
+        return [];
+      });
+      products = Array.isArray(res) ? res : (res?.content || []);
+      apiCache.set(pageKey, products, CACHE_TTL.SEARCH);
     }
+  } else {
+    // Global product list — fetch multiple pages to ensure common brands (like Binance) are found
+    const globalKey = 'giftcards:GLOBAL';
+    const cached = apiCache.get<ReloadlyGiftCardProduct[]>(globalKey);
+    if (cached) {
+      products = cached;
+    } else {
+      // Fetch up to 10 pages (2000 products) in parallel for high discovery depth
+      const pages = Array.from({ length: 10 }, (_, i) => i);
+      const results = await Promise.all(pages.map(p =>
+        giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
+          'GET',
+          `/products?page=${p}&size=200`
+        ).catch(err => {
+          console.error(`[Reloadly] Failed to fetch gift card page ${p}:`, err.message);
+          return [];
+        })
+      ));
+
+      products = results.flatMap(res => Array.isArray(res) ? res : (res?.content || []));
+      apiCache.set(globalKey, products, CACHE_TTL.SEARCH);
+    }
+  }
 
   const lowerQuery = query.toLowerCase();
   return products.filter(p =>
