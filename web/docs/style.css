@@ -583,13 +583,42 @@ section h2 .badge {
     margin-left: 0 !important;
     margin-right: 0;
     padding: 32px 20px 64px;
+    max-width: 100%;
   }
 
   .links-grid { grid-template-columns: 1fr; }
+
+  .docs-footer {
+    flex-direction: column;
+    gap: 8px;
+    text-align: center;
+  }
+
+  section { margin-bottom: 44px; }
+  .content-group { margin-bottom: 56px; }
+  .lead { font-size: 0.95rem; margin-bottom: 20px; }
+
+  table { font-size: 0.78rem; }
+  thead th { padding: 8px 10px; font-size: 0.7rem; }
+  tbody td { padding: 8px 10px; }
 }
 
 @media (max-width: 480px) {
-  section h1 { font-size: 1.4rem; }
-  .code-block { padding: 12px; }
-  .code-block code { font-size: 0.75rem; }
+  .topbar { padding: 0 12px; }
+  .topbar-brand { font-size: 0.88rem; }
+
+  section h1 { font-size: 1.3rem; }
+  section h2 { font-size: 1rem; margin-top: 28px; }
+
+  .content { padding: 24px 14px 56px; }
+
+  .code-block { padding: 10px 12px; border-radius: 6px; }
+  .code-block code { font-size: 0.72rem; }
+  .code-block pre { font-size: 0.72rem; }
+
+  section p { font-size: 0.88rem; }
+  section li { font-size: 0.88rem; }
+  .callout { padding: 12px 14px; font-size: 0.82rem; }
+
+  .stack-layer { padding: 10px 12px; font-size: 0.82rem; }
 }
