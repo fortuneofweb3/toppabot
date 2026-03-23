@@ -729,11 +729,24 @@ Content-Type: application/json
             <li><strong>Borderless by default</strong> — 170+ countries, 800+ operators, one interface.</li>
             <li><strong>Agent-native</strong> — Built from day one for both humans and AI agents.</li>
             <li><strong>Crypto-native payments</strong> — cUSD on Celo. Fast, cheap, global.</li>
-            <li><strong>Multi-currency</strong> — Deposit CELO, USDC, USDT, or cEUR and auto-swap to cUSD.</li>
-            <li><strong>Group wallets</strong> — Shared wallets with democratic poll-based governance.</li>
-            <li><strong>Memory & personality</strong> — Learns your contacts, habits, and preferences.</li>
-            <li><strong>Open protocols</strong> — x402, MCP, A2A. Any agent can integrate.</li>
+            <li><strong>Multi-currency</strong> — Deposit CELO, USDC, USDT, or cEUR and auto-swap to cUSD via Uniswap V3.</li>
+            <li><strong>Group wallets</strong> — Shared wallets with democratic poll-based governance. Configurable thresholds, admin bypass, key export.</li>
+            <li><strong>Scheduled payments</strong> — Set up recurring airtime, bills, or gift cards. Heartbeat engine runs automatically with retry on failure.</li>
+            <li><strong>Memory & personality</strong> — Learns your contacts, habits, and preferences. "Send airtime to my brother" just works.</li>
+            <li><strong>Reports</strong> — PDF and Excel transaction statements. Works for personal and group wallets.</li>
+            <li><strong>Identity verification</strong> — Self Protocol ZK proofs tied to passport/ID. No personal data stored. Higher spending limits.</li>
+            <li><strong>Voice support</strong> — Send a voice note in English, French, Yoruba, or Swahili. Transcribed via Deepgram in under a second.</li>
+            <li><strong>Open protocols</strong> — x402, MCP (13 tools), A2A. Any agent can integrate.</li>
+            <li><strong>On-chain identity</strong> — ERC-8004 registered as Agent #1870 on Celo Mainnet.</li>
             <li><strong>Open source</strong> — MIT licensed, fully transparent.</li>
+          </ul>
+
+          <h2>Who It's For</h2>
+          <ul>
+            <li><strong>Prepaid users in emerging markets</strong> — People who buy airtime, data, and pay bills daily but lack access to traditional banking.</li>
+            <li><strong>Diaspora communities</strong> — Send airtime and pay bills for family back home without navigating foreign operator websites.</li>
+            <li><strong>Groups and communities</strong> — Offices, friend circles, and families pooling money for shared expenses with transparent governance.</li>
+            <li><strong>AI agent developers</strong> — Use Toppa as a tool via MCP, A2A, or x402 to give your agent real-world payment capabilities.</li>
           </ul>
         </section>
 
@@ -776,44 +789,71 @@ Content-Type: application/json
 
         <section id="roadmap">
           <h1>Roadmap</h1>
-          <p class="lead">What's been built, what's in progress, and what's coming next.</p>
+          <p class="lead">What's been built, what's in progress, and what's coming next. Toppa is a live product with real users — this roadmap reflects where we are and where we're going.</p>
 
           <h2>Shipped</h2>
           <ul class="roadmap-list done">
             <li>Telegram bot with natural language processing</li>
             <li>WhatsApp bot with full feature parity</li>
-            <li>Airtime, data, bills, and gift card fulfillment</li>
+            <li>Airtime top-ups for 800+ operators in 170+ countries</li>
+            <li>Data bundle purchases with automatic operator detection</li>
+            <li>Utility bill payments (electricity, internet, TV, water)</li>
+            <li>Gift card purchases from 300+ brands (Amazon, Steam, Netflix, PlayStation, etc.)</li>
             <li>LangGraph-powered AI agent with 36 tools</li>
             <li>Group wallets with democratic poll governance</li>
-            <li>Multi-currency deposits (cUSD, CELO, USDC, USDT, cEUR) + auto-swap</li>
-            <li>PDF and Excel expenditure reports/statements</li>
-            <li>Smart memory (contacts, preferences, history)</li>
-            <li>Heartbeat engine with proactive alerts</li>
-            <li>Scheduled/recurring payments</li>
+            <li>Group contribution tracking with private DM receipts</li>
+            <li>Configurable poll thresholds and expiry times</li>
+            <li>Admin bypass, key export, and fund withdrawal for group wallets</li>
+            <li>Multi-currency deposits (cUSD, CELO, USDC, USDT, cEUR) + auto-swap via Uniswap V3</li>
+            <li>PDF and Excel expenditure reports and statements</li>
+            <li>Group transaction reports with full transparency</li>
+            <li>Smart memory — learns contacts, operators, preferences, and habits</li>
+            <li>Heartbeat engine with proactive alerts (upcoming bills, low balance)</li>
+            <li>Scheduled and recurring payments with automatic retry on failure</li>
             <li>x402 payment protocol for all paid endpoints</li>
-            <li>MCP server with 13 tools</li>
-            <li>A2A protocol support</li>
-            <li>ERC-8004 on-chain registration (Agent #1870)</li>
-            <li>Free discovery APIs</li>
-            <li>Voice note transcription (Deepgram)</li>
-            <li>@mention filtering in groups (context-aware)</li>
-            <li>AES-256-GCM wallet encryption</li>
-            <li>Multilingual (English, French, Yoruba, Swahili)</li>
+            <li>MCP server with 13 tools for agent integration</li>
+            <li>Google A2A protocol support</li>
+            <li>ERC-8004 on-chain agent registration (Agent #1870 on Celo Mainnet)</li>
+            <li>Free discovery APIs (operators, billers, countries, gift cards)</li>
+            <li>Voice note transcription via Deepgram (English, French, Yoruba, Swahili)</li>
+            <li>@mention filtering in groups — context-aware, ignores unrelated messages</li>
+            <li>AES-256-GCM wallet encryption at rest</li>
+            <li>Identity verification via Self Protocol (ZK proofs, no personal data stored)</li>
+            <li>Tiered spending limits ($20/day default → $200/day verified)</li>
+            <li>Multilingual support (English, French, Yoruba, Swahili)</li>
           </ul>
 
           <h2>In Progress</h2>
           <ul class="roadmap-list progress">
-            <li>Gift card sell pipeline (Cardtonic integration)</li>
-            <li>Cross-chain bridge for multi-network deposits</li>
+            <li>Gift card sell pipeline — sell unused gift cards for cUSD (Cardtonic integration)</li>
+            <li>Cross-chain bridge for multi-network deposits (Ethereum, Base, Arbitrum → Celo)</li>
+            <li>Transaction history search and filtering</li>
           </ul>
 
-          <h2>Planned</h2>
+          <h2>Planned — Near Term</h2>
           <ul class="roadmap-list planned">
-            <li>Celo MiniPay deep integration</li>
-            <li>Multi-agent orchestration (Toppa as a sub-agent)</li>
-            <li>Merchant tools and bulk airtime</li>
-            <li>SDK for third-party developers</li>
+            <li>Celo MiniPay deep integration — use Toppa directly inside MiniPay</li>
+            <li>Multi-agent orchestration — other AI agents can delegate tasks to Toppa</li>
+            <li>Merchant tools — bulk airtime distribution, business accounts, usage dashboards</li>
+            <li>SDK for third-party developers — npm package to embed Toppa's capabilities</li>
+            <li>Referral system — earn cUSD by inviting users</li>
+            <li>In-chat onboarding tutorial for new users</li>
           </ul>
+
+          <h2>Planned — Long Term</h2>
+          <ul class="roadmap-list planned">
+            <li>P2P transfers — send cUSD to other Toppa users by name or phone number</li>
+            <li>Savings goals — set targets, auto-contribute from balance</li>
+            <li>Micro-lending — borrow small amounts against transaction history</li>
+            <li>More chat platforms — Discord, LINE, Facebook Messenger</li>
+            <li>Fiat on/off ramps — buy cUSD with mobile money (M-Pesa, MTN MoMo)</li>
+            <li>Decentralized governance — community voting on feature priorities</li>
+            <li>Regional expansion — Arabic, Portuguese, Hindi language support</li>
+            <li>Physical goods — top up electricity meters, buy e-vouchers for groceries</li>
+          </ul>
+
+          <h2>Vision</h2>
+          <p>Toppa's goal is to become the default way people in emerging markets interact with digital services. No apps to download, no forms to fill, no banks needed. Just a chat message and a stablecoin wallet. We believe AI agents on public blockchains are the infrastructure layer that makes borderless, instant, low-cost financial services possible for everyone — not just people with bank accounts and credit cards.</p>
         </section>
 
         <section id="links">
