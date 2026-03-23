@@ -471,7 +471,7 @@ section { padding: 80px 0; }
 /* ─── Features ─────────────────────────────────── */
 .features-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
 }
 
@@ -741,6 +741,177 @@ section { padding: 80px 0; }
 .terminal-body .orange { color: var(--orange); }
 .terminal-body .green { color: #4ADE80; }
 .terminal-body .dim { color: #475569; }
+
+/* ─── Group Wallets ───────────────────────────────── */
+.group-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.group-text h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  margin-bottom: 12px;
+}
+
+.group-text > p {
+  color: var(--text-2);
+  margin-bottom: 24px;
+  line-height: 1.7;
+}
+
+.chat-mockup-group {
+  max-width: 420px;
+}
+
+.chat-header-group {
+  gap: 10px;
+}
+
+.chat-group-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--orange-light);
+  color: var(--orange);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.chat-members {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-4);
+  font-weight: 400;
+}
+
+.msg-user-alt {
+  background: #EFF6FF;
+  color: var(--text);
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+}
+
+.msg-sender {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #3B82F6;
+  margin-bottom: 2px;
+}
+
+.msg-poll {
+  background: #fff;
+  border: 1.5px solid var(--orange);
+}
+
+.msg-poll-title {
+  font-weight: 700;
+  font-size: 0.84rem;
+  margin-bottom: 8px;
+}
+
+.poll-bar {
+  position: relative;
+  background: var(--bg-alt);
+  border-radius: 6px;
+  height: 28px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.poll-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: rgba(255, 165, 51, 0.15);
+  border-radius: 6px;
+  transition: width 0.6s ease;
+}
+
+.poll-fill-no {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.poll-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 10px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.msg-poll-status {
+  font-size: 0.72rem;
+  color: #16A34A;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* ─── Use Cases / Examples ─────────────────────── */
+.examples-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.example-card {
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.example-card:hover {
+  border-color: var(--text-4);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  transform: translateY(-2px);
+}
+
+.example-msg {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: var(--bg-alt);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--orange);
+}
+
+.example-result {
+  font-size: 0.82rem;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.example-tag {
+  display: inline-block;
+  background: var(--orange-light);
+  color: var(--orange-dark);
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-right: 6px;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-family: var(--mono);
+  vertical-align: middle;
+}
 
 /* ─── Protocol Section ─────────────────────────── */
 .protocol-hero {
@@ -1393,6 +1564,15 @@ section { padding: 80px 0; }
   .features-grid { grid-template-columns: 1fr; }
   .feature-card { text-align: center; }
   .feature-icon { margin: 0 auto 14px; }
+
+  .group-grid { grid-template-columns: 1fr; }
+  .group-text { text-align: center; order: -1; }
+  .group-text .section-label { text-align: center; }
+  .group-text .agent-list { align-items: center; }
+  .group-text .agent-list li { text-align: left; }
+  .chat-mockup-group { margin: 0 auto; }
+
+  .examples-grid { grid-template-columns: 1fr; }
   .steps { grid-template-columns: 1fr; gap: 8px; }
   .steps::before { display: none; }
   .step { padding: 20px; }

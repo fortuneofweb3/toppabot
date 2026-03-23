@@ -37,10 +37,10 @@
       </a>
       <ul class="nav-links" id="navLinks">
         <li><a href="#features">Features</a></li>
-        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#group-wallets">Groups</a></li>
+        <li><a href="#use-cases">Examples</a></li>
         <li><a href="#protocol">Protocol</a></li>
         <li><a href="#developers">Developers</a></li>
-        <li><a href="#playground">Playground</a></li>
         <li><a href="docs/">Docs</a></li>
         <li><a href="https://t.me/toppa402Bot" class="nav-cta" target="_blank">Try Toppa</a></li>
       </ul>
@@ -127,6 +127,16 @@
           <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z"/></svg></div>
           <h3>Smart Memory</h3>
           <p>Remembers your contacts, preferences, and habits. Schedules recurring payments.</p>
+        </div>
+        <div class="feature-card fade-in">
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"/></svg></div>
+          <h3>Group Wallets</h3>
+          <p>Pool funds in Telegram or WhatsApp groups. Spend with democratic poll voting. No single person controls the money.</p>
+        </div>
+        <div class="feature-card fade-in">
+          <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg></div>
+          <h3>Multi-Currency Swaps</h3>
+          <p>Deposit CELO, USDC, USDT, or cEUR. Toppa swaps everything to cUSD via Uniswap V3 automatically.</p>
         </div>
       </div>
     </div>
@@ -317,6 +327,124 @@
               <span class="green">&rarr; "Hey! Your DStv subscription renews</span><br>
               <span class="green">&nbsp;&nbsp;in 2 days. Want me to pay it now?"</span>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="group-wallets" class="section-alt">
+    <div class="container">
+      <div class="group-grid">
+        <div class="fade-in">
+          <div class="chat-mockup chat-mockup-group">
+            <div class="chat-header chat-header-group">
+              <div class="chat-group-icon">
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"/></svg>
+              </div>
+              <div>
+                <span class="name">Office Squad</span>
+                <span class="chat-members">8 members &middot; 12.40 cUSD</span>
+              </div>
+            </div>
+            <div class="chat-body">
+              <div class="msg msg-user-alt">
+                <span class="msg-sender">Amara</span>
+                buy a $10 Netflix gift card for movie night
+              </div>
+              <div class="msg msg-bot">
+                <div class="msg-row"><strong>Netflix USA</strong></div>
+                <div class="msg-row">$10.00 gift card</div>
+                <div class="msg-row msg-cost">10.25 cUSD from group wallet</div>
+              </div>
+              <div class="msg msg-bot msg-poll">
+                <div class="msg-row msg-poll-title">Should we buy this?</div>
+                <div class="poll-bar"><div class="poll-fill" style="width:75%"></div><span class="poll-label">Yes &mdash; 6 votes</span></div>
+                <div class="poll-bar"><div class="poll-fill poll-fill-no" style="width:25%"></div><span class="poll-label">No &mdash; 2 votes</span></div>
+                <div class="msg-row msg-poll-status">&#10003; Approved &middot; 75% threshold reached</div>
+              </div>
+              <div class="msg msg-bot">
+                <div class="msg-row msg-success">&#10003; Netflix $10 gift card purchased!</div>
+                <div class="msg-row msg-tx">Code: NFLX-8K2M-R4P1 &middot; Group balance: 2.15 cUSD</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="group-text fade-in">
+          <div class="section-label">Group Wallets</div>
+          <h2>Pool money together.<br>Spend with a vote.</h2>
+          <p>Enable a shared wallet in any Telegram or WhatsApp group. Members contribute cUSD, and every spend goes through a democratic poll. No single person controls the money.</p>
+          <ul class="agent-list">
+            <li>
+              <span class="check">&#10003;</span>
+              <div><strong>Democratic Polls</strong><span>Every purchase needs group approval. Configurable threshold (default 70%). Native Telegram and WhatsApp polls.</span></div>
+            </li>
+            <li>
+              <span class="check">&#10003;</span>
+              <div><strong>Contribute & Track</strong><span>Members contribute from their personal wallet. Everyone gets a private DM with deduction details.</span></div>
+            </li>
+            <li>
+              <span class="check">&#10003;</span>
+              <div><strong>Admin Controls</strong><span>Admins can bypass polls for urgent purchases, configure poll expiry, export group wallet keys, and withdraw funds.</span></div>
+            </li>
+            <li>
+              <span class="check">&#10003;</span>
+              <div><strong>Group Reports</strong><span>Generate PDF or Excel statements of all group transactions. Full transparency for every member.</span></div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="use-cases">
+    <div class="container">
+      <div class="section-header fade-in">
+        <div class="section-label">Real examples</div>
+        <h2 class="section-title">Just say what you need</h2>
+        <p class="section-desc">Toppa handles complex requests in plain language. Here's what real users say.</p>
+      </div>
+      <div class="examples-grid">
+        <div class="example-card fade-in">
+          <div class="example-msg">"Send my brother 500 naira airtime, pay mom's DStv bill, and buy me a $25 Steam gift card"</div>
+          <div class="example-result">
+            <span class="example-tag">3 operations</span>
+            Toppa parses this into three parallel tool calls &mdash; detects MTN Nigeria, finds the DStv biller, searches Steam gift cards &mdash; and creates all three order confirmations in a single turn.
+          </div>
+        </div>
+        <div class="example-card fade-in">
+          <div class="example-msg">"Set up weekly airtime for my wife every Friday &mdash; 1000 naira to her MTN line"</div>
+          <div class="example-result">
+            <span class="example-tag">Recurring</span>
+            Creates a scheduled task that runs every Friday. The heartbeat engine checks every 15 minutes and auto-sends when it's due. Retry with backoff if delivery fails.
+          </div>
+        </div>
+        <div class="example-card fade-in">
+          <div class="example-msg">"Everyone pitch in 5 cUSD for the office WiFi bill this month"</div>
+          <div class="example-result">
+            <span class="example-tag">Group wallet</span>
+            Posted in a group chat. Members contribute from their personal wallets. When someone says "pay the bill," a poll goes out. Once 70% approve, Toppa pays the ISP directly.
+          </div>
+        </div>
+        <div class="example-card fade-in">
+          <div class="example-msg"><svg width="14" height="14" viewBox="0 0 24 24" fill="var(--orange)" style="vertical-align:middle;margin-right:4px"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg> Voice note: "Buy a 2GB data bundle for this number 0802..."</div>
+          <div class="example-result">
+            <span class="example-tag">Voice</span>
+            Transcribed via Deepgram in under a second. Toppa detects the operator from the number, finds the best 2GB plan, and creates the order confirmation. Works in English, French, Yoruba, Swahili.
+          </div>
+        </div>
+        <div class="example-card fade-in">
+          <div class="example-msg">"Swap all my CELO and USDC to cUSD"</div>
+          <div class="example-result">
+            <span class="example-tag">Uniswap V3</span>
+            Routes through the Uniswap Trading API for the best rate. Falls back to direct SwapRouter02 if the API rejects the quote. Shows a before/after breakdown of all balances.
+          </div>
+        </div>
+        <div class="example-card fade-in">
+          <div class="example-msg">"Give me a report of everything I've spent this month"</div>
+          <div class="example-result">
+            <span class="example-tag">Reports</span>
+            Generates a PDF or Excel file with every transaction &mdash; airtime, data, bills, gift cards, swaps, group contributions. Delivered as a document right in the chat.
           </div>
         </div>
       </div>
