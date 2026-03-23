@@ -52,7 +52,7 @@ function buildFastCache(): Record<string, string> {
     tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
-      'check_country', 'get_promotions', 'convert_currency',
+      'check_country', 'list_countries', 'get_promotions', 'convert_currency',
       'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
     ],
     endpoint: 'POST /mcp',
@@ -72,7 +72,7 @@ function buildFastCache(): Record<string, string> {
     tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
-      'check_country', 'get_promotions', 'convert_currency',
+      'check_country', 'list_countries', 'get_promotions', 'convert_currency',
       'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
     ],
     erc8004: {
@@ -726,7 +726,7 @@ app.get('/.well-known/mcp.json', (_req: Request, res: Response) => {
     tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
-      'check_country', 'get_promotions', 'convert_currency',
+      'check_country', 'list_countries', 'get_promotions', 'convert_currency',
       'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
     ],
     erc8004: {
@@ -1294,7 +1294,7 @@ app.get('/mcp', (_req: Request, res: Response) => {
     tools: [
       'get_operators', 'get_data_plans', 'get_billers',
       'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
-      'check_country', 'get_promotions', 'convert_currency',
+      'check_country', 'list_countries', 'get_promotions', 'convert_currency',
       'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
     ],
     endpoint: 'POST /mcp',
