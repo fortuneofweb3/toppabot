@@ -11,6 +11,7 @@ import {
 } from "../apis/reloadly";
 import { calculateTotalPayment } from "../blockchain/x402";
 import { getCachedReloadlyBalance } from "../shared/balance-cache";
+import { apiCache, CACHE_TTL } from "../shared/api-cache";
 import { getReceiptByReloadlyId } from "../blockchain/service-receipts";
 import { createScheduledTask, getUserScheduledTasks, cancelScheduledTask, createRecurringTask, getUserRecurringTasks, cancelRecurringTask } from "./scheduler";
 import { saveUserGoal, getUserGoals, removeUserGoal } from "./goals";
@@ -551,9 +552,16 @@ export const listCountriesTool: Tool = {
       }
 
       const countries = await getCountries();
+      if (!Array.isArray(countries)) {
+        console.error(`[Tool:list_countries] getCountries returned non-array:`, countries);
+        throw new Error('Invalid response from country API');
+      }
+      console.log(`[Tool:list_countries] Fetched ${countries.length} countries`);
+
       // Group by first letter for better readability
       const grouped: Record<string, string[]> = {};
       countries.forEach((c: any) => {
+        if (!c.name) return;
         const first = c.name[0].toUpperCase();
         if (!grouped[first]) grouped[first] = [];
         grouped[first].push(`${c.name} (${c.isoName})`);
@@ -565,9 +573,10 @@ export const listCountriesTool: Tool = {
       });
       
       apiCache.set(cacheKey, text, CACHE_TTL.GIFT_CARDS); // Use 1hr TTL
-      console.log(`[Tool:list_countries] Generated and cached in ${Date.now() - start}ms`);
+      console.log(`[Tool:list_countries] Successfully generated list (${text.length} chars)`);
       return text;
     } catch (error: any) {
+      console.error(`[Tool:list_countries] Error:`, error.message);
       return JSON.stringify({ error: error.message });
     }
   },
