@@ -152,11 +152,21 @@ app.use(cors({
 // Rate limiting (prevent DDoS and brute force)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: isProduction ? 100 : 1000, // Limit each IP to 100 requests per 15min in prod
+  max: isProduction ? 300 : 1000, // Increased from 100 to 300 to accommodate multi-tool agent bursts
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Relaxed rate limit for discovery/metadata endpoints (scanners, indexing)
+const discoveryLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: isProduction ? 500 : 2000, // Higher limit for discovery
+  message: 'Too many discovery requests, please slow down.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use(limiter);
 
 // Stricter rate limit for paid endpoints (prevent payment spam)
@@ -728,26 +738,27 @@ app.get('/agent-image.svg', (_req: Request, res: Response) => {
 });
 
 // ─────────────────────────────────────────────────
-// Base route info (no params) — so scanners don't get 404
+// Discovery routes (relaxed rate limiting)
 // ─────────────────────────────────────────────────
-app.get('/operators', (_req: Request, res: Response) => {
+
+app.get('/operators', discoveryLimiter, (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /operators/:country', description: 'List mobile operators for a country', example: '/operators/NG', params: { country: 'ISO country code (e.g. NG, KE, GH, US)' } });
 });
-app.get('/data-plans', (_req: Request, res: Response) => {
+app.get('/data-plans', discoveryLimiter, (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /data-plans/:country', description: 'List data plan operators for a country', example: '/data-plans/NG', params: { country: 'ISO country code' } });
 });
-app.get('/billers', (_req: Request, res: Response) => {
+app.get('/billers', discoveryLimiter, (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /billers/:country', description: 'List utility billers for a country', example: '/billers/NG', params: { country: 'ISO country code' } });
 });
-app.get('/gift-cards', (_req: Request, res: Response) => {
+app.get('/gift-cards', discoveryLimiter, (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /gift-cards/:country', description: 'List gift card brands for a country', example: '/gift-cards/US', alternateEndpoint: 'GET /gift-cards/search?q=Steam' });
 });
-app.get('/transaction', (_req: Request, res: Response) => {
+app.get('/transaction', discoveryLimiter, (_req: Request, res: Response) => {
   res.json({ endpoint: 'GET /transaction/:type/:id', description: 'Check transaction status', example: '/transaction/airtime/12345', params: { type: 'airtime | data | bill', id: 'Transaction ID from the service provider' } });
 });
 
 // Get mobile operators for a country (for airtime)
-app.get('/operators/:country', async (req: Request, res: Response) => {
+app.get('/operators/:country', discoveryLimiter, async (req: Request, res: Response) => {
   try {
     const countryCode = sanitizeCountryCode(req.params.country);
     const operators = await getOperators(countryCode);
@@ -771,7 +782,7 @@ app.get('/operators/:country', async (req: Request, res: Response) => {
 });
 
 // Get data plan operators for a country
-app.get('/data-plans/:country', async (req: Request, res: Response) => {
+app.get('/data-plans/:country', discoveryLimiter, async (req: Request, res: Response) => {
   try {
     const countryCode = sanitizeCountryCode(req.params.country);
     const operators = await getDataOperators(countryCode);
@@ -805,7 +816,7 @@ app.get('/data-plans/:country', async (req: Request, res: Response) => {
 });
 
 // Get utility billers for a country
-app.get('/billers/:country', async (req: Request, res: Response) => {
+app.get('/billers/:country', discoveryLimiter, async (req: Request, res: Response) => {
   try {
     const countryCode = sanitizeCountryCode(req.params.country);
     const type = req.query.type as string | undefined;
@@ -820,7 +831,7 @@ app.get('/billers/:country', async (req: Request, res: Response) => {
 });
 
 // Search gift cards by brand name (MUST be before :country route)
-app.get('/gift-cards/search', async (req: Request, res: Response) => {
+app.get('/gift-cards/search', discoveryLimiter, async (req: Request, res: Response) => {
   try {
     const query = req.query.q as string;
     const countryCode = req.query.country as string | undefined;
@@ -855,7 +866,7 @@ app.get('/gift-cards/search', async (req: Request, res: Response) => {
 });
 
 // Get gift card brands for a country
-app.get('/gift-cards/:country', async (req: Request, res: Response) => {
+app.get('/gift-cards/:country', discoveryLimiter, async (req: Request, res: Response) => {
   try {
     const countryCode = sanitizeCountryCode(req.params.country);
     const products = await getGiftCardProducts(countryCode);
@@ -892,11 +903,20 @@ app.get('/gift-cards/:country', async (req: Request, res: Response) => {
   }
 });
 
+// In-memory cache for /countries (it's 19KB and rarely changes)
+let _countriesCache: { data: any, timestamp: number } | null = null;
+const COUNTRIES_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
 // Get all supported countries
-app.get('/countries', async (_req: Request, res: Response) => {
+app.get('/countries', discoveryLimiter, async (_req: Request, res: Response) => {
   try {
+    // Check cache
+    if (_countriesCache && Date.now() - _countriesCache.timestamp < COUNTRIES_CACHE_TTL) {
+      return res.json(_countriesCache.data);
+    }
+
     const countries = await getCountries();
-    res.json({
+    const responseData = {
       total: countries.length,
       countries: countries.map(c => ({
         code: c.isoName,
@@ -905,7 +925,12 @@ app.get('/countries', async (_req: Request, res: Response) => {
         callingCodes: c.callingCodes,
         flag: c.flag,
       })),
-    });
+    };
+
+    // Update cache
+    _countriesCache = { data: responseData, timestamp: Date.now() };
+
+    res.json(responseData);
   } catch (error) {
     res.status(errorStatus(error)).json(errorResponse(error));
   }

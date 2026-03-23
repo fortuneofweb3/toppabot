@@ -17,7 +17,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const MAX_CACHE_ENTRIES = 500;
+const MAX_CACHE_ENTRIES = 2000;
 
 class ApiCache {
   private store = new Map<string, CacheEntry<any>>();
@@ -78,14 +78,14 @@ setInterval(() => apiCache.cleanup(), 10 * 60 * 1000);
 /** Cache TTLs — tuned per data volatility */
 export const CACHE_TTL = {
   /** Operators, billers, gift card products — rarely change */
-  OPERATORS: 30 * 60 * 1000,
-  BILLERS: 30 * 60 * 1000,
-  GIFT_CARDS: 30 * 60 * 1000,
-  COUNTRY_SERVICES: 30 * 60 * 1000,
-  DETECT_OPERATOR: 30 * 60 * 1000,
+  OPERATORS: 60 * 60 * 1000,
+  BILLERS: 60 * 60 * 1000,
+  GIFT_CARDS: 60 * 60 * 1000,
+  COUNTRY_SERVICES: 60 * 60 * 1000,
+  DETECT_OPERATOR: 60 * 60 * 1000,
 
   /** Promotions, FX rates, search — change more often */
   PROMOTIONS: 15 * 60 * 1000,
   FX_RATE: 15 * 60 * 1000,
-  SEARCH: 15 * 60 * 1000,
+  SEARCH: 60 * 60 * 1000,
 } as const;

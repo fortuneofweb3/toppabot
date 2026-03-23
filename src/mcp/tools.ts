@@ -5,6 +5,7 @@ import {
   getDataOperators, sendData,
   getBillers, payBill as payReloadlyBill,
   getGiftCardProducts, searchGiftCards, buyGiftCard, getGiftCardRedeemCode,
+  getCountries,
   getCountryServices, getPromotions,
   getFxRate,
 } from '../apis/reloadly';
@@ -123,6 +124,30 @@ async function handlePaidToolError(
  */
 export function registerMcpTools(server: McpServer) {
   // ─── FREE TOOLS ───
+  
+  server.tool(
+    'list_countries',
+    'Get a complete list of all 170+ countries supported by Toppa.',
+    {},
+    async () => {
+      try {
+        const countries = await getCountries();
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify(countries.map(c => ({
+              name: c.name,
+              isoName: c.isoName,
+              currencyCode: c.currencyCode,
+              flag: c.flag
+            }))),
+          }],
+        };
+      } catch (error: any) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }) }] };
+      }
+    },
+  );
 
   server.tool(
     'get_operators',

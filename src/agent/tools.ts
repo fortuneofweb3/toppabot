@@ -5,6 +5,7 @@ import {
   detectOperator,
   getBillers,
   getGiftCardProducts, searchGiftCards, getGiftCardRedeemCode, getGiftCardProduct,
+  getCountries,
   getCountryServices, getPromotions,
   getFxRate,
 } from "../apis/reloadly";
@@ -362,9 +363,13 @@ export const searchGiftCardsTool: Tool = {
     countryCode: z.string().optional().nullable().describe("Country ISO code filter"),
   }),
   func: async ({ query, countryCode }) => {
+    const start = Date.now();
     try {
       if (countryCode) countryCode = sanitizeCountryCode(countryCode);
       const results = await searchGiftCards(query, countryCode);
+      const elapsed = Date.now() - start;
+      console.log(`[Tool:search_gift_cards] Found ${results.length} results for "${query}" in ${elapsed}ms`);
+
       if (results.length === 0) return `No gift cards found for "${query}"${countryCode ? ' in ' + countryCode.toUpperCase() : ''}.`;
       const balance = await getCachedReloadlyBalance();
       return results.slice(0, 10).map(p => {
@@ -382,6 +387,7 @@ export const searchGiftCardsTool: Tool = {
         return text;
       }).join('\n\n');
     } catch (error: any) {
+      console.error(`[Tool:search_gift_cards] Error after ${Date.now() - start}ms:`, error.message);
       return JSON.stringify({ error: error.message });
     }
   },
@@ -397,9 +403,13 @@ export const getGiftCardsTool: Tool = {
     countryCode: z.string().describe("Country ISO code"),
   }),
   func: async ({ countryCode }) => {
+    const start = Date.now();
     try {
       countryCode = sanitizeCountryCode(countryCode);
       const products = await getGiftCardProducts(countryCode);
+      const elapsed = Date.now() - start;
+      console.log(`[Tool:get_gift_cards] Found ${products.length} products for ${countryCode} in ${elapsed}ms`);
+
       const balance = await getCachedReloadlyBalance();
       const brands = new Map<string, { category: string | null; products: number; minPrice: number; maxPrice: number }>();
       for (const p of products) {
@@ -420,6 +430,7 @@ export const getGiftCardsTool: Tool = {
       }).join('\n');
       return text;
     } catch (error: any) {
+      console.error(`[Tool:get_gift_cards] Error after ${Date.now() - start}ms:`, error.message);
       return JSON.stringify({ error: error.message });
     }
   },
@@ -522,11 +533,52 @@ export const getGiftCardCodeTool: Tool = {
 };
 
 /**
- * Tool 11: Check country service availability
+ * Tool 11: List all supported countries
+ */
+export const listCountriesTool: Tool = {
+  name: "list_countries",
+  description: "Get a complete list of all 170+ countries supported by Toppa.",
+  schema: z.object({}),
+  func: async () => {
+    const start = Date.now();
+    try {
+      // Local cache for the formatted string to save on grouping/sorting overhead
+      const cacheKey = 'tools:list_countries_formatted';
+      const cachedText = apiCache.get<string>(cacheKey);
+      if (cachedText) {
+        console.log(`[Tool:list_countries] Served from formatted cache in ${Date.now() - start}ms`);
+        return cachedText;
+      }
+
+      const countries = await getCountries();
+      // Group by first letter for better readability
+      const grouped: Record<string, string[]> = {};
+      countries.forEach((c: any) => {
+        const first = c.name[0].toUpperCase();
+        if (!grouped[first]) grouped[first] = [];
+        grouped[first].push(`${c.name} (${c.isoName})`);
+      });
+
+      let text = `Toppa supports ${countries.length} countries:\n\n`;
+      Object.keys(grouped).sort().forEach(letter => {
+        text += `*${letter}*: ${grouped[letter].join(', ')}\n`;
+      });
+      
+      apiCache.set(cacheKey, text, CACHE_TTL.GIFT_CARDS); // Use 1hr TTL
+      console.log(`[Tool:list_countries] Generated and cached in ${Date.now() - start}ms`);
+      return text;
+    } catch (error: any) {
+      return JSON.stringify({ error: error.message });
+    }
+  },
+};
+
+/**
+ * Tool 12: Check country service availability
  */
 export const checkCountryTool: Tool = {
   name: "check_country",
-  description: "Check what services are available in a country.",
+  description: "Check ALL services (airtime, data, bills, gift cards) available in a country.",
   schema: z.object({
     countryCode: z.string().describe("Country ISO code"),
   }),
@@ -534,15 +586,43 @@ export const checkCountryTool: Tool = {
     try {
       countryCode = sanitizeCountryCode(countryCode);
       const s = await getCountryServices(countryCode);
-      const lines = [`Services in ${s.countryCode}:`];
-      if (s.airtime.available) lines.push(`Airtime: ${s.airtime.operators.map((o: any) => o.name).join(', ')}`);
-      else lines.push('Airtime: not available');
-      if (s.dataPlans.available) lines.push(`Data plans: ${s.dataPlans.operators.map((o: any) => o.name).join(', ')}`);
-      else lines.push('Data plans: not available');
-      if (s.bills.available) lines.push(`Bills: ${s.bills.total} billers (${Object.entries(s.bills.types).map(([t, n]) => `${n} ${t.replace(/_/g, ' ').toLowerCase()}`).join(', ')})`);
-      else lines.push('Bills: not available');
-      if (s.giftCards.available) lines.push(`Gift cards: ${s.giftCards.totalProducts} products (${s.giftCards.brands.slice(0, 10).join(', ')}${s.giftCards.brands.length > 10 ? '...' : ''})`);
-      else lines.push('Gift cards: not available');
+      const lines = [`### Services in ${s.countryCode} ###`];
+      
+      if (s.airtime.available) {
+        lines.push(`\n📱 *Mobile Airtime*: ${s.airtime.operators.length} operators`);
+        lines.push(`Operators: ${s.airtime.operators.map((o: any) => o.name).join(', ')}`);
+      } else {
+        lines.push('\n📱 *Mobile Airtime*: Not available');
+      }
+
+      if (s.dataPlans.available) {
+        lines.push(`\n🌐 *Data Plans*: ${s.dataPlans.operators.length} operators`);
+        lines.push(`Operators: ${s.dataPlans.operators.map((o: any) => o.name).join(', ')}`);
+      } else {
+        lines.push('\n🌐 *Data Plans*: Not available');
+      }
+
+      if (s.bills.available) {
+        const types = Object.entries(s.bills.types).map(([t, n]) => `${n} ${t.replace(/_/g, ' ').toLowerCase()}`);
+        lines.push(`\n🧾 *Utility Bills*: ${s.bills.total} billers`);
+        lines.push(`Categories: ${types.join(', ')}`);
+      } else {
+        lines.push('\n🧾 *Utility Bills*: Not available');
+      }
+
+      if (s.giftCards.available) {
+        lines.push(`\n🎁 *Gift Cards*: ${s.giftCards.totalProducts} products`);
+        // List ALL brands if manageable, otherwise slice but show more than 10
+        const brands = s.giftCards.brands;
+        if (brands.length <= 40) {
+          lines.push(`Brands: ${brands.join(', ')}`);
+        } else {
+          lines.push(`Brands (Top 40): ${brands.slice(0, 40).join(', ')}... (use search_gift_cards for more)`);
+        }
+      } else {
+        lines.push('\n🎁 *Gift Cards*: Not available');
+      }
+      
       return lines.join('\n');
     } catch (error: any) {
       return JSON.stringify({ error: error.message });
@@ -1440,6 +1520,7 @@ export const paidTools = [
 
 // Free/discovery tools — no cost, just lookups
 export const freeTools = [
+  listCountriesTool,
   getOperatorsTool,
   getDataPlansTool,
   detectOperatorTool,

@@ -610,25 +610,33 @@ export async function searchGiftCards(query: string, countryCode?: string) {
   if (countryCode) {
     // getGiftCardProducts is already cached
     products = await getGiftCardProducts(countryCode);
-  } else {
-    // Global product list — cache it separately
-    const globalKey = 'giftcards:GLOBAL';
-    const cached = apiCache.get<ReloadlyGiftCardProduct[]>(globalKey);
-    if (cached) {
-      products = cached;
     } else {
-      const response = await giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
-        'GET',
-        '/products?size=200'
-      );
-      products = Array.isArray(response) ? response : (response?.content || []);
-      apiCache.set(globalKey, products, CACHE_TTL.SEARCH);
+      // Global product list — fetch multiple pages to ensure common brands (like Binance) are found
+      const globalKey = 'giftcards:GLOBAL';
+      const cached = apiCache.get<ReloadlyGiftCardProduct[]>(globalKey);
+      if (cached) {
+        products = cached;
+      } else {
+        // Fetch up to 5 pages (1000 products)
+        const pages = [0, 1, 2, 3, 4];
+        const results = await Promise.all(pages.map(page =>
+          giftcardsRequest<ReloadlyGiftCardProduct[] | { content: ReloadlyGiftCardProduct[] }>(
+            'GET',
+            `/products?page=${page}&size=200`
+          ).catch(err => {
+            console.error(`[Reloadly] Failed to fetch gift card page ${page}:`, err.message);
+            return [];
+          })
+        ));
+
+        products = results.flatMap(res => Array.isArray(res) ? res : (res?.content || []));
+        apiCache.set(globalKey, products, CACHE_TTL.SEARCH);
+      }
     }
-  }
 
   const lowerQuery = query.toLowerCase();
   return products.filter(p =>
-    (!p.status || p.status === 'AVAILABLE') &&
+    (!p.status || p.status === 'AVAILABLE' || p.status === 'ACTIVE') &&
     (p.productName.toLowerCase().includes(lowerQuery) ||
     p.brand.brandName.toLowerCase().includes(lowerQuery))
   );
