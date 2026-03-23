@@ -1,68 +1,77 @@
-Karma About — Draft
-(copy this into karmahq.xyz/project/toppa/about)
+Karma Profile — Updated Draft
+(copy each section into the matching field on karmahq.xyz/project/toppa/about)
 
 
-Toppa is an AI agent that lets you buy airtime, pay bills, purchase gift cards, and manage group finances — all through Telegram or WhatsApp. Just type what you need in plain language. Toppa handles the rest.
+=== Description ===
 
-Built on Celo, payments happen in cUSD. You can deposit CELO, USDC, USDT, or cEUR — Toppa auto-swaps everything to cUSD via Uniswap V3.
+Toppa is an AI-powered financial services agent for mobile airtime top-ups, data bundles, utility bill payments (electricity, water, internet, TV), and gift card purchases across 170+ countries. It connects 800+ telecom operators and 300+ gift card brands to the Celo blockchain, letting anyone pay with cUSD stablecoins via the x402 micropayment protocol.
 
+Available on both Telegram and WhatsApp, Toppa understands natural language and voice notes — just say what you need and it handles the rest.
 
-What it does
+Beyond individual payments, Toppa supports:
 
-- Airtime & data for 800+ operators in 170+ countries
-- Utility bill payments (electricity, internet, TV, water)
-- Gift cards from 300+ brands (Amazon, Steam, Netflix, PlayStation, etc.)
-- Group wallets — pool money in any group chat, spend with democratic poll voting
-- Multi-currency swaps — deposit any supported token, auto-convert to cUSD
-- Scheduled payments — "send mom airtime every Friday" and it just runs
-- Smart memory — remembers your contacts, operators, preferences
-- Reports — PDF or Excel statements of all transactions
-- Voice notes — send a voice message, Toppa transcribes and acts on it
-- Identity verification — Self Protocol ZK proofs for higher limits
+- **Group wallets** — Pool money in any Telegram or WhatsApp group. Every spend goes through a democratic poll vote. Configurable thresholds, admin bypass, key export, and full group reporting.
+- **Multi-currency deposits** — Send CELO, USDC, USDT, or cEUR. Toppa auto-swaps everything to cUSD via Uniswap V3.
+- **Scheduled payments** — Set up recurring airtime, bills, or gift cards ("send mom airtime every Friday"). Heartbeat engine runs automatically with retry on failure.
+- **Smart memory** — Learns your contacts, operators, and preferences. "Send airtime to my brother" just works.
+- **Reports** — Generate PDF or Excel transaction statements for personal or group wallets.
+- **Identity verification** — Self Protocol ZK proofs tied to passport/ID. No personal data stored. Verified users get higher spending limits ($20/day → $200/day).
+- **Voice support** — Send a voice note in English, French, Yoruba, or Swahili. Transcribed via Deepgram in under a second.
 
+Toppa is a registered on-chain agent (ERC-8004, Agent #1870) with verifiable identity on Celo Mainnet. It exposes services through multiple interoperability standards:
 
-How it works
+- **Google A2A** (agent-card.json) for agent-to-agent communication
+- **MCP** (Model Context Protocol) with 13 tools for agent integration
+- **Telegram and WhatsApp bots** for human end-users
+- **Free discovery APIs** for operators, billers, countries, and gift cards
 
-You message the bot. Toppa's AI agent (LangGraph with 36 tools) parses your request, detects the operator or biller, calculates the cost, and presents a confirmation. You tap confirm, cUSD gets deducted, service gets delivered. That's it.
-
-For groups: enable a shared wallet, members contribute, and every spend goes through a vote. 70% approval = purchased. Admins can bypass for urgent stuff.
-
-
-Protocol & interoperability
-
-- x402 — HTTP-native micropayments. Every paid endpoint returns 402 with a cUSD payment offer. No API keys, no subscriptions.
-- MCP server — 13 tools. Any MCP-compatible AI agent can use Toppa as a tool.
-- A2A (Google Agent-to-Agent) — Toppa can receive tasks from other agents.
-- ERC-8004 — Registered on-chain as Agent #1870 on Celo Mainnet.
-- Discovery APIs — Free endpoints for operators, billers, countries, gift cards.
-- Open source — MIT licensed. github.com/fortuneofweb3/toppabot
+All paid operations are gated by x402 HTTP payments — no API keys, no accounts, just stablecoins.
 
 
-Who it's for
+=== Problem ===
 
-- People in emerging markets who rely on prepaid mobile services
-- Diaspora users sending airtime/bills to family back home
-- Groups (offices, friend circles, families) pooling money for shared expenses
-- Developers building AI agents that need real-world payment capabilities
-- Anyone who wants to pay for digital services with crypto without the friction
+Billions of people across Africa, Asia, and Latin America rely on prepaid mobile services. Airtime, data bundles, and utility bill payments are daily necessities, not luxuries. Yet, the infrastructure to perform these transactions across borders remains deeply fragmented:
 
+- **Siloed Operators:** Telecom operators are isolated by country and carrier, each with proprietary top-up systems.
+- **Cross-Border Friction:** Payments require navigating multiple fiat rails, tedious KYC processes, and numerous intermediaries.
+- **Gatekeeping:** Existing platforms demand manual sign-ups, API key provisioning, and traditional payment methods.
+- **No Group Infrastructure:** Friends, families, and offices pooling money for shared expenses have no transparent, governed way to manage collective funds digitally.
+- **Agent Disconnect:** AI agents handling tasks autonomously have no standardized, permissionless way to discover and pay for real-world services using cryptocurrency.
 
-Why Celo
-
-- Sub-cent transaction fees
-- Fast finality (~5 seconds)
-- Native stablecoins (cUSD, cEUR, cREAL)
-- Fee abstraction — gas paid in stablecoins
-- Mobile-first ecosystem (MiniPay, Valora)
+The result: Sending $5 of airtime to a family member in another country is harder than sending $5,000 in crypto. Groups pooling money for shared expenses rely on trust and spreadsheets. And the emerging agentic economy has no bridge to essential real-world services.
 
 
-Links
+=== Solution ===
 
-- Website: https://toppa.cc
-- Docs: https://toppa.cc/docs
-- Telegram: https://t.me/toppa402Bot
-- GitHub: https://github.com/fortuneofweb3/toppabot
-- Agent Card: https://api.toppa.cc/.well-known/agent-card.json
-- MCP: https://api.toppa.cc/mcp
-- Agentscan: https://agentscan.info/agents/e42ebcb1-fd03-4fe8-ac1a-3cf1c24d80df
-- 8004scan: https://www.8004scan.io/agents/celo/1870
+Toppa solves this by wrapping 800+ telecom operators and 300+ gift card brands behind a single AI agent that accepts blockchain-native payments on Celo.
+
+**Core capabilities:**
+
+- **Airtime, data, bills, gift cards** — 170+ countries, one chat interface. Tell Toppa what you need in plain language or a voice note.
+- **Group wallets** — Enable a shared wallet in any Telegram or WhatsApp group. Members contribute cUSD, every spend goes through a democratic poll (default 70% threshold). Admins can bypass for urgent purchases, export keys, configure expiry, and generate group reports.
+- **Multi-currency swaps** — Deposit CELO, USDC, USDT, or cEUR. Toppa auto-swaps to cUSD via Uniswap V3.
+- **Scheduled payments** — Recurring airtime, bills, or gift cards. Heartbeat engine runs every 15 minutes with automatic retry on failure.
+- **Smart memory** — Remembers contacts, operators, preferences. "Send airtime to my brother" works because Toppa already knows who that is.
+- **Reports** — PDF and Excel statements for personal and group transactions.
+- **Identity verification** — Self Protocol ZK proofs for higher spending limits. No personal data stored.
+
+**Protocol innovations:**
+
+- **x402 Micropayments:** Every paid operation is gated by the x402 HTTP payment protocol. Attach a cUSD payment header to your request, and the service executes. No accounts, no API keys, no invoices.
+- **Agent Interoperability:** Discoverable via Google A2A, invocable via MCP (13 tools), and accessible to end-users via Telegram and WhatsApp — all from a single codebase.
+- **On-Chain Identity:** Registered as ERC-8004 Agent #1870 on Celo Mainnet with content-addressed metadata on IPFS, enabling verifiable reputation and trustless discovery.
+- **Global Coverage:** 170+ countries, auto-detects operators from phone numbers, supports local currencies via real-time conversion.
+
+A single HTTP request is all it takes — whether from a human, a chatbot, or another autonomous agent — to top up a phone, pay a bill, or buy a gift card anywhere in the world.
+
+
+=== Mission Summary ===
+
+We are on a mission to make real-world digital payments — airtime, data, bills, gift cards, and group finances — accessible to both humans and AI agents everywhere, using open standards (A2A, MCP, ERC-8004) and blockchain-native stablecoin payments on Celo.
+
+No gatekeepers, no legacy rails — just open protocols connecting crypto to the services billions depend on daily. Whether you're an individual topping up a phone, a group pooling money for shared expenses, or an AI agent executing tasks autonomously, Toppa is the bridge between blockchain and the real world.
+
+
+=== Location of Impact ===
+
+Global — with primary focus on Africa, South Asia, Southeast Asia, and Latin America (170+ countries)

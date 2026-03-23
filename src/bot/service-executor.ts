@@ -147,6 +147,10 @@ export async function executeServiceTool(
           if (!product) {
             throw new Error(`Gift card product ${args.productId} not found`);
           }
+          // Reject unavailable / delisted products
+          if (product.status && product.status !== 'AVAILABLE') {
+            throw new Error(`Gift card "${product.productName}" is no longer available (status: ${product.status}). Please search for an alternative.`);
+          }
           // Validate price is within allowed range
           if (product.denominationType === 'FIXED') {
             const fixedAmounts = product.fixedSenderDenominations || [];
@@ -167,7 +171,7 @@ export async function executeServiceTool(
           }
           console.log(`[Validate] buy_gift_card: productId ${args.productId} confirmed (${product.productName})`);
         } catch (e: any) {
-          if (e.message.includes('not found') || e.message.includes('outside the range')) throw e;
+          if (e.message.includes('not found') || e.message.includes('outside the range') || e.message.includes('no longer available')) throw e;
           console.warn(`[Validate] buy_gift_card: product validation failed: ${e.message}`);
         }
       }
