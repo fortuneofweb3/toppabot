@@ -67,9 +67,9 @@ function getPublicClient() {
     _publicClient = createPublicClient({
       chain,
       transport: http(process.env.CELO_RPC_URL),
-    });
+    } as any);
   }
-  return _publicClient;
+  return _publicClient!;
 }
 
 function getWalletClient() {
@@ -79,9 +79,9 @@ function getWalletClient() {
       account,
       chain,
       transport: http(process.env.CELO_RPC_URL),
-    });
+    } as any);
   }
-  return _walletClient;
+  return _walletClient!;
 }
 
 // In-memory cache of our agent ID (set after registration)
@@ -270,7 +270,8 @@ export function getAgentRegistrationFile(): object {
 }
 
 function getAgentURI(): string {
-  return `ipfs://${IPFS_REGISTRATION_CID}`;
+  const apiUrl = process.env.API_URL || 'https://api.toppa.cc';
+  return `${apiUrl}/registration.json`;
 }
 
 /** HTTP gateway URL for the agent PFP (for browsers/scanners that don't resolve ipfs://) */

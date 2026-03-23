@@ -346,7 +346,7 @@ export async function startWhatsAppBot() {
         const dgResponse = await fetch('https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true', {
           method: 'POST',
           headers: { 'Authorization': `Token ${dgKey}`, 'Content-Type': mimeType },
-          body: audioBuffer,
+          body: audioBuffer as any,
         });
 
         if (!dgResponse.ok) throw new Error(`Deepgram ${dgResponse.status}`);
@@ -1483,9 +1483,8 @@ async function processOrderConfirmation(
   let paymentTxHash = '';
   let serviceSucceeded = false;
 
+  const payerWalletId = activeOrder.telegramId.startsWith('group_') ? activeOrder.telegramId : userId;
   try {
-    // Use the correct wallet for payment: group wallet for group orders, personal wallet otherwise
-    const payerWalletId = activeOrder.telegramId.startsWith('group_') ? activeOrder.telegramId : userId;
     const { txHash } = await walletManager.transferToAgent(payerWalletId, activeOrder.totalAmount);
     paymentTxHash = txHash;
 

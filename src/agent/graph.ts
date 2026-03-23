@@ -168,7 +168,7 @@ async function buildSystemPrompt(state: Partial<AgentState>): Promise<string> {
 // Isolated per call because runToppaAgent creates a new closure each time.
 let _requestCtx: SchedulingContext | null = null;
 
-const langchainTools: DynamicStructuredTool[] = toppaTools.map(
+const langchainTools: any[] = (toppaTools as any[]).map(
   (tool) =>
     new DynamicStructuredTool({
       name: tool.name,
@@ -363,7 +363,7 @@ function buildGraph(
     let activeLlm = useFallback ? fallbackLlm! : primaryLlm;
 
     // Bind tools to the LLM
-    const llmWithTools = activeLlm.bindTools(langchainTools);
+    const llmWithTools = activeLlm.bindTools(langchainTools as any);
 
     let aiMessage: AIMessage;
     try {

@@ -12,7 +12,7 @@ Toppa is an autonomous AI agent that lets anyone buy digital goods using cUSD on
 - **Airtime** — Mobile top-ups across 170+ countries, 800+ operators. Auto-detects operator from phone number.
 - **Data Plans** — Mobile data bundles (1GB, 5GB, 10GB, etc.) across 170+ countries with plan descriptions.
 - **Utility Bills** — Electricity, water, TV (DStv, GOtv, Startimes), internet.
-- **Gift Cards** — 300+ brands, 14,000+ products. Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Airbnb, Apple, Google Play, prepaid Visa/Mastercard, and more.
+- **Gift Cards** — 2,000+ products discovery depth. Amazon, Steam, Netflix, Spotify, PlayStation, Xbox, Uber, Airbnb, Apple, Google Play, prepaid Visa/Mastercard, and more.
 
 **Key capability — Multi-intent resolution:**
 > "Get my brother 500 naira airtime in Nigeria, pay mom's DStv bill in Lagos, and buy me a $25 Steam gift card"
@@ -144,7 +144,7 @@ Set up recurring payments — the heartbeat engine checks every 15 minutes:
 | **Groups** | MongoDB | Group wallets, polls, contributions, transaction history |
 | **Reports** | pdfkit + exceljs | PDF and Excel expenditure statements |
 | **Voice** | Deepgram | Speech-to-text for voice note transcription |
-| **API** | Express | HTTP API with x402, MCP, and A2A protocol support |
+| **API** | Express | HTTP API with x402, MCP (14 tools), and A2A protocol support |
 | **Storage** | MongoDB | Wallets, conversations, groups, receipts, user activity |
 
 ## Project Structure
@@ -206,8 +206,8 @@ src/
 │   └── generator.ts           # PDF and Excel statement generation
 │
 ├── mcp/                       # Model Context Protocol
-│   ├── server.ts              # MCP Streamable HTTP server
-│   └── tools.ts               # 13 MCP tools
+├── server.ts                  # MCP Streamable HTTP server
+└── tools.ts                   # 14 MCP tools
 │
 ├── a2a/                       # Agent-to-Agent Protocol
 │   ├── handler.ts             # A2A JSON-RPC handler
@@ -347,7 +347,7 @@ ZK proof of humanity via passport NFC scanning. Users verify once in the Self ap
 
 ### Multi-Protocol Agent Access
 - **REST + x402** — Pay-per-call HTTP API for any agent
-- **MCP** — 13 tools for Claude Desktop, Cursor, and other MCP clients
+- **MCP** — 14 tools for Claude Desktop, Cursor, and other MCP clients
 - **A2A (Agent-to-Agent)** — Google's protocol for agent interoperability
 
 ## License

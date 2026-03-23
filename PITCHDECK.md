@@ -38,7 +38,7 @@ Talk to Toppa in plain language on Telegram or WhatsApp — type or send a voice
 - Airtime top-ups — 800+ operators, 170+ countries
 - Data bundles — any size, auto-detect operator
 - Utility bills — electricity, water, TV (DStv, GOtv), internet
-- Gift cards — 300+ brands, 14,000+ products (Amazon, Steam, Netflix, PlayStation, Apple, Google Play, Visa, and more)
+- Gift cards — 2,000+ products (Amazon, Steam, Netflix, PlayStation, Apple, Google Play, Visa, and more)
 
 No bank account. No KYC. Just cUSD on Celo.
 
@@ -105,7 +105,7 @@ POST /send-airtime + X-PAYMENT: 0xabc... → 200 OK ✓
 - x402 protocol — no API keys, no OAuth, just crypto
 - Product cost + 1.5% service fee
 - Replay guard + auto-refund on failure
-- Also speaks MCP (13 tools) and Google A2A protocol
+- Also speaks MCP (14 tools) and Google A2A protocol
 
 A support agent sending airtime as compensation. A rewards agent distributing gift cards. They all just pay Toppa.
 
@@ -119,9 +119,9 @@ A support agent sending airtime as compensation. A rewards agent distributing gi
 - Self Protocol ZK verification — passport scan, no data stored
 - Tiered limits: $20/day → $200/day verified
 
-**LangGraph StateGraph — 34 tools**
+**LangGraph StateGraph — 35 tools**
 
-- 4 paid execution + 30 free discovery tools
+- 4 paid execution + 31 free discovery tools
 - Multi-currency via Uniswap V3 (CELO, USDC, USDT, cEUR → cUSD)
 - Voice transcription (Deepgram), wallets encrypted AES-256-GCM
 - 5 interfaces: Telegram, WhatsApp, x402 API, MCP, A2A
@@ -157,7 +157,7 @@ NEXT:
 
 **Toppa is live. Not a demo. Not testnet. Real transactions on Celo Mainnet.**
 
-170+ countries | 800+ operators | 300+ brands | 14,000+ products | 34 tools | Open source (MIT)
+170+ countries | 800+ operators | 2,000+ products | 35 tools | Open source (MIT)
 
 USE IT: t.me/toppa402Bot
 SEE IT: toppa.cc
