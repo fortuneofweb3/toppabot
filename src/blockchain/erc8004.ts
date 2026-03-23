@@ -192,7 +192,7 @@ export function getAgentRegistrationFile(): object {
         mcpTools: [
           'get_operators', 'get_data_plans', 'get_billers',
           'search_gift_cards', 'get_gift_cards', 'get_gift_card_code',
-          'check_country', 'get_promotions', 'convert_currency',
+          'check_country', 'list_countries', 'get_promotions', 'convert_currency',
           'send_airtime', 'send_data', 'pay_bill', 'buy_gift_card',
         ],
         mcpPrompts: [

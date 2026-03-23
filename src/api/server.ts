@@ -587,7 +587,7 @@ app.get('/', (_req: Request, res: Response) => {
         spec: 'https://modelcontextprotocol.io',
         endpoint: '/mcp',
         transport: 'Streamable HTTP',
-        tools: 13,
+        tools: 14,
       },
       a2a: {
         spec: 'https://a2a-protocol.org',

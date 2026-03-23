@@ -105,7 +105,7 @@ export function generateAgentCard() {
       mcp: {
         endpoint: `${apiUrl}/mcp`,
         transport: 'Streamable HTTP',
-        description: 'MCP endpoint for direct tool invocation (13 tools)',
+        description: 'MCP endpoint for direct tool invocation (14 tools)',
       },
     },
   };
