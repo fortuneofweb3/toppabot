@@ -3,28 +3,33 @@ const nav = document.querySelector('.nav');
 const hero = document.querySelector('.hero');
 
 function updateNav() {
+  if (!hero || !nav) return;
   const heroBottom = hero.getBoundingClientRect().bottom;
   nav.classList.toggle('scrolled', heroBottom <= 56);
 }
 
 window.addEventListener('scroll', updateNav, { passive: true });
-updateNav();
+if (hero && nav) {
+  updateNav();
+}
 
 /* ─── Mobile Nav Toggle ──────────────────────── */
 const navToggle = document.getElementById('navToggle');
 const navLinks = document.getElementById('navLinks');
 
-navToggle.addEventListener('click', () => {
-  navLinks.classList.toggle('open');
-  navToggle.textContent = navLinks.classList.contains('open') ? '\u2715' : '\u2630';
-});
-
-navLinks.querySelectorAll('a').forEach(link => {
-  link.addEventListener('click', () => {
-    navLinks.classList.remove('open');
-    navToggle.textContent = '\u2630';
+if (navToggle && navLinks) {
+  navToggle.addEventListener('click', () => {
+    navLinks.classList.toggle('open');
+    navToggle.textContent = navLinks.classList.contains('open') ? '\u2715' : '\u2630';
   });
-});
+
+  navLinks.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', () => {
+      navLinks.classList.remove('open');
+      navToggle.textContent = '\u2630';
+    });
+  });
+}
 
 /* ─── Scroll Fade-In Animations (staggered) ──── */
 const fadeElements = document.querySelectorAll('.fade-in');
