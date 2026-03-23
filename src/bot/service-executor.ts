@@ -10,7 +10,7 @@ import {
   payBill as payReloadlyBill,
   buyGiftCard, getGiftCardRedeemCode,
   getOperators, detectOperator,
-  getBillers, getGiftCardProduct,
+  getBillers, getGiftCardProduct, searchGiftCards,
 } from '../apis/reloadly';
 import { sanitizePhone, sanitizeCountryCode, sanitizeAccountNumber } from '../shared/sanitize';
 
@@ -143,11 +143,22 @@ export async function executeServiceTool(
       // Server-side: validate productId exists and price is within range
       if (args.productId) {
         try {
-          const product = await getGiftCardProduct(args.productId);
+          let product = await getGiftCardProduct(args.productId).catch(() => null);
+          
+          // Fallback: if productId not found, try to resolve by product name (same pattern as airtime's operatorId auto-detect)
+          if (!product && args.productName) {
+            console.log(`[Executor] productId ${args.productId} not found, fallback search for "${args.productName}"`);
+            const fallbackResults = await searchGiftCards(args.productName);
+            if (fallbackResults.length > 0) {
+              product = fallbackResults.find(p => p.productName === args.productName) || fallbackResults[0];
+              args.productId = product.productId;
+              console.log(`[Executor] Fallback resolved to productId: ${product.productId} (${product.productName})`);
+            }
+          }
+          
           if (!product) {
             throw new Error(`Gift card product ${args.productId} not found`);
           }
-          // Reject unavailable / delisted products
           // Reject only explicitly unavailable products
           console.log(`[Executor] Product ${args.productId} status: ${product.status}`);
           if (product.status === 'UNAVAILABLE' || product.status === 'REMOVED') {

@@ -515,7 +515,7 @@ export const buyGiftCardTool: Tool = {
       totalWithFee: total,
       currency: 'cUSD',
       productName,
-      details: { productId: resolvedProductId, unitPrice: validatedAmount, recipientEmail, quantity: quantity || 1, ...(recipientUserId ? { recipientUserId } : {}) },
+      details: { productId: resolvedProductId, unitPrice: validatedAmount, recipientEmail, quantity: quantity || 1, productName, ...(recipientUserId ? { recipientUserId } : {}) },
       message: `Gift card purchase requires ${total} cUSD payment (includes service fee). Use the order_confirmation flow for Telegram/A2A, or the x402 REST API / MCP endpoint for direct execution.`,
     });
   },
