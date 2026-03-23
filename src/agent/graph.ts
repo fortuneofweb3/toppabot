@@ -175,7 +175,7 @@ const langchainTools: any[] = (toppaTools as any[]).map(
       description: tool.description,
       schema: tool.schema,
       func: async (args: any) => {
-        console.log(`[Tool Call] ${tool.name}`);
+        console.log(`[Tool Call] ${tool.name} with ${JSON.stringify(args)}`);
         try {
           const result = await tool.func(args, _requestCtx);
           console.log(`[Tool Result] ${tool.name} → ${result.length} chars`);

@@ -454,10 +454,11 @@ export const buyGiftCardTool: Tool = {
   }),
   func: async ({ productId, amount, recipientEmail, quantity, recipientUserId }) => {
     // Server-side: validate productId exists and amount is valid
+    console.log(`[GiftCardTool] Called for productId: ${productId}, amount: ${amount}`);
     let productName: string | undefined;
     let validatedAmount = amount;
     try {
-      const product = await getGiftCardProduct(productId);
+      const product = await getGiftCardProduct(Number(productId));
       if (!product) {
         return JSON.stringify({ status: 'error', error: `Gift card product ${productId} not found. Use search_gift_cards to find valid products.` });
       }
